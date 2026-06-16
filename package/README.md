@@ -34,8 +34,12 @@ It accepts PDB, mmCIF, and BinaryCIF input, converts structures through a CPU-si
 The manual uses PDB entry 9R1O as its complete example. Put `9R1O.typ` and `9R1O.pdb` in the same directory, then compile the figure PDF:
 
 ```sh
-typst compile 9R1O.typ 9R1O.pdf
+typst compile 9R1O.typ
 ```
+
+**Rendered 9R1O Example**
+
+![Example protein structure rendered from PDB entry 9R1O using Molfig with the Mol* representation](examples/9R1O.png)
 
 Structural data source: RCSB PDB / wwPDB, PDB ID `9R1O`, DOI [`10.2210/pdb9R1O/pdb`](https://doi.org/10.2210/pdb9R1O/pdb). PDB archive data files are distributed under CC0 1.0.
 
