@@ -1,7 +1,6 @@
 # Third-Party Notices
 
-This file records third-party material that is included in, derived by, or
-redistributed with the Molfig Typst package.
+This file records third-party material that is included in, derived by, or redistributed with the Molfig Typst package.
 
 Molfig package code is licensed under the MIT License. See `LICENSE`.
 
@@ -11,8 +10,7 @@ Project: Mol* (`molstar/molstar`)
 
 Source: https://github.com/molstar/molstar
 
-Reference commit used for parity work:
-`1b8117d3f10f7c978aabb5a0d3d47370635aefe4`
+Reference commit used for parity work: `1b8117d3f10f7c978aabb5a0d3d47370635aefe4`
 
 License: MIT License
 
@@ -20,11 +18,8 @@ Copyright notice: Copyright (c) 2017 - now, Mol* contributors
 
 Scope in this package:
 
-- `molfig.wasm` is built from a Rust implementation that ports, adapts, or
-  behaviorally matches Mol* Model/Structure/Unit, representation, geometry, and
-  geo-exporter behavior.
-- `molfig.wasm` also includes Mol*-derived generated reference data used by the
-  model classification layer.
+- `molfig.wasm` is built from a Rust implementation that ports, adapts, or behaviorally matches Mol* Model/Structure/Unit, representation, geometry, and geo-exporter behavior.
+- `molfig.wasm` also includes Mol*-derived generated reference data used by the model classification layer.
 
 Mol* MIT License text:
 
@@ -52,14 +47,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-Recommended Mol* citation when describing the parity target or generated
-figures:
+Recommended Mol* citation when describing the parity target or generated figures:
 
-David Sehnal, Sebastian Bittrich, Mandar Deshpande, Radka Svobodova, Karel
-Berka, Vaclav Bazgier, Sameer Velankar, Stephen K. Burley, Jaroslav Koca, and
-Alexander S. Rose. Mol* Viewer: modern web app for 3D visualization and
-analysis of large biomolecular structures. Nucleic Acids Research 49:W431-W437
-(2021). https://doi.org/10.1093/nar/gkab314
+David Sehnal, Sebastian Bittrich, Mandar Deshpande, Radka Svobodova, Karel Berka, Vaclav Bazgier, Sameer Velankar, Stephen K. Burley, Jaroslav Koca, and Alexander S. Rose. Mol* Viewer: modern web app for 3D visualization and analysis of large biomolecular structures. Nucleic Acids Research 49:W431-W437 (2021). https://doi.org/10.1093/nar/gkab314
 
 ## PDB Archive Example Data
 
@@ -82,9 +72,7 @@ Scope in this package:
 - Documentation examples that display or cite these data files
 
 RCSB PDB states that data files in the PDB archive are available under CC0 1.0.
-RCSB PDB also encourages attribution to the original structure-data authors
-where possible. CC0 does not imply endorsement by the authors, RCSB PDB, wwPDB,
-or Creative Commons, and the data are provided without warranty.
+RCSB PDB also encourages attribution to the original structure-data authors where possible. CC0 does not imply endorsement by the authors, RCSB PDB, wwPDB, or Creative Commons, and the data are provided without warranty.
 
 Example data attribution:
 
@@ -105,9 +93,6 @@ under CC0 1.0.
 
 ## Runtime And Documentation Package References
 
-Molfig delegates Typst-side mesh rendering to `maquette` through Typst package
-imports. The maquette package is not vendored in this package.
+Molfig delegates Typst-side mesh rendering to `maquette` through Typst package imports. The maquette package is not vendored in this package.
 
-The public manual source imports `mantys` and its dependencies for
-documentation layout. Those documentation packages are not vendored in this
-package.
+The public manual source imports `mantys` and its dependencies for documentation layout. Those documentation packages are not vendored in this package.

@@ -1,8 +1,6 @@
 # Third-Party Notices
 
-This file records third-party material that is included in, derived by, or
-redistributed with Molfig. It is intended to travel with both source releases
-and package releases.
+This file records third-party material that is included in, derived by, or redistributed with Molfig. It is intended to travel with both source releases and package releases.
 
 Molfig itself is licensed under the MIT License. See `LICENSE`.
 
@@ -12,8 +10,7 @@ Project: Mol* (`molstar/molstar`)
 
 Source: https://github.com/molstar/molstar
 
-Reference commit used for parity work:
-`1b8117d3f10f7c978aabb5a0d3d47370635aefe4`
+Reference commit used for parity work: `1b8117d3f10f7c978aabb5a0d3d47370635aefe4`
 
 License: MIT License
 
@@ -21,16 +18,10 @@ Copyright notice: Copyright (c) 2017 - now, Mol* contributors
 
 Scope in this repository:
 
-- `wasm-plugin/src/` contains Rust code that ports, adapts, or behaviorally
-  matches Mol* Model/Structure/Unit, representation, geometry, and geo-exporter
-  behavior.
-- `wasm-plugin/src/model/reference_data/*.ts` contains Mol* generated reference
-  data files and constants used by the Rust model classification layer.
-- `package/molfig.wasm` is built from the Rust implementation and therefore
-  includes Mol*-derived behavior and reference data.
-- `wasm-plugin/artifacts/molstar/` is a local pinned Mol* checkout for parity
-  development. It is ignored by git and is not intended to be published as part
-  of the Molfig Typst package.
+- `wasm-plugin/src/` contains Rust code that ports, adapts, or behaviorally matches Mol* Model/Structure/Unit, representation, geometry, and geo-exporter behavior.
+- `wasm-plugin/src/model/reference_data/*.ts` contains Mol* generated reference data files and constants used by the Rust model classification layer.
+- `package/molfig.wasm` is built from the Rust implementation and therefore includes Mol*-derived behavior and reference data.
+- `wasm-plugin/artifacts/molstar/` is a local pinned Mol* checkout for parity development. It is ignored by git and is not intended to be published as part of the Molfig Typst package.
 
 Mol* MIT License text:
 
@@ -58,14 +49,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-Recommended Mol* citation when describing the parity target or generated
-figures:
+Recommended Mol* citation when describing the parity target or generated figures:
 
-David Sehnal, Sebastian Bittrich, Mandar Deshpande, Radka Svobodova, Karel
-Berka, Vaclav Bazgier, Sameer Velankar, Stephen K. Burley, Jaroslav Koca, and
-Alexander S. Rose. Mol* Viewer: modern web app for 3D visualization and
-analysis of large biomolecular structures. Nucleic Acids Research 49:W431-W437
-(2021). https://doi.org/10.1093/nar/gkab314
+David Sehnal, Sebastian Bittrich, Mandar Deshpande, Radka Svobodova, Karel Berka, Vaclav Bazgier, Sameer Velankar, Stephen K. Burley, Jaroslav Koca, and Alexander S. Rose. Mol* Viewer: modern web app for 3D visualization and analysis of large biomolecular structures. Nucleic Acids Research 49:W431-W437 (2021). https://doi.org/10.1093/nar/gkab314
 
 ## PDB Archive Example Data
 
@@ -88,9 +74,7 @@ Scope in this repository:
 - Documentation examples that display or cite these data files
 
 RCSB PDB states that data files in the PDB archive are available under CC0 1.0.
-RCSB PDB also encourages attribution to the original structure-data authors
-where possible. CC0 does not imply endorsement by the authors, RCSB PDB, wwPDB,
-or Creative Commons, and the data are provided without warranty.
+RCSB PDB also encourages attribution to the original structure-data authors where possible. CC0 does not imply endorsement by the authors, RCSB PDB, wwPDB, or Creative Commons, and the data are provided without warranty.
 
 Example data attribution:
 
@@ -111,9 +95,6 @@ under CC0 1.0.
 
 ## Runtime And Documentation Package References
 
-Molfig delegates Typst-side mesh rendering to `maquette` through Typst package
-imports. The maquette package is not vendored in this repository.
+Molfig delegates Typst-side mesh rendering to `maquette` through Typst package imports. The maquette package is not vendored in this repository.
 
-The public manual source imports `mantys` and its dependencies for
-documentation layout. Those documentation packages are not vendored in this
-repository.
+The public manual source imports `mantys` and its dependencies for documentation layout. Those documentation packages are not vendored in this repository.
