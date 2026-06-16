@@ -1,0 +1,11 @@
+target/
+.DS_Store
+
+# Internal parity/review notes. Public docs live under package/docs/.
+dev-docs/
+package/docs/*.md
+push.sh
+
+# Local Mol* checkout/build artifacts used only for parity development.
+artifacts/
+wasm-plugin/artifacts/
