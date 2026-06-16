@@ -1,0 +1,8 @@
+# Mol* geo-export reference fixtures.
+# Each non-comment line points to a `.reference.contract` file whose fixture,
+# options, Mol* OBJ/STL references, and generated JSON summary are validated by
+# the Rust reference tests and can be replayed by scripts/molstar-reference-convert.mjs.
+# Lines may be either a bare contract path or `contract=<path> formats=json,obj,stl`.
+# The optional `formats=` field lets future fixtures narrow exporter targets without
+# changing the existing contract file schema.
+tests/expected/molstar-reference/9r1o-molstar-assembly-1.reference.contract

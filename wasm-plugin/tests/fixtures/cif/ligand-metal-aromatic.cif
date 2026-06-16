@@ -1,0 +1,128 @@
+data_ligand_metal_aromatic
+#
+_entry.id ligand-metal-aromatic
+#
+loop_
+_entity.id
+_entity.type
+_entity.pdbx_description
+1 non-polymer 'fused aromatic ligand'
+2 non-polymer 'zinc ion'
+#
+loop_
+_struct_asym.id
+_struct_asym.entity_id
+_struct_asym.details
+L 1 ligand
+M 2 metal
+#
+loop_
+_chem_comp.id
+_chem_comp.name
+_chem_comp.type
+_chem_comp.formula
+_chem_comp.formula_weight
+_chem_comp.one_letter_code
+_chem_comp.three_letter_code
+_chem_comp.mon_nstd_flag
+_chem_comp.pdbx_synonyms
+_chem_comp.pdbx_formal_charge
+_chem_comp.pdbx_initial_date
+_chem_comp.pdbx_modified_date
+_chem_comp.pdbx_ambiguous_flag
+_chem_comp.pdbx_release_status
+LMR 'FUSED AROMATIC LIGAND' non-polymer 'C10 O1' 145.16 ? LMR n 'compact ligand' -1 2026-05-25 2026-05-25 N REL
+ZN 'ZINC ION' non-polymer Zn 65.38 ? ZN n ? 2 2026-05-25 2026-05-25 N REL
+#
+loop_
+_chem_comp_atom.comp_id
+_chem_comp_atom.atom_id
+_chem_comp_atom.alt_atom_id
+_chem_comp_atom.type_symbol
+_chem_comp_atom.charge
+_chem_comp_atom.pdbx_aromatic_flag
+_chem_comp_atom.pdbx_leaving_atom_flag
+_chem_comp_atom.pdbx_stereo_config
+_chem_comp_atom.model_Cartn_x
+_chem_comp_atom.model_Cartn_y
+_chem_comp_atom.model_Cartn_z
+_chem_comp_atom.pdbx_model_Cartn_x_ideal
+_chem_comp_atom.pdbx_model_Cartn_y_ideal
+_chem_comp_atom.pdbx_model_Cartn_z_ideal
+LMR C1 C1 C 0 Y N N 0.000 0.000 0.000 0.010 0.010 0.000
+LMR C2 C2 C 0 Y N N 1.000 0.000 0.000 1.010 0.010 0.000
+LMR C3 C3 C 0 Y N N 1.500 0.866 0.000 1.510 0.876 0.000
+LMR C4 C4 C 0 Y N N 1.000 1.732 0.000 1.010 1.742 0.000
+LMR C5 C5 C 0 Y N N 0.000 1.732 0.000 0.010 1.742 0.000
+LMR C6 C6 C 0 Y N N -0.500 0.866 0.000 -0.490 0.876 0.000
+LMR C7 C7 C 0 Y N N 1.500 2.598 0.000 1.510 2.608 0.000
+LMR C8 C8 C 0 Y N N 1.000 3.464 0.000 1.010 3.474 0.000
+LMR C9 C9 C 0 Y N N 0.000 3.464 0.000 0.010 3.474 0.000
+LMR C10 C10 C 0 Y N N -0.500 2.598 0.000 -0.490 2.608 0.000
+LMR O1 O1 O -1 N Y R -1.200 -0.800 0.000 -1.190 -0.790 0.000
+#
+loop_
+_chem_comp_bond.comp_id
+_chem_comp_bond.atom_id_1
+_chem_comp_bond.atom_id_2
+_chem_comp_bond.value_order
+_chem_comp_bond.pdbx_aromatic_flag
+_chem_comp_bond.pdbx_stereo_config
+_chem_comp_bond.pdbx_ordinal
+LMR C1 C2 arom Y N 101
+LMR C2 C3 arom Y N 102
+LMR C3 C4 arom Y N 103
+LMR C4 C5 arom Y N 104
+LMR C5 C6 arom Y N 105
+LMR C6 C1 arom Y N 106
+LMR C4 C7 arom Y N 107
+LMR C7 C8 arom Y N 108
+LMR C8 C9 arom Y N 109
+LMR C9 C10 arom Y N 110
+LMR C10 C5 arom Y N 111
+LMR C1 O1 sing N R 112
+#
+loop_
+_struct_conn.id
+_struct_conn.conn_type_id
+_struct_conn.ptnr1_label_comp_id
+_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_seq_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr1_symmetry
+_struct_conn.ptnr2_label_comp_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_seq_id
+_struct_conn.ptnr2_label_atom_id
+_struct_conn.ptnr2_symmetry
+_struct_conn.pdbx_value_order
+_struct_conn.pdbx_dist_value
+zn-o1 metalc ZN M 1 ZN 1_555 LMR L 1 O1 1_555 sing 2.10
+#
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.occupancy
+_atom_site.B_iso_or_equiv
+HETATM 1 C C1 LMR L 1 1 0.000 0.000 0.000 1.00 12.00
+HETATM 2 C C2 LMR L 1 1 1.000 0.000 0.000 1.00 12.00
+HETATM 3 C C3 LMR L 1 1 1.500 0.866 0.000 1.00 12.00
+HETATM 4 C C4 LMR L 1 1 1.000 1.732 0.000 1.00 12.00
+HETATM 5 C C5 LMR L 1 1 0.000 1.732 0.000 1.00 12.00
+HETATM 6 C C6 LMR L 1 1 -0.500 0.866 0.000 1.00 12.00
+HETATM 7 C C7 LMR L 1 1 1.500 2.598 0.000 1.00 12.00
+HETATM 8 C C8 LMR L 1 1 1.000 3.464 0.000 1.00 12.00
+HETATM 9 C C9 LMR L 1 1 0.000 3.464 0.000 1.00 12.00
+HETATM 10 C C10 LMR L 1 1 -0.500 2.598 0.000 1.00 12.00
+HETATM 11 O O1 LMR L 1 1 -1.200 -0.800 0.000 1.00 12.00
+HETATM 12 ZN ZN ZN M 2 1 -2.800 -0.800 0.000 1.00 12.00
+#

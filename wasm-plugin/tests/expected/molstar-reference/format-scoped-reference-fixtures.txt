@@ -1,0 +1,4 @@
+# Format-scoped Mol* reference fixture manifest used to verify that tooling
+# honors per-entry `formats=` selectors without requiring unrelated artifact
+# metadata.
+formats=json contract=tests/expected/molstar-reference/9r1o-molstar-assembly-1.reference.contract

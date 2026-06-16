@@ -1,0 +1,26 @@
+section	domains	checked_items
+Completion Rules	reference-converter-tooling|ply-export-contract|diff-cli-and-export-diagnostics	17
+Already Implemented Baseline	parser-input-paths|binary-cif-direct-path|assembly-units-and-operators|altloc-and-insertion-codes|chem-comp-struct-conn-index-pair-bonds|ring-resonance|coarse-ihm-model-units|lookup3d-boundary-principal-axes|polymer-trace-cyclic-ranges|cartoon-ribbon-mesh|nucleotide-direction-visuals	16
+Reference Fixture Matrix	parser-input-paths|binary-cif-direct-path|altloc-and-insertion-codes|chem-comp-struct-conn-index-pair-bonds|ring-resonance|carbohydrate-branched-visuals|assembly-units-and-operators|coarse-ihm-model-units|obj-export-parity|stl-export-parity-diagnostics|ply-export-contract	20
+BinaryCIF And CIF Table Layer	binary-cif-direct-path|parser-input-paths	16
+Core mmCIF Categories	parser-input-paths|binary-cif-direct-path|chem-comp-struct-conn-index-pair-bonds|carbohydrate-branched-visuals|assembly-units-and-operators|coarse-ihm-model-units|secondary-structure	38
+Model Construction	parser-input-paths|altloc-and-insertion-codes|assembly-units-and-operators|lookup3d-boundary-principal-axes|coarse-ihm-model-units	21
+Atomic Derived Data	chem-comp-struct-conn-index-pair-bonds|ring-resonance|carbohydrate-branched-visuals|nucleotide-direction-visuals|ball-and-stick-component-visuals	12
+Atomic Ranges And Polymer Trace	polymer-trace-cyclic-ranges|cartoon-ribbon-mesh	11
+Coarse Model Parity	coarse-ihm-model-units|lookup3d-boundary-principal-axes	18
+Symmetry, Assemblies, And Operators	assembly-units-and-operators|lookup3d-boundary-principal-axes	16
+Unit And Structure Layer	assembly-units-and-operators|lookup3d-boundary-principal-axes|chem-comp-struct-conn-index-pair-bonds|coarse-ihm-model-units	20
+Bonds	chem-comp-struct-conn-index-pair-bonds|ring-resonance	22
+Rings And Resonance	ring-resonance|chem-comp-struct-conn-index-pair-bonds|nucleotide-direction-visuals	11
+Carbohydrates And Branched Entities	carbohydrate-branched-visuals|chem-comp-struct-conn-index-pair-bonds	12
+Secondary Structure	secondary-structure|polymer-trace-cyclic-ranges|cartoon-ribbon-mesh	11
+Representation Object Layer	cartoon-ribbon-mesh|nucleotide-direction-visuals|carbohydrate-branched-visuals|ball-and-stick-component-visuals|polymer-trace-cyclic-ranges	22
+Mesh Builder Exactness	cartoon-ribbon-mesh|nucleotide-direction-visuals|carbohydrate-branched-visuals|ball-and-stick-component-visuals|obj-export-parity|stl-export-parity-diagnostics	22
+Cartoon And Ribbon Geometry	cartoon-ribbon-mesh|polymer-trace-cyclic-ranges|obj-export-parity|stl-export-parity-diagnostics	23
+Nucleotide Geometry	nucleotide-direction-visuals|cartoon-ribbon-mesh	11
+Surface And Volume Representations	ball-and-stick-component-visuals|lookup3d-boundary-principal-axes|typst-public-api-smoke	7
+Exporter Exactness	obj-export-parity|stl-export-parity-diagnostics|diff-cli-and-export-diagnostics|reference-converter-tooling	49
+Molfig Static PLY Contract	ply-export-contract|typst-public-api-smoke	6
+Typst API And Maquette Bridge	typst-public-api-smoke|parser-input-paths|coarse-ihm-model-units|chem-comp-struct-conn-index-pair-bonds|ring-resonance|obj-export-parity	14
+Performance And Determinism	wasm-performance-baselines|lookup3d-boundary-principal-axes|obj-export-parity|stl-export-parity-diagnostics|ply-export-contract	11
+Required Verification Commands	reference-converter-tooling|obj-export-parity|stl-export-parity-diagnostics|ply-export-contract|diff-cli-and-export-diagnostics|wasm-performance-baselines	11

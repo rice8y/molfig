@@ -1,0 +1,17 @@
+HEADER    MOLFIG TEST FIXTURE                     25-MAY-26
+TITLE     ATOMIC PROTEIN FRAGMENT WITHOUT ALTERNATE LOCATIONS
+MODEL        1
+ATOM      1  N   GLY A   1       0.000   0.000   0.000  1.00 10.00           N
+ATOM      2  CA  GLY A   1       1.450   0.000   0.000  1.00 10.00           C
+ATOM      3  C   GLY A   1       2.050   1.320   0.000  1.00 10.00           C
+ATOM      4  O   GLY A   1       1.500   2.390   0.000  1.00 10.00           O
+ATOM      5  N   SER A   2       3.300   1.250   0.000  1.00 11.00           N
+ATOM      6  CA  SER A   2       4.000   2.500   0.000  1.00 11.00           C
+ATOM      7  OG  SER A   2       5.250   2.200   0.000  1.00 11.00           O
+CONECT    1    2
+CONECT    2    3
+CONECT    3    4    5
+CONECT    5    6
+CONECT    6    7
+ENDMDL
+END

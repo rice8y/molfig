@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "molstar_reference_commit": "1b8117d3f10f7c978aabb5a0d3d47370635aefe4",
+  "artifacts": [
+    {
+      "name": "9r1o-molstar-assembly-1",
+      "contract": "tests/expected/molstar-reference/9r1o-molstar-assembly-1.reference.contract",
+      "fixture": "package/examples/data/9R1O.pdb",
+      "exports": {
+        "obj": "package/examples/data/9R1O.obj",
+        "mtl": "package/examples/data/9R1O.mtl",
+        "stl": "package/examples/data/9R1O.stl",
+        "json": "tests/expected/molstar-reference/9r1o-molstar-assembly-1.summary.json"
+      },
+      "obj": {
+        "export_basename": "9R1O",
+        "mtllib": "9R1O.mtl",
+        "materials": [
+          "0x1b9e771",
+          "0xff26181"
+        ],
+        "material_switch_count": 18
+      },
+      "mtl": {
+        "byte_len": 181,
+        "fnv1a64": "6820621c995f3add",
+        "material_count": 2,
+        "materials": [
+          "0x1b9e771",
+          "0xff26181"
+        ]
+      },
+      "stl": {
+        "header": "Exported from Mol* 5.9.0",
+        "nonzero_attribute_count": 0
+      }
+    }
+  ]
+}

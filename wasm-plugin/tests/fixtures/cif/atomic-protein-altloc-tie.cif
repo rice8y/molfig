@@ -1,0 +1,42 @@
+data_atomic_protein_altloc_tie
+#
+_entry.id atomic-protein-altloc-tie
+#
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_alt_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.occupancy
+_atom_site.B_iso_or_equiv
+_atom_site.pdbx_PDB_model_num
+ATOM 1 N N  . ALA A 1 0.000 0.000 0.000 1.00 10.00 1
+ATOM 2 C CA . ALA A 1 1.450 0.000 0.000 1.00 10.00 1
+ATOM 3 C C  . ALA A 1 2.050 1.320 0.000 1.00 10.00 1
+ATOM 4 O O  . ALA A 1 1.500 2.390 0.000 1.00 10.00 1
+ATOM 5 C CB A ALA A 1 1.850 -0.800 1.000 0.50 12.00 1
+ATOM 6 C CB B ALA A 1 1.850 -0.800 -1.000 0.50 18.00 1
+ATOM 7 N N  . GLY A 2 3.300 1.250 0.000 1.00 11.00 1
+#
+loop_
+_struct_conn.id
+_struct_conn.conn_type_id
+_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_seq_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_seq_id
+_struct_conn.ptnr2_label_atom_id
+covale1 covale A 1 N  A 1 CA
+covale2 covale A 1 CA A 1 C
+covale3 covale A 1 CA A 1 CB
+covale4 covale A 1 C  A 1 O
+covale5 covale A 1 C  A 2 N
+#

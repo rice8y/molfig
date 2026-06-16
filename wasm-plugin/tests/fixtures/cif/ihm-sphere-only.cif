@@ -1,0 +1,26 @@
+data_ihm_sphere_only
+#
+_entry.id IHM_SPHERE_ONLY
+#
+loop_
+_ihm_model_list.model_id
+_ihm_model_list.model_name
+_ihm_model_list.assembly_id
+_ihm_model_list.protocol_id
+_ihm_model_list.representation_id
+1 sphere_only 1 1 1
+#
+loop_
+_ihm_sphere_obj_site.id
+_ihm_sphere_obj_site.model_id
+_ihm_sphere_obj_site.entity_id
+_ihm_sphere_obj_site.asym_id
+_ihm_sphere_obj_site.seq_id_begin
+_ihm_sphere_obj_site.seq_id_end
+_ihm_sphere_obj_site.Cartn_x
+_ihm_sphere_obj_site.Cartn_y
+_ihm_sphere_obj_site.Cartn_z
+_ihm_sphere_obj_site.object_radius
+_ihm_sphere_obj_site.rmsf
+1 1 1 A 1 10 0.0 0.0 0.0 2.0 0.25
+#

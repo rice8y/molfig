@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "purpose": "Stable performance and memory baselines for large local verification fixtures.",
+  "baselines": [
+    {
+      "name": "9r1o-asymmetric-lookup3d",
+      "fixture": "package/examples/data/9R1O.pdb",
+      "options": {
+        "format": "pdb",
+        "representation": "molstar",
+        "assembly": "asymmetric-unit",
+        "sphere-detail": 1
+      },
+      "atom_count": 2870,
+      "query_count": 64,
+      "min_total_hits": 64,
+      "max_elapsed_ms": 1000
+    },
+    {
+      "name": "9r1o-asymmetric-mesh-generation",
+      "fixture": "package/examples/data/9R1O.pdb",
+      "options": {
+        "format": "pdb",
+        "representation": "molstar",
+        "assembly": "asymmetric-unit",
+        "sphere-detail": 1
+      },
+      "vertex_count": 74694,
+      "face_count": 111504,
+      "group_count": 362,
+      "max_elapsed_ms": 5000,
+      "debug_max_elapsed_ms": 600000
+    },
+    {
+      "name": "checked-in-wasm-memory",
+      "fixture": "package/molfig.wasm",
+      "byte_len": 823390,
+      "max_byte_len": 900000,
+      "initial_pages": 18,
+      "maximum_pages": null,
+      "exported_memory": true
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+HEADER    MOLFIG TEST FIXTURE                     25-MAY-26
+TITLE     MIXED GLY AND DNA THYMIDINE FRAGMENT
+MODEL        1
+ATOM      1  N   GLY A   1       0.000   0.000   0.000  1.00 12.00           N
+ATOM      2  CA  GLY A   1       1.458   0.000   0.000  1.00 12.00           C
+ATOM      3  C   GLY A   1       2.020   1.410   0.000  1.00 12.00           C
+ATOM      4  O3'  DT B   2       4.000   0.000   0.000  1.00 12.00           O
+ATOM      5  C3'  DT B   2       4.200  -0.200   0.200  1.00 12.00           C
+ATOM      6  C4'  DT B   2       4.100  -0.300   0.000  1.00 12.00           C
+ATOM      7  C1'  DT B   2       4.100   0.200   0.100  1.00 12.00           C
+ATOM      8   N1  DT B   2       4.000   1.000   0.000  1.00 12.00           N
+ATOM      9   C2  DT B   2       4.400   1.200   0.000  1.00 12.00           C
+ATOM     10   N3  DT B   2       4.800   1.000   0.000  1.00 12.00           N
+ATOM     11   C4  DT B   2       4.800   0.600   0.000  1.00 12.00           C
+ATOM     12   C5  DT B   2       4.400   0.400   0.000  1.00 12.00           C
+ATOM     13   C6  DT B   2       4.000   0.600   0.000  1.00 12.00           C
+CONECT    1    2
+CONECT    2    3
+ENDMDL
+END

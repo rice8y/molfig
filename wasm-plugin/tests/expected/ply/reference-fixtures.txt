@@ -1,0 +1,4 @@
+# molfig-owned PLY contract reference fixtures.
+# Each non-comment line points to a `.contract` file whose `fixture` and
+# `options` entries are replayed by `molfig_ply_contract_outputs_match_all_reference_fixtures`.
+tests/expected/ply/9r1o-molstar-asymmetric-unit.ply.contract

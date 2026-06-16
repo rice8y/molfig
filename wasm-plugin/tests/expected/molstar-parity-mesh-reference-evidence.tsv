@@ -1,0 +1,7 @@
+mesh_section	molstar_reference_domains	checked_items	notes
+Representation Object Layer	cartoon-ribbon-mesh|nucleotide-direction-visuals|carbohydrate-branched-visuals|ball-and-stick-component-visuals|polymer-trace-cyclic-ranges	22	Semantic render-object and realized visual rows compare against Mol* JSON/OBJ reference summaries.
+Mesh Builder Exactness	cartoon-ribbon-mesh|nucleotide-direction-visuals|carbohydrate-branched-visuals|ball-and-stick-component-visuals|obj-export-parity|stl-export-parity-diagnostics	22	Primitive and builder exactness rows are covered by Mol* OBJ/STL/reference summary domains.
+Cartoon And Ribbon Geometry	cartoon-ribbon-mesh|polymer-trace-cyclic-ranges|obj-export-parity|stl-export-parity-diagnostics	23	Cartoon/ribbon geometry rows compare to Mol* render-object summaries and 9R1O OBJ/STL artifacts.
+Nucleotide Geometry	nucleotide-direction-visuals|cartoon-ribbon-mesh	11	Nucleotide ring/block/direction rows compare to Mol* nucleotide summary and cartoon export domains.
+Surface And Volume Representations	ball-and-stick-component-visuals|lookup3d-boundary-principal-axes|typst-public-api-smoke	7	Checked rows here are explicit static-export exclusions or visible-boundary/export paths with Mol* reference coverage.
+Exporter Exactness	obj-export-parity|stl-export-parity-diagnostics|diff-cli-and-export-diagnostics|reference-converter-tooling	49	OBJ/STL exporter rows compare to Mol* reference artifacts or Mol* exporter behavior contracts.

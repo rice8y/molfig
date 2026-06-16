@@ -1,0 +1,15 @@
+HEADER    MOLFIG TEST FIXTURE                     25-MAY-26
+TITLE     ATOMIC PROTEIN FRAGMENT WITH A/B ALTERNATE LOCATION TIE
+MODEL        1
+ATOM      1  N   ALA A   1       0.000   0.000   0.000  1.00 10.00           N
+ATOM      2  CA  ALA A   1       1.450   0.000   0.000  1.00 10.00           C
+ATOM      3  C   ALA A   1       2.050   1.320   0.000  1.00 10.00           C
+ATOM      4  O   ALA A   1       1.500   2.390   0.000  1.00 10.00           O
+ATOM      5  CB AALA A   1       1.850  -0.800   1.000  0.50 12.00           C
+ATOM      6  CB BALA A   1       1.850  -0.800  -1.000  0.50 18.00           C
+ATOM      7  N   GLY A   2       3.300   1.250   0.000  1.00 11.00           N
+CONECT    1    2
+CONECT    2    3    5
+CONECT    3    4    7
+ENDMDL
+END

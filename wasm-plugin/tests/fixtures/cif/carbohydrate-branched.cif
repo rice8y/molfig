@@ -1,0 +1,126 @@
+data_carbohydrate_branched
+#
+_entry.id carbohydrate-branched
+#
+loop_
+_entity.id
+_entity.type
+_entity.pdbx_description
+1 branched 'branched oligosaccharide'
+#
+loop_
+_struct_asym.id
+_struct_asym.entity_id
+_struct_asym.details
+B 1 'branched chain B'
+#
+loop_
+_pdbx_entity_branch.entity_id
+_pdbx_entity_branch.type
+1 oligosaccharide
+#
+loop_
+_pdbx_entity_branch_link.link_id
+_pdbx_entity_branch_link.details
+_pdbx_entity_branch_link.entity_id
+_pdbx_entity_branch_link.entity_branch_list_num_1
+_pdbx_entity_branch_link.entity_branch_list_num_2
+_pdbx_entity_branch_link.comp_id_1
+_pdbx_entity_branch_link.comp_id_2
+_pdbx_entity_branch_link.atom_id_1
+_pdbx_entity_branch_link.leaving_atom_id_1
+_pdbx_entity_branch_link.atom_stereo_config_1
+_pdbx_entity_branch_link.atom_id_2
+_pdbx_entity_branch_link.leaving_atom_id_2
+_pdbx_entity_branch_link.atom_stereo_config_2
+_pdbx_entity_branch_link.value_order
+1 'NAG C1 to MAN O4 glycosidic link' 1 1 2 NAG MAN C1 O1 n O4 HO4 n sing
+#
+loop_
+_pdbx_branch_scheme.entity_id
+_pdbx_branch_scheme.hetero
+_pdbx_branch_scheme.asym_id
+_pdbx_branch_scheme.mon_id
+_pdbx_branch_scheme.num
+_pdbx_branch_scheme.pdb_asym_id
+_pdbx_branch_scheme.pdb_seq_num
+_pdbx_branch_scheme.pdb_mon_id
+_pdbx_branch_scheme.auth_asym_id
+_pdbx_branch_scheme.auth_seq_num
+_pdbx_branch_scheme.auth_mon_id
+1 n B NAG 1 B 101 NAG BA 501 NAG
+1 n B MAN 2 B 102 MAN BA 502 MAN
+#
+loop_
+_chem_comp.id
+_chem_comp.type
+NAG 'D-saccharide, beta linking'
+MAN 'D-saccharide, alpha linking'
+#
+loop_
+_chem_comp_bond.comp_id
+_chem_comp_bond.atom_id_1
+_chem_comp_bond.atom_id_2
+_chem_comp_bond.value_order
+_chem_comp_bond.pdbx_aromatic_flag
+_chem_comp_bond.pdbx_stereo_config
+_chem_comp_bond.pdbx_ordinal
+NAG C1 C2 sing N N 1
+NAG C2 C3 sing N N 2
+NAG C3 C4 sing N N 3
+NAG C4 C5 sing N N 4
+NAG C5 O5 sing N N 5
+NAG O5 C1 sing N N 6
+NAG C4 O4 sing N N 7
+MAN C1 C2 sing N N 8
+MAN C2 C3 sing N N 9
+MAN C3 C4 sing N N 10
+MAN C4 C5 sing N N 11
+MAN C5 O5 sing N N 12
+MAN O5 C1 sing N N 13
+MAN C4 O4 sing N N 14
+#
+loop_
+_struct_conn.id
+_struct_conn.conn_type_id
+_struct_conn.ptnr1_label_comp_id
+_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_seq_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr2_label_comp_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_seq_id
+_struct_conn.ptnr2_label_atom_id
+_struct_conn.pdbx_value_order
+_struct_conn.pdbx_dist_value
+gly1 covale NAG B 1 C1 MAN B 2 O4 sing 1.40
+#
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.occupancy
+_atom_site.B_iso_or_equiv
+HETATM 1 C C1 NAG B 1 1 0.000 0.000 0.000 1.00 10.00
+HETATM 2 C C2 NAG B 1 1 1.000 0.000 0.000 1.00 10.00
+HETATM 3 C C3 NAG B 1 1 1.500 1.000 0.000 1.00 10.00
+HETATM 4 C C4 NAG B 1 1 1.000 2.000 0.000 1.00 10.00
+HETATM 5 C C5 NAG B 1 1 0.000 2.000 0.000 1.00 10.00
+HETATM 6 O O5 NAG B 1 1 -0.500 1.000 0.000 1.00 10.00
+HETATM 7 O O4 NAG B 1 1 1.200 2.800 0.000 1.00 10.00
+HETATM 8 C C1 MAN B 1 2 4.000 0.000 0.000 1.00 10.00
+HETATM 9 C C2 MAN B 1 2 5.000 0.000 0.000 1.00 10.00
+HETATM 10 C C3 MAN B 1 2 5.500 1.000 0.000 1.00 10.00
+HETATM 11 C C4 MAN B 1 2 5.000 2.000 0.000 1.00 10.00
+HETATM 12 C C5 MAN B 1 2 4.000 2.000 0.000 1.00 10.00
+HETATM 13 O O5 MAN B 1 2 3.500 1.000 0.000 1.00 10.00
+HETATM 14 O O4 MAN B 1 2 2.500 1.000 0.000 1.00 10.00
+#

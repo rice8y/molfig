@@ -1,0 +1,34 @@
+data_ihm_gaussian_only
+#
+_entry.id IHM_GAUSSIAN_ONLY
+#
+loop_
+_ihm_model_list.model_id
+_ihm_model_list.model_name
+_ihm_model_list.assembly_id
+_ihm_model_list.protocol_id
+_ihm_model_list.representation_id
+1 gaussian_only 1 1 1
+#
+loop_
+_ihm_gaussian_obj_site.id
+_ihm_gaussian_obj_site.model_id
+_ihm_gaussian_obj_site.entity_id
+_ihm_gaussian_obj_site.asym_id
+_ihm_gaussian_obj_site.seq_id_begin
+_ihm_gaussian_obj_site.seq_id_end
+_ihm_gaussian_obj_site.mean_Cartn_x
+_ihm_gaussian_obj_site.mean_Cartn_y
+_ihm_gaussian_obj_site.mean_Cartn_z
+_ihm_gaussian_obj_site.weight
+_ihm_gaussian_obj_site.covariance_matrix[1][1]
+_ihm_gaussian_obj_site.covariance_matrix[1][2]
+_ihm_gaussian_obj_site.covariance_matrix[1][3]
+_ihm_gaussian_obj_site.covariance_matrix[2][1]
+_ihm_gaussian_obj_site.covariance_matrix[2][2]
+_ihm_gaussian_obj_site.covariance_matrix[2][3]
+_ihm_gaussian_obj_site.covariance_matrix[3][1]
+_ihm_gaussian_obj_site.covariance_matrix[3][2]
+_ihm_gaussian_obj_site.covariance_matrix[3][3]
+1 1 1 G 11 20 4.0 0.0 0.0 1.5 4.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 1.0
+#

@@ -1,0 +1,359 @@
+{
+  "schema": 1,
+  "purpose": "Stable expectations for PDB/CIF to OBJ/STL/PLY conversion tests.",
+  "fixtures": {
+    "water": {
+      "inputs": [
+        "tests/fixtures/pdb/water.pdb",
+        "tests/fixtures/cif/water.cif"
+      ],
+      "parse": {
+        "atomCount": 3,
+        "bondCount": 2,
+        "models": 1,
+        "residues": ["HOH"],
+        "chains": ["A"],
+        "elements": { "H": 2, "O": 1 },
+        "bboxAngstrom": {
+          "min": [-0.239, 0.0, 0.0],
+          "max": [0.957, 0.927, 0.0]
+        }
+      },
+      "exports": {
+        "obj": {
+          "requiredPrefixes": ["# molfig", "o water", "v ", "f "],
+          "mustNotContain": ["nan", "undefined", "Infinity"],
+          "minVertexCount": 24,
+          "minFaceCount": 16
+        },
+        "stl": {
+          "requiredPrefixes": ["solid water"],
+          "mustContain": ["facet normal", "outer loop", "endfacet"],
+          "mustNotContain": ["nan", "undefined", "Infinity"],
+          "minTriangleCount": 16
+        },
+        "ply": {
+          "requiredPrefixes": ["ply", "format ascii 1.0", "element vertex", "element face"],
+          "mustNotContain": ["nan", "undefined", "Infinity"],
+          "minVertexCount": 24,
+          "minFaceCount": 16
+        }
+      }
+    },
+    "tiny-peptide": {
+      "inputs": [
+        "tests/fixtures/pdb/tiny-peptide.pdb",
+        "tests/fixtures/cif/tiny-peptide.cif"
+      ],
+      "parse": {
+        "atomCount": 6,
+        "bondCount": 5,
+        "models": 1,
+        "residues": ["GLY", "ALA"],
+        "chains": ["A"],
+        "elements": { "C": 4, "N": 2 },
+        "bboxAngstrom": {
+          "min": [0.0, 0.0, 0.0],
+          "max": [5.5, 2.82, 0.0]
+        }
+      },
+      "exports": {
+        "obj": {
+          "requiredPrefixes": ["# molfig", "o tiny-peptide", "v ", "f "],
+          "mustNotContain": ["nan", "undefined", "Infinity"],
+          "minVertexCount": 48,
+          "minFaceCount": 32
+        },
+        "stl": {
+          "requiredPrefixes": ["solid tiny-peptide"],
+          "mustContain": ["facet normal", "outer loop", "endfacet"],
+          "mustNotContain": ["nan", "undefined", "Infinity"],
+          "minTriangleCount": 32
+        },
+        "ply": {
+          "requiredPrefixes": ["ply", "format ascii 1.0", "element vertex", "element face"],
+          "mustNotContain": ["nan", "undefined", "Infinity"],
+          "minVertexCount": 48,
+          "minFaceCount": 32
+        }
+      }
+    },
+    "atomic-protein-no-altloc": {
+      "inputs": [
+        "tests/fixtures/pdb/atomic-protein-no-altloc.pdb",
+        "tests/fixtures/cif/atomic-protein-no-altloc.cif"
+      ],
+      "parse": {
+        "atomCount": 7,
+        "bondCount": 6,
+        "models": 1,
+        "residues": ["GLY", "SER"],
+        "chains": ["A"],
+        "elements": { "C": 3, "N": 2, "O": 2 },
+        "bboxAngstrom": {
+          "min": [0.0, 0.0, 0.0],
+          "max": [5.25, 2.5, 0.0]
+        },
+        "altLocs": []
+      },
+      "exports": {
+        "obj": {
+          "requiredPrefixes": ["# molfig", "o atomic-protein-no-altloc", "v ", "f "],
+          "mustNotContain": ["nan", "undefined", "Infinity"],
+          "minVertexCount": 56,
+          "minFaceCount": 40
+        },
+        "stl": {
+          "requiredPrefixes": ["solid atomic-protein-no-altloc"],
+          "mustContain": ["facet normal", "outer loop", "endfacet"],
+          "mustNotContain": ["nan", "undefined", "Infinity"],
+          "minTriangleCount": 40
+        },
+        "ply": {
+          "requiredPrefixes": ["ply", "format ascii 1.0", "element vertex", "element face"],
+          "mustNotContain": ["nan", "undefined", "Infinity"],
+          "minVertexCount": 56,
+          "minFaceCount": 40
+        }
+      }
+    },
+    "atomic-protein-altloc-tie": {
+      "inputs": [
+        "tests/fixtures/pdb/atomic-protein-altloc-tie.pdb",
+        "tests/fixtures/cif/atomic-protein-altloc-tie.cif"
+      ],
+      "parse": {
+        "atomCount": 7,
+        "bondCount": 5,
+        "models": 1,
+        "residues": ["ALA", "GLY"],
+        "chains": ["A"],
+        "elements": { "C": 4, "N": 2, "O": 1 },
+        "bboxAngstrom": {
+          "min": [0.0, -0.8, -1.0],
+          "max": [3.3, 2.39, 1.0]
+        },
+        "altLocs": ["A", "B"]
+      },
+      "exports": {
+        "obj": {
+          "requiredPrefixes": ["# molfig", "o atomic-protein-altloc-tie", "v ", "f "],
+          "mustNotContain": ["nan", "undefined", "Infinity"],
+          "minVertexCount": 56,
+          "minFaceCount": 40
+        },
+        "stl": {
+          "requiredPrefixes": ["solid atomic-protein-altloc-tie"],
+          "mustContain": ["facet normal", "outer loop", "endfacet"],
+          "mustNotContain": ["nan", "undefined", "Infinity"],
+          "minTriangleCount": 40
+        },
+        "ply": {
+          "requiredPrefixes": ["ply", "format ascii 1.0", "element vertex", "element face"],
+          "mustNotContain": ["nan", "undefined", "Infinity"],
+          "minVertexCount": 56,
+          "minFaceCount": 40
+        }
+      },
+      "futureOptions": {
+        "altLoc": ["A", "B", "highest-occupancy", "all"]
+      }
+    },
+    "mixed-protein-nucleic": {
+      "inputs": [
+        "tests/fixtures/pdb/mixed-protein-nucleic.pdb",
+        "tests/fixtures/cif/mixed-protein-nucleic.cif"
+      ],
+      "parse": {
+        "atomCount": 13,
+        "bondCount": 2,
+        "models": 1,
+        "residues": ["GLY", "DT"],
+        "chains": ["A", "B"],
+        "elements": { "C": 9, "N": 3, "O": 1 },
+        "bboxAngstrom": {
+          "min": [0.0, -0.3, 0.0],
+          "max": [4.8, 1.41, 0.2]
+        }
+      },
+      "futureOptions": {
+        "representations": ["cartoon", "molstar"],
+        "visuals": ["backbone", "nucleotide-ring"]
+      }
+    },
+    "nucleic-acid-rna-dna": {
+      "inputs": [
+        "tests/fixtures/pdb/nucleic-acid-rna-dna.pdb",
+        "tests/fixtures/cif/nucleic-acid-rna-dna.cif"
+      ],
+      "parse": {
+        "atomCount": 23,
+        "bondCount": 0,
+        "models": 1,
+        "residues": ["A", "DT"],
+        "chains": ["A", "B"],
+        "elements": { "C": 15, "N": 6, "O": 2 },
+        "bboxAngstrom": {
+          "min": [0.0, -0.3, 0.0],
+          "max": [4.8, 1.2, 0.2]
+        }
+      },
+      "futureOptions": {
+        "representations": ["cartoon", "molstar"],
+        "visuals": ["nucleotide-ring", "nucleotide-block"],
+        "renderObject": {
+          "requiredKeys": ["geometry_type", "visual", "valueCell"]
+        }
+      }
+    },
+    "assembly-altloc-helix": {
+      "inputs": [
+        "tests/fixtures/pdb/assembly-altloc-helix.pdb",
+        "tests/fixtures/cif/assembly-altloc-helix.cif"
+      ],
+      "binaryInputs": [
+        "tests/fixtures/bcif/assembly-altloc-helix.bcif"
+      ],
+      "parse": {
+        "atomCount": 14,
+        "bondCount": 12,
+        "models": 1,
+        "residues": ["ALA", "SER", "GLY"],
+        "chains": ["A"],
+        "elements": { "C": 8, "N": 3, "O": 3 },
+        "bboxAngstrom": {
+          "min": [0.0, -0.9, -1.12],
+          "max": [8.1, 3.48, 1.24]
+        },
+        "altLocs": ["A", "B"],
+        "assemblies": [
+          {
+            "id": "1",
+            "operatorCount": 2,
+            "asymIds": ["A"]
+          }
+        ],
+        "secondaryStructure": [
+          {
+            "type": "helix",
+            "id": "H1",
+            "chain": "A",
+            "begSeqId": 1,
+            "endSeqId": 3
+          }
+        ]
+      },
+      "exports": {
+        "obj": {
+          "requiredPrefixes": ["# molfig", "o assembly-altloc-helix", "v ", "f "],
+          "mustNotContain": ["nan", "undefined", "Infinity"],
+          "minVertexCount": 104,
+          "minFaceCount": 72
+        },
+        "stl": {
+          "requiredPrefixes": ["solid assembly-altloc-helix"],
+          "mustContain": ["facet normal", "outer loop", "endfacet"],
+          "mustNotContain": ["nan", "undefined", "Infinity"],
+          "minTriangleCount": 72
+        },
+        "ply": {
+          "requiredPrefixes": ["ply", "format ascii 1.0", "element vertex", "element face"],
+          "mustNotContain": ["nan", "undefined", "Infinity"],
+          "minVertexCount": 104,
+          "minFaceCount": 72
+        }
+      },
+      "futureOptions": {
+        "formats": ["bcif", "binarycif"],
+        "representations": ["cartoon", "ribbon"],
+        "altLoc": ["A", "B", "highest-occupancy", "all"],
+        "assembly": ["asymmetric-unit", "1"],
+        "renderObject": {
+          "requiredKeys": ["format", "mesh", "content", "info"]
+        }
+      }
+    },
+    "assembly-altloc-secondary": {
+      "inputs": [
+        "tests/fixtures/pdb/assembly-altloc-secondary.pdb",
+        "tests/fixtures/cif/assembly-altloc-secondary.cif"
+      ],
+      "parse": {
+        "atomCount": 12,
+        "bondCount": 8,
+        "models": 1,
+        "residues": ["GLY", "ALA", "SER"],
+        "chains": ["A"],
+        "elements": { "C": 7, "N": 3, "O": 2 },
+        "bboxAngstrom": {
+          "min": [0.0, 0.0, 0.0],
+          "max": [8.52, 3.12, 0.0]
+        },
+        "altLocs": ["A", "B"],
+        "assemblies": [
+          {
+            "id": "1",
+            "operatorCount": 1,
+            "asymIds": ["A"]
+          }
+        ],
+        "secondaryStructure": [
+          {
+            "type": "helix",
+            "id": "HELX1",
+            "chain": "A",
+            "begSeqId": 1,
+            "endSeqId": 2
+          },
+          {
+            "type": "sheet",
+            "id": "S1",
+            "chain": "A",
+            "begSeqId": 3,
+            "endSeqId": 3
+          }
+        ]
+      },
+      "exports": {
+        "obj": {
+          "requiredPrefixes": ["# molfig", "o assembly-altloc-secondary", "v ", "f "],
+          "mustNotContain": ["nan", "undefined", "Infinity"],
+          "minVertexCount": 88,
+          "minFaceCount": 64
+        },
+        "stl": {
+          "requiredPrefixes": ["solid assembly-altloc-secondary"],
+          "mustContain": ["facet normal", "outer loop", "endfacet"],
+          "mustNotContain": ["nan", "undefined", "Infinity"],
+          "minTriangleCount": 64
+        },
+        "ply": {
+          "requiredPrefixes": ["ply", "format ascii 1.0", "element vertex", "element face"],
+          "mustNotContain": ["nan", "undefined", "Infinity"],
+          "minVertexCount": 88,
+          "minFaceCount": 64
+        }
+      },
+      "futureOptions": {
+        "representations": ["cartoon", "ribbon"],
+        "altLoc": ["A", "B", "highest-occupancy", "all"],
+        "assembly": ["asymmetric-unit", "1"],
+        "renderObject": {
+          "requiredKeys": ["kind", "mesh_format", "content"]
+        }
+      }
+    }
+  },
+  "normalization": {
+    "coordinateUnit": "angstrom",
+    "centerDefault": true,
+    "scaleDefault": "fit",
+    "deterministicOrdering": [
+      "model",
+      "chain",
+      "residue sequence",
+      "atom serial or id"
+    ],
+    "numericTolerance": 0.0001
+  }
+}

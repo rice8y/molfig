@@ -1,0 +1,37 @@
+HEADER    MOLFIG TEST FIXTURE                     11-MAY-26
+TITLE     ASSEMBLY, ALTLOC, AND HELIX CONTRACT FRAGMENT
+REMARK 350 BIOMOLECULE: 1
+REMARK 350 APPLY THE FOLLOWING TO CHAINS: A
+REMARK 350   BIOMT1   1  1.000000  0.000000  0.000000        0.00000
+REMARK 350   BIOMT2   1  0.000000  1.000000  0.000000        0.00000
+REMARK 350   BIOMT3   1  0.000000  0.000000  1.000000        0.00000
+REMARK 350   BIOMT1   2 -1.000000  0.000000  0.000000       12.00000
+REMARK 350   BIOMT2   2  0.000000  1.000000  0.000000        0.00000
+REMARK 350   BIOMT3   2  0.000000  0.000000  1.000000        0.00000
+HELIX    1 H1  ALA A   1  GLY A   3  1                                   9
+MODEL        1
+ATOM      1  N   ALA A   1       0.000   0.000   0.000  1.00 11.00           N
+ATOM      2  CA  ALA A   1       1.450   0.050   0.100  1.00 11.00           C
+ATOM      3  C   ALA A   1       2.050   1.390   0.000  1.00 11.00           C
+ATOM      4  O   ALA A   1       1.500   2.460   0.100  1.00 11.00           O
+ATOM      5  CB AALA A   1       1.950  -0.820   1.240  0.60 14.00           C
+ATOM      6  CB BALA A   1       1.900  -0.900  -1.120  0.40 18.00           C
+ATOM      7  N   SER A   2       3.220   1.330  -0.160  1.00 12.00           N
+ATOM      8  CA  SER A   2       3.900   2.570  -0.280  1.00 12.00           C
+ATOM      9  C   SER A   2       5.370   2.470  -0.020  1.00 12.00           C
+ATOM     10  O   SER A   2       6.030   3.480   0.040  1.00 12.00           O
+ATOM     11  N   GLY A   3       5.900   1.240   0.120  1.00 13.00           N
+ATOM     12  CA  GLY A   3       7.300   1.020   0.420  1.00 13.00           C
+ATOM     13  C   GLY A   3       8.100   2.230   0.020  1.00 13.00           C
+ATOM     14  O   GLY A   3       7.700   3.350   0.240  1.00 13.00           O
+CONECT    1    2
+CONECT    2    3    5
+CONECT    3    4    7
+CONECT    7    8
+CONECT    8    9
+CONECT    9   10   11
+CONECT   11   12
+CONECT   12   13
+CONECT   13   14
+ENDMDL
+END

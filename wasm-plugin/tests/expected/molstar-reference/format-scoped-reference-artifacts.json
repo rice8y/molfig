@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "molstar_reference_commit": "1b8117d3f10f7c978aabb5a0d3d47370635aefe4",
+  "artifacts": [
+    {
+      "name": "9r1o-molstar-assembly-1",
+      "contract": "tests/expected/molstar-reference/9r1o-molstar-assembly-1.reference.contract",
+      "fixture": "package/examples/data/9R1O.pdb",
+      "exports": {
+        "json": "tests/expected/molstar-reference/9r1o-molstar-assembly-1.summary.json"
+      }
+    }
+  ]
+}

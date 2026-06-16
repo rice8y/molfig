@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "purpose": "Future expectations for BinaryCIF, assembly, altLoc, cartoon/ribbon, and render-object API work.",
+  "fixtures": {
+    "water-bcif": {
+      "input": "tests/fixtures/bcif/water.bcif",
+      "format": "bcif",
+      "parse": {
+        "atomCount": 3,
+        "bondCount": 2,
+        "residues": ["HOH"],
+        "chains": ["A"],
+        "elements": { "H": 2, "O": 1 },
+        "bboxAngstrom": {
+          "min": [-0.239, 0.0, 0.0],
+          "max": [0.957, 0.927, 0.0]
+        }
+      }
+    },
+    "assembly-altloc-secondary": {
+      "inputs": [
+        "tests/fixtures/cif/assembly-altloc-secondary.cif",
+        "tests/fixtures/pdb/assembly-altloc-secondary.pdb"
+      ],
+      "assembly": {
+        "selectedId": "1",
+        "operationCount": 1,
+        "chains": ["A"]
+      },
+      "altLoc": {
+        "policy": "highest-occupancy",
+        "rawAtomCount": 12,
+        "resolvedAtomCount": 11,
+        "groups": [
+          {
+            "chain": "A",
+            "residue": "GLY",
+            "sequence": "1",
+            "atom": "CA",
+            "alternates": ["A", "B"],
+            "highestOccupancy": "A"
+          }
+        ]
+      },
+      "secondaryStructure": {
+        "helices": [{ "chain": "A", "start": "1", "end": "2" }],
+        "sheets": [{ "chain": "A", "start": "3", "end": "3" }]
+      },
+      "representations": {
+        "cartoon": {
+          "meshFormats": ["obj", "ply"],
+          "requiresSecondaryStructure": true
+        },
+        "ribbon": {
+          "meshFormats": ["obj", "ply"],
+          "requiresBackboneTrace": true
+        }
+      },
+      "renderObject": {
+        "requiredKeys": ["kind", "mesh_format", "content"],
+        "kind": "render-object"
+      }
+    }
+  }
+}

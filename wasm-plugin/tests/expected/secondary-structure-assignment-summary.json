@@ -1,0 +1,60 @@
+{
+  "molstar_reference_commit": "1b8117d3f10f7c978aabb5a0d3d47370635aefe4",
+  "molstar_sources": [
+    "artifacts/molstar/src/mol-model-formats/structure/property/secondary-structure.ts",
+    "artifacts/molstar/src/mol-model/structure/model/types.ts"
+  ],
+  "summary_name": "helix-sheet-coil-assignment",
+  "residues": [
+    {
+      "residue_index": 0,
+      "chain": "A",
+      "seq_id": "1",
+      "insertion_code": "",
+      "type": "coil",
+      "type_bits": 0,
+      "key": 0,
+      "element": "none"
+    },
+    {
+      "residue_index": 1,
+      "chain": "A",
+      "seq_id": "2",
+      "insertion_code": "",
+      "type": "helix",
+      "type_bits": 2,
+      "key": 1,
+      "element": "helix"
+    },
+    {
+      "residue_index": 2,
+      "chain": "A",
+      "seq_id": "3",
+      "insertion_code": "",
+      "type": "helix",
+      "type_bits": 2,
+      "key": 1,
+      "element": "helix"
+    },
+    {
+      "residue_index": 3,
+      "chain": "A",
+      "seq_id": "4",
+      "insertion_code": "",
+      "type": "sheet",
+      "type_bits": 8388612,
+      "key": 2,
+      "element": "sheet"
+    },
+    {
+      "residue_index": 4,
+      "chain": "A",
+      "seq_id": "5",
+      "insertion_code": "",
+      "type": "coil",
+      "type_bits": 0,
+      "key": 0,
+      "element": "none"
+    }
+  ]
+}

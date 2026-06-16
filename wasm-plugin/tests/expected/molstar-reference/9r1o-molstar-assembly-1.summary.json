@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "name": "9r1o-molstar-assembly-1",
+  "molstar_reference_commit": "1b8117d3f10f7c978aabb5a0d3d47370635aefe4",
+  "fixture": "package/examples/data/9R1O.pdb",
+  "options": {
+    "format": "pdb",
+    "representation": "molstar",
+    "assembly": "1",
+    "sphere-detail": 1
+  },
+  "source": {
+    "obj": "package/examples/data/9R1O.obj",
+    "stl": "package/examples/data/9R1O.stl"
+  },
+  "obj": {
+    "byte_len": 11363581,
+    "fnv1a64": "65714b8beec3395a",
+    "vertex_count": 101114,
+    "normal_count": 101114,
+    "face_count": 178864,
+    "bounds": {
+      "min": [-12.655, -13.997, -27.256],
+      "max": [12.971, 14.971, 28.24]
+    }
+  },
+  "stl": {
+    "byte_len": 26829684,
+    "fnv1a64": "a40f29587e82b5f4",
+    "facet_count": 536592,
+    "header": "Exported from Mol* 5.9.0",
+    "bounds": {
+      "min": [-12.6558, -13.9966, -27.2549],
+      "max": [12.9705, 14.9704, 28.2399]
+    }
+  }
+}
