@@ -7,7 +7,7 @@ It accepts PDB, mmCIF, and BinaryCIF input, converts structures through a CPU-si
 ## Quickstart
 
 ```typst
-#import "@preview/molfig:0.1.0" as molfig
+#import "@preview/molfig:0.1.0"
 #set page(width: auto, height: auto, margin: 0mm)
 
 // Uses structural data from RCSB PDB / wwPDB.
@@ -57,6 +57,7 @@ For reproducible documents, prefer explicit `format`, `representation`, `assembl
 - Representations: Mol* default, spacefill, ball-and-stick, cartoon, ribbon, and backbone.
 - Assembly support: biological assemblies are represented as source model plus unit operators before static mesh export.
 - Alternate locations: select a concrete altLoc, all altLocs, or the highest-occupancy conformer.
+- Color themes: `color-theme: "chain-id"` assigns Mol* Chain ID colors and forwards OBJ materials to maquette.
 - Outputs: OBJ, companion MTL, binary STL, and ASCII PLY.
 - Rendering: `render` passes generated mesh bytes to maquette; `render-object` exposes the mesh, rendered content, and normalized metadata for advanced documents.
 
@@ -69,7 +70,7 @@ For reproducible documents, prefer explicit `format`, `representation`, `assembl
 - `mesh-info(data, mesh-format: "obj", config: (:), ...)` delegates to maquette's mesh metadata helpers for the generated mesh.
 - `v15-or-later()` returns whether the active Typst compiler supports project-side `path(...)` values.
 
-Common options include `format`, `representation`, `assembly`, `alt-loc`, `block-index`, `block-header`, `quality`, `sphere-detail`, `linear-segments`, `radial-segments`, `radius-scale`, `atom-radius`, `bond-radius`, `ribbon-radius`, `ribbon-width`, `helix-profile`, `round-cap`, `sheet-arrow-factor`, `tubular-helices`, `infer-bonds`, and `center`.
+Common options include `format`, `representation`, `color-theme`, `assembly`, `alt-loc`, `block-index`, `block-header`, `quality`, `sphere-detail`, `linear-segments`, `radial-segments`, `radius-scale`, `atom-radius`, `bond-radius`, `ribbon-radius`, `ribbon-width`, `helix-profile`, `round-cap`, `sheet-arrow-factor`, `tubular-helices`, `infer-bonds`, and `center`.
 
 The `data` argument accepts bytes from `read(..., encoding: none)`, inline string data for small examples, and Typst 0.15+ path values created with `path("...")`.
 
@@ -79,7 +80,7 @@ The `data` argument accepts bytes from `read(..., encoding: none)`, inline strin
 - Use STL when a downstream tool specifically requires binary triangle data.
 - Use PLY when package-owned face group metadata is useful in a compact text mesh.
 
-OBJ output can be paired with `to-mtl`. OBJ and PLY preserve Molfig group or operator metadata where the format can represent it. Binary STL follows Mol* static exporter behavior and keeps the two-byte facet attribute field at zero.
+OBJ output can be paired with `to-mtl`. During `render`, OBJ material colors are automatically converted to maquette's `materials` map; entries supplied through `config.materials` override generated colors. OBJ and PLY preserve Molfig group or operator metadata where the format can represent it. Binary STL follows Mol* static exporter behavior and keeps the two-byte facet attribute field at zero.
 
 ## Documentation
 
