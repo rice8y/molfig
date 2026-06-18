@@ -34,7 +34,7 @@
     {
       "name": "checked-in-wasm-memory",
       "fixture": "package/molfig.wasm",
-      "byte_len": 823390,
+      "byte_len": 826019,
       "max_byte_len": 900000,
       "initial_pages": 18,
       "maximum_pages": null,

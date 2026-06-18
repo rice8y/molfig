@@ -8,7 +8,7 @@ use crate::model::{
     PrincipalAxes, SaccharideShape, SecondaryRange, SecondaryStructureType, StructureUnit,
     TraceResidue, Transform, UnitKind, Vec3,
 };
-use crate::options::{MeshOptions, PolymerProfile, Representation};
+use crate::options::{ColorTheme, MeshOptions, PolymerProfile, Representation};
 
 mod geometry;
 
@@ -2529,7 +2529,7 @@ fn build_semantic_render_objects_resolved_limited(
     if semantic_objects_cover_target_face(&objects, options, target_face_index) {
         return objects;
     }
-    apply_molstar_default_materials(&mut objects, molecule);
+    apply_molstar_default_materials(&mut objects, molecule, options.color_theme);
     objects
 }
 
@@ -2592,14 +2592,22 @@ const MOLSTAR_MANY_DISTINCT_COLORS: [u32; 25] = [
     0xfc8d62, 0x8da0cb, 0xe78ac3, 0xa6d854, 0xffd92f, 0xe5c494, 0xb3b3b3,
 ];
 
-fn apply_molstar_default_materials(objects: &mut [SemanticRenderObject], molecule: &Molecule) {
-    let chain_materials = molstar_chain_materials(molecule);
-    for object in objects {
-        if object.material.is_none() {
-            object.material = Some(molstar_chain_material_for_key(
-                object.chain.as_deref(),
-                &chain_materials,
-            ));
+fn apply_molstar_default_materials(
+    objects: &mut [SemanticRenderObject],
+    molecule: &Molecule,
+    color_theme: ColorTheme,
+) {
+    match color_theme {
+        ColorTheme::ChainId => {
+            let chain_materials = molstar_chain_materials(molecule);
+            for object in objects {
+                if object.material.is_none() {
+                    object.material = Some(molstar_chain_material_for_key(
+                        object.chain.as_deref(),
+                        &chain_materials,
+                    ));
+                }
+            }
         }
     }
 }

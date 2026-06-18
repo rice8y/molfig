@@ -1,6 +1,7 @@
 use crate::export::{
-    export_mtl, export_obj_with_metadata, export_ply_with_metadata, export_stl_facet_context_json,
-    export_stl_with_metadata, ExportMetadata, ExportOperatorMetadata, ExportVec3,
+    export_maquette_material_map_json_from_obj, export_mtl, export_obj_with_metadata,
+    export_ply_with_metadata, export_stl_facet_context_json, export_stl_with_metadata,
+    ExportMetadata, ExportOperatorMetadata, ExportVec3,
 };
 use crate::json::{json_escape, json_string_array};
 use crate::mesh::{
@@ -33,6 +34,10 @@ pub fn convert_to_mtl(data: &[u8], options_json: &[u8]) -> Result<Vec<u8>, Strin
     let mesh = build_mesh_for_export(&molecule, &options);
     validate_mesh_for_export(&mesh)?;
     Ok(export_mtl(&mesh).into_bytes())
+}
+
+pub fn maquette_material_map(obj: &[u8]) -> Result<Vec<u8>, String> {
+    Ok(export_maquette_material_map_json_from_obj(obj)?.into_bytes())
 }
 
 pub fn convert_to_stl(data: &[u8], options_json: &[u8]) -> Result<Vec<u8>, String> {

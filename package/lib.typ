@@ -22,9 +22,48 @@
   }
 }
 
-#let _mesh-options(format, representation, sphere-detail, radius-scale, atom-radius, bond-radius, infer-bonds, center, assembly, alt-loc, block-index, block-header, ribbon-radius, ribbon-width, helix-profile, round-cap, sheet-arrow-factor, tubular-helices, linear-segments, radial-segments, quality) = json.encode((
+#let _merge-materials(config, generated) = {
+  if type(config) != dictionary or type(generated) != dictionary {
+    config
+  } else {
+    let user-materials = config.at("materials", default: (:))
+    if type(user-materials) == dictionary {
+      config + (materials: generated + user-materials)
+    } else {
+      config
+    }
+  }
+}
+
+#let _material-map(mesh, mesh-format) = {
+  if mesh-format == "obj" {
+    json(_plugin.material_map(mesh))
+  } else {
+    (:)
+  }
+}
+
+#let _render-mesh(mesh, mesh-format, config, materials, width, height, output-format) = {
+  let render-config = if mesh-format == "obj" {
+    json.encode(_merge-materials(config, materials))
+  } else {
+    json.encode(config)
+  }
+  if mesh-format == "obj" {
+    render-obj(mesh, render-config, width: width, height: height, format: output-format)
+  } else if mesh-format == "stl" {
+    render-stl(mesh, render-config, width: width, height: height, format: output-format)
+  } else if mesh-format == "ply" {
+    render-ply(mesh, render-config, width: width, height: height, format: output-format)
+  } else {
+    panic("mesh-format must be one of \"obj\", \"stl\", or \"ply\"")
+  }
+}
+
+#let _mesh-options(format, representation, color-theme, sphere-detail, radius-scale, atom-radius, bond-radius, infer-bonds, center, assembly, alt-loc, block-index, block-header, ribbon-radius, ribbon-width, helix-profile, round-cap, sheet-arrow-factor, tubular-helices, linear-segments, radial-segments, quality) = json.encode((
   format: format,
   representation: representation,
+  color-theme: color-theme,
   sphere-detail: sphere-detail,
   radius-scale: radius-scale,
   atom-radius: atom-radius,
@@ -50,6 +89,7 @@
   data,
   format: "auto",
   representation: "molstar",
+  color-theme: "chain-id",
   sphere-detail: 2,
   radius-scale: 1.0,
   atom-radius: 0.28,
@@ -69,12 +109,13 @@
   linear-segments: 8,
   radial-segments: 16,
   quality: "custom",
-) = _plugin.to_obj(_normalize-data(data), bytes(_mesh-options(format, representation, sphere-detail, radius-scale, atom-radius, bond-radius, infer-bonds, center, assembly, alt-loc, block-index, block-header, ribbon-radius, ribbon-width, helix-profile, round-cap, sheet-arrow-factor, tubular-helices, linear-segments, radial-segments, quality)))
+) = _plugin.to_obj(_normalize-data(data), bytes(_mesh-options(format, representation, color-theme, sphere-detail, radius-scale, atom-radius, bond-radius, infer-bonds, center, assembly, alt-loc, block-index, block-header, ribbon-radius, ribbon-width, helix-profile, round-cap, sheet-arrow-factor, tubular-helices, linear-segments, radial-segments, quality)))
 
 #let to-mtl(
   data,
   format: "auto",
   representation: "molstar",
+  color-theme: "chain-id",
   sphere-detail: 2,
   radius-scale: 1.0,
   atom-radius: 0.28,
@@ -94,12 +135,13 @@
   linear-segments: 8,
   radial-segments: 16,
   quality: "custom",
-) = _plugin.to_mtl(_normalize-data(data), bytes(_mesh-options(format, representation, sphere-detail, radius-scale, atom-radius, bond-radius, infer-bonds, center, assembly, alt-loc, block-index, block-header, ribbon-radius, ribbon-width, helix-profile, round-cap, sheet-arrow-factor, tubular-helices, linear-segments, radial-segments, quality)))
+) = _plugin.to_mtl(_normalize-data(data), bytes(_mesh-options(format, representation, color-theme, sphere-detail, radius-scale, atom-radius, bond-radius, infer-bonds, center, assembly, alt-loc, block-index, block-header, ribbon-radius, ribbon-width, helix-profile, round-cap, sheet-arrow-factor, tubular-helices, linear-segments, radial-segments, quality)))
 
 #let to-stl(
   data,
   format: "auto",
   representation: "molstar",
+  color-theme: "chain-id",
   sphere-detail: 2,
   radius-scale: 1.0,
   atom-radius: 0.28,
@@ -119,12 +161,13 @@
   linear-segments: 8,
   radial-segments: 16,
   quality: "custom",
-) = _plugin.to_stl(_normalize-data(data), bytes(_mesh-options(format, representation, sphere-detail, radius-scale, atom-radius, bond-radius, infer-bonds, center, assembly, alt-loc, block-index, block-header, ribbon-radius, ribbon-width, helix-profile, round-cap, sheet-arrow-factor, tubular-helices, linear-segments, radial-segments, quality)))
+) = _plugin.to_stl(_normalize-data(data), bytes(_mesh-options(format, representation, color-theme, sphere-detail, radius-scale, atom-radius, bond-radius, infer-bonds, center, assembly, alt-loc, block-index, block-header, ribbon-radius, ribbon-width, helix-profile, round-cap, sheet-arrow-factor, tubular-helices, linear-segments, radial-segments, quality)))
 
 #let to-ply(
   data,
   format: "auto",
   representation: "molstar",
+  color-theme: "chain-id",
   sphere-detail: 2,
   radius-scale: 1.0,
   atom-radius: 0.28,
@@ -144,12 +187,13 @@
   linear-segments: 8,
   radial-segments: 16,
   quality: "custom",
-) = _plugin.to_ply(_normalize-data(data), bytes(_mesh-options(format, representation, sphere-detail, radius-scale, atom-radius, bond-radius, infer-bonds, center, assembly, alt-loc, block-index, block-header, ribbon-radius, ribbon-width, helix-profile, round-cap, sheet-arrow-factor, tubular-helices, linear-segments, radial-segments, quality)))
+) = _plugin.to_ply(_normalize-data(data), bytes(_mesh-options(format, representation, color-theme, sphere-detail, radius-scale, atom-radius, bond-radius, infer-bonds, center, assembly, alt-loc, block-index, block-header, ribbon-radius, ribbon-width, helix-profile, round-cap, sheet-arrow-factor, tubular-helices, linear-segments, radial-segments, quality)))
 
 #let info(
   data,
   format: "auto",
   representation: "molstar",
+  color-theme: "chain-id",
   sphere-detail: 2,
   radius-scale: 1.0,
   atom-radius: 0.28,
@@ -169,13 +213,14 @@
   linear-segments: 8,
   radial-segments: 16,
   quality: "custom",
-) = json(_plugin.info(_normalize-data(data), bytes(_mesh-options(format, representation, sphere-detail, radius-scale, atom-radius, bond-radius, infer-bonds, center, assembly, alt-loc, block-index, block-header, ribbon-radius, ribbon-width, helix-profile, round-cap, sheet-arrow-factor, tubular-helices, linear-segments, radial-segments, quality))))
+) = json(_plugin.info(_normalize-data(data), bytes(_mesh-options(format, representation, color-theme, sphere-detail, radius-scale, atom-radius, bond-radius, infer-bonds, center, assembly, alt-loc, block-index, block-header, ribbon-radius, ribbon-width, helix-profile, round-cap, sheet-arrow-factor, tubular-helices, linear-segments, radial-segments, quality))))
 
 #let render(
   data,
   format: "auto",
   mesh-format: "obj",
   representation: "molstar",
+  color-theme: "chain-id",
   sphere-detail: 2,
   radius-scale: 1.0,
   atom-radius: 0.28,
@@ -200,18 +245,19 @@
   height: auto,
   output-format: "png",
 ) = {
-  let mesh-config = _mesh-options(format, representation, sphere-detail, radius-scale, atom-radius, bond-radius, infer-bonds, center, assembly, alt-loc, block-index, block-header, ribbon-radius, ribbon-width, helix-profile, round-cap, sheet-arrow-factor, tubular-helices, linear-segments, radial-segments, quality)
-  let render-config = json.encode(config)
+  let mesh-config = _mesh-options(format, representation, color-theme, sphere-detail, radius-scale, atom-radius, bond-radius, infer-bonds, center, assembly, alt-loc, block-index, block-header, ribbon-radius, ribbon-width, helix-profile, round-cap, sheet-arrow-factor, tubular-helices, linear-segments, radial-segments, quality)
   let source = _normalize-data(data)
-  if mesh-format == "obj" {
-    render-obj(_plugin.to_obj(source, bytes(mesh-config)), render-config, width: width, height: height, format: output-format)
+  let mesh = if mesh-format == "obj" {
+    _plugin.to_obj(source, bytes(mesh-config))
   } else if mesh-format == "stl" {
-    render-stl(_plugin.to_stl(source, bytes(mesh-config)), render-config, width: width, height: height, format: output-format)
+    _plugin.to_stl(source, bytes(mesh-config))
   } else if mesh-format == "ply" {
-    render-ply(_plugin.to_ply(source, bytes(mesh-config)), render-config, width: width, height: height, format: output-format)
+    _plugin.to_ply(source, bytes(mesh-config))
   } else {
     panic("mesh-format must be one of \"obj\", \"stl\", or \"ply\"")
   }
+  let materials = _material-map(mesh, mesh-format)
+  _render-mesh(mesh, mesh-format, config, materials, width, height, output-format)
 }
 
 #let render-object(
@@ -219,6 +265,7 @@
   format: "auto",
   mesh-format: "obj",
   representation: "molstar",
+  color-theme: "chain-id",
   sphere-detail: 2,
   radius-scale: 1.0,
   atom-radius: 0.28,
@@ -246,6 +293,7 @@
   let options = (
     format: format,
     representation: representation,
+    color-theme: color-theme,
     sphere-detail: sphere-detail,
     radius-scale: radius-scale,
     atom-radius: atom-radius,
@@ -266,22 +314,26 @@
     radial-segments: radial-segments,
     quality: quality,
   )
+  let source = _normalize-data(data)
+  let mesh-config = _mesh-options(format, representation, color-theme, sphere-detail, radius-scale, atom-radius, bond-radius, infer-bonds, center, assembly, alt-loc, block-index, block-header, ribbon-radius, ribbon-width, helix-profile, round-cap, sheet-arrow-factor, tubular-helices, linear-segments, radial-segments, quality)
   let mesh = if mesh-format == "obj" {
-    to-obj(data, ..options)
+    _plugin.to_obj(source, bytes(mesh-config))
   } else if mesh-format == "stl" {
-    to-stl(data, ..options)
+    _plugin.to_stl(source, bytes(mesh-config))
   } else if mesh-format == "ply" {
-    to-ply(data, ..options)
+    _plugin.to_ply(source, bytes(mesh-config))
   } else {
     panic("mesh-format must be one of \"obj\", \"stl\", or \"ply\"")
   }
+  let materials = _material-map(mesh, mesh-format)
   (
     kind: "render-object",
     format: mesh-format,
     mesh_format: mesh-format,
     mesh: mesh,
-    info: info(data, ..options),
-    content: render(data, mesh-format: mesh-format, output-format: output-format, config: config, width: width, height: height, ..options),
+    materials: materials,
+    info: info(source, ..options),
+    content: _render-mesh(mesh, mesh-format, config, materials, width, height, output-format),
   )
 }
 

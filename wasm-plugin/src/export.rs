@@ -226,6 +226,41 @@ pub(crate) fn export_mtl(mesh: &Mesh) -> String {
     export_mtl_from_materials(&mesh_materials_in_first_use_order(mesh))
 }
 
+pub(crate) fn export_maquette_material_map_json_from_obj(obj: &[u8]) -> Result<String, String> {
+    let text =
+        std::str::from_utf8(obj).map_err(|_| "generated OBJ must be UTF-8 text".to_string())?;
+    let mut materials = Vec::<(&str, u32)>::new();
+    for line in text.lines() {
+        let Some(material_id) = line.strip_prefix("usemtl ") else {
+            continue;
+        };
+        let material_id = material_id.trim();
+        if materials
+            .iter()
+            .any(|(existing_id, _)| *existing_id == material_id)
+        {
+            continue;
+        }
+        let color = maquette_color_from_molstar_material_id(material_id).ok_or_else(|| {
+            format!("generated OBJ contains unsupported material id: {material_id}")
+        })?;
+        materials.push((material_id, color));
+    }
+    let entries = materials
+        .iter()
+        .map(|(material_id, color)| format!("\"{}\":\"#{color:06x}\"", json_escape(material_id)))
+        .collect::<Vec<_>>();
+    Ok(format!("{{{}}}", entries.join(",")))
+}
+
+fn maquette_color_from_molstar_material_id(material_id: &str) -> Option<u32> {
+    let hex = material_id.strip_prefix("0x")?;
+    let color = hex.get(..6)?;
+    (hex.len() > 6)
+        .then(|| u32::from_str_radix(color, 16).ok())
+        .flatten()
+}
+
 fn export_mtl_from_materials(materials: &[MeshMaterial]) -> String {
     let mut out = String::new();
     for material in materials {

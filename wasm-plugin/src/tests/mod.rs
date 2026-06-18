@@ -15,7 +15,7 @@ use crate::model::{
     InterUnitBondEdge, InterUnitBondInfo, InterUnitBondProps, Mesh, MoleculeType, PolymerType,
     SecondaryStructureElement, SecondaryStructureType,
 };
-use crate::options::{PolymerProfile, Representation, VisualQuality};
+use crate::options::{ColorTheme, PolymerProfile, Representation, VisualQuality};
 use crate::parser::{
     compose_operator_transforms, expand_oper_expression, parse_molecule_with_options, parse_pdb,
     ColumnData,
@@ -2551,12 +2551,14 @@ fn molstar_trace_quality_options_are_parsed() {
     assert!(!defaults.round_cap);
     assert_eq!(defaults.block_index, None);
     assert_eq!(defaults.block_header, None);
+    assert_eq!(defaults.color_theme, ColorTheme::ChainId);
 
     let options = MeshOptions::from_json(
-            br#"{"tubular-helices":true,"linear-segments":6,"radial-segments":12,"sheet-arrow-factor":0.75,"block-index":1,"block-header":"second"}"#,
+            br#"{"color-theme":"chain-id","tubular-helices":true,"linear-segments":6,"radial-segments":12,"sheet-arrow-factor":0.75,"block-index":1,"block-header":"second"}"#,
         )
         .unwrap();
 
+    assert_eq!(options.color_theme, ColorTheme::ChainId);
     assert!(options.tubular_helices);
     assert_eq!(options.quality, Some(VisualQuality::Auto));
     assert_eq!(options.linear_segments, 6);
@@ -2584,6 +2586,11 @@ fn molstar_trace_quality_options_are_parsed() {
     assert_eq!(clamped.linear_segments, 48);
     assert_eq!(clamped.radial_segments, 56);
     assert_eq!(clamped.ribbon_radius, 2.0);
+
+    assert_eq!(
+        MeshOptions::from_json(br#"{"color-theme":"residue-name"}"#).unwrap_err(),
+        "unsupported color-theme: residue-name; expected \"chain-id\""
+    );
 }
 
 #[test]
@@ -12039,6 +12046,12 @@ fn api_obj_export_emits_molstar_default_materials_from_semantic_objects() {
         format!("{:016x}", stable_test_hash64(mtl.as_bytes())),
         "6820621c995f3add"
     );
+
+    let material_map = String::from_utf8(maquette_material_map(obj.as_bytes()).unwrap()).unwrap();
+    assert_eq!(
+        material_map,
+        r##"{"0x1b9e771":"#1b9e77","0xff26181":"#ff2618"}"##
+    );
 }
 
 #[test]
@@ -12389,14 +12402,14 @@ fn performance_baseline_artifact_covers_large_lookup_mesh_and_wasm_memory() {
     assert!(baseline.contains(r#""group_count": 362"#));
     assert!(baseline.contains(r#""debug_max_elapsed_ms": 600000"#));
     assert!(baseline.contains(r#""name": "checked-in-wasm-memory""#));
-    assert!(baseline.contains(r#""byte_len": 823390"#));
+    assert!(baseline.contains(r#""byte_len": 826019"#));
     assert!(baseline.contains(r#""initial_pages": 18"#));
 }
 
 #[test]
 fn checked_in_wasm_memory_usage_matches_baseline() {
     let wasm = include_bytes!("../../../package/molfig.wasm");
-    assert_eq!(wasm.len(), 823_390);
+    assert_eq!(wasm.len(), 826_019);
     assert!(wasm.len() <= 900_000);
 
     let memory = parse_wasm_memory_summary(wasm).unwrap();

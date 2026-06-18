@@ -36,10 +36,16 @@ pub(crate) enum VisualQuality {
     Lowest,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ColorTheme {
+    ChainId,
+}
+
 #[derive(Clone, Debug)]
 pub struct MeshOptions {
     pub format: InputFormat,
     pub(crate) representation: Representation,
+    pub(crate) color_theme: ColorTheme,
     pub sphere_detail: usize,
     pub radius_scale: f32,
     pub atom_radius: f32,
@@ -70,6 +76,7 @@ impl Default for MeshOptions {
         Self {
             format: InputFormat::Auto,
             representation: Representation::Molstar,
+            color_theme: ColorTheme::ChainId,
             sphere_detail: 2,
             radius_scale: 1.0,
             atom_radius: 0.28,
@@ -127,6 +134,13 @@ impl MeshOptions {
                 "molstar" | "default" | "auto" => Representation::Molstar,
                 other => return Err(format!("unsupported representation: {other}")),
             };
+        }
+
+        if let Some(value) = json_string(text, "color-theme") {
+            options.color_theme = parse_color_theme(&value)?;
+        }
+        if let Some(value) = json_string(text, "color_theme") {
+            options.color_theme = parse_color_theme(&value)?;
         }
 
         if let Some(value) = json_number(text, "sphere-detail") {
@@ -315,6 +329,17 @@ fn parse_quality(value: &str) -> Result<VisualQuality, String> {
         "lowest" => Ok(VisualQuality::Lowest),
         other => Err(format!(
             "unsupported quality: {other}; expected one of \"auto\", \"custom\", \"highest\", \"higher\", \"high\", \"medium\", \"low\", \"lower\", or \"lowest\""
+        )),
+    }
+}
+
+fn parse_color_theme(value: &str) -> Result<ColorTheme, String> {
+    match value.to_ascii_lowercase().as_str() {
+        "chain-id" | "chain_id" | "chain" | "molstar" | "default" | "auto" => {
+            Ok(ColorTheme::ChainId)
+        }
+        other => Err(format!(
+            "unsupported color-theme: {other}; expected \"chain-id\""
         )),
     }
 }
