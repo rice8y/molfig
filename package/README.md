@@ -7,7 +7,7 @@ It accepts PDB, mmCIF, and BinaryCIF input, converts structures through a CPU-si
 ## Quickstart
 
 ```typst
-#import "@preview/molfig:0.1.0"
+#import "@preview/molfig:0.1.1"
 #set page(width: auto, height: auto, margin: 0mm)
 
 // Uses structural data from RCSB PDB / wwPDB.
