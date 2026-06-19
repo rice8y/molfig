@@ -1,43 +1,99 @@
+use std::borrow::Cow;
+
 use crate::export::{
-    export_maquette_material_map_json_from_obj, export_mtl, export_obj_with_metadata,
-    export_ply_with_metadata, export_stl_facet_context_json, export_stl_with_metadata,
-    ExportMetadata, ExportOperatorMetadata, ExportVec3,
+    export_maquette_material_map_json, export_maquette_material_map_json_from_obj,
+    export_mtl_from_materials, export_obj_with_metadata, export_ply_with_metadata,
+    export_stl_facet_context_json, export_stl_with_metadata, ExportMetadata,
+    ExportOperatorMetadata, ExportVec3,
 };
 use crate::json::{json_escape, json_string_array};
 use crate::mesh::{
     build_mesh, build_mesh_with_visible_bounding_sphere,
+    build_mesh_with_visible_bounding_sphere_and_operator_snapshot,
+    build_render_scene_with_summaries, render_materials,
     render_object_stl_facet_context_for_geometry_json_timed, render_object_stl_facet_context_json,
-    render_object_stl_facet_context_json_timed, render_object_summary_json,
-    representation_summary_json, visible_renderable_bounding_sphere_for_export_with_structure,
-    visible_renderable_bounding_sphere_report_for_export_with_structure,
+    render_object_stl_facet_context_json_timed, render_summaries_json,
+    visible_renderable_bounding_sphere_for_export_with_structure,
+    visible_renderable_bounding_sphere_report_for_export_with_structure, BondMetadataSnapshot,
+    RenderScene, RenderSummaries,
 };
 use crate::model::{
-    Assembly, AtomicStructure, BondFlags, BondSource, BoundingSphere, Mesh, Molecule, MoleculeType,
-    SecondaryRange, SourceData, UnitKind, Vec3,
+    Assembly, AtomicStructure, BoundingSphere, Mesh, Molecule, MoleculeType, SecondaryRange,
+    SourceData, UnitKind, UnitOperator, Vec3,
 };
 use crate::options::MeshOptions;
-use crate::parser::{parse_molecule_with_options, unique_alt_locs};
+use crate::parser::{
+    parse_molecule_with_options, parse_molecule_with_options_and_metadata, ParsedMolecule,
+};
 
 pub fn convert_to_obj(data: &[u8], options_json: &[u8]) -> Result<Vec<u8>, String> {
     let options = MeshOptions::from_json(options_json)?;
     let molecule = parse_molecule_with_options(data, &options)?;
-    let (mesh, export_center) = build_mesh_for_obj_export(&molecule, &options);
+    let (mesh, export_center, assembly_operators) =
+        build_mesh_for_obj_export_with_operator_snapshot(&molecule, &options);
     validate_mesh_for_export(&mesh)?;
-    let mut metadata = export_metadata_for_molecule(&molecule, &options);
+    let mut metadata = export_metadata_for_molecule(&molecule, &options, &assembly_operators);
     metadata.vertex_offset = export_center.negated();
     Ok(export_obj_with_metadata(&mesh, &metadata).into_bytes())
+}
+
+pub fn convert_to_obj_bundle(data: &[u8], options_json: &[u8]) -> Result<Vec<u8>, String> {
+    let options = MeshOptions::from_json(options_json)?;
+    let molecule = parse_molecule_with_options(data, &options)?;
+    let (mesh, export_center, assembly_operators) =
+        build_mesh_for_obj_export_with_operator_snapshot(&molecule, &options);
+    validate_mesh_for_export(&mesh)?;
+    let mut metadata = export_metadata_for_molecule(&molecule, &options, &assembly_operators);
+    metadata.vertex_offset = export_center.negated();
+    let materials_json = export_maquette_material_map_json(&mesh);
+    let obj = export_obj_with_metadata(&mesh, &metadata);
+    obj_bundle(&materials_json, obj)
 }
 
 pub fn convert_to_mtl(data: &[u8], options_json: &[u8]) -> Result<Vec<u8>, String> {
     let options = MeshOptions::from_json(options_json)?;
     let molecule = parse_molecule_with_options(data, &options)?;
-    let mesh = build_mesh_for_export(&molecule, &options);
-    validate_mesh_for_export(&mesh)?;
-    Ok(export_mtl(&mesh).into_bytes())
+    Ok(export_mtl_from_materials(&render_materials(&molecule, &options)).into_bytes())
 }
 
 pub fn maquette_material_map(obj: &[u8]) -> Result<Vec<u8>, String> {
     Ok(export_maquette_material_map_json_from_obj(obj)?.into_bytes())
+}
+
+fn obj_bundle(materials_json: &str, obj: String) -> Result<Vec<u8>, String> {
+    const MAX_HEADER_LEN: usize = 99_999_999;
+    let materials_len = materials_json.len();
+    if materials_len > MAX_HEADER_LEN {
+        return Err("OBJ material map is too large to bundle".to_string());
+    }
+    let mut out = Vec::with_capacity(8 + materials_json.len() + obj.len());
+    out.extend_from_slice(format!("{materials_len:08}").as_bytes());
+    out.extend_from_slice(materials_json.as_bytes());
+    out.extend_from_slice(obj.as_bytes());
+    Ok(out)
+}
+
+fn render_object_bundle(
+    materials_json: &str,
+    info_json: &str,
+    mesh: Vec<u8>,
+) -> Result<Vec<u8>, String> {
+    const MAX_HEADER_LEN: usize = 99_999_999;
+    let materials_len = materials_json.len();
+    let info_len = info_json.len();
+    if materials_len > MAX_HEADER_LEN {
+        return Err("render-object material map is too large to bundle".to_string());
+    }
+    if info_len > MAX_HEADER_LEN {
+        return Err("render-object info is too large to bundle".to_string());
+    }
+    let mut out = Vec::with_capacity(16 + materials_len + info_len + mesh.len());
+    out.extend_from_slice(format!("{materials_len:08}").as_bytes());
+    out.extend_from_slice(format!("{info_len:08}").as_bytes());
+    out.extend_from_slice(materials_json.as_bytes());
+    out.extend_from_slice(info_json.as_bytes());
+    out.extend_from_slice(&mesh);
+    Ok(out)
 }
 
 pub fn convert_to_stl(data: &[u8], options_json: &[u8]) -> Result<Vec<u8>, String> {
@@ -55,10 +111,114 @@ pub fn convert_to_stl(data: &[u8], options_json: &[u8]) -> Result<Vec<u8>, Strin
 pub fn convert_to_ply(data: &[u8], options_json: &[u8]) -> Result<Vec<u8>, String> {
     let options = MeshOptions::from_json(options_json)?;
     let molecule = parse_molecule_with_options(data, &options)?;
-    let mesh = build_mesh_for_export(&molecule, &options);
+    let (mesh, assembly_operators) =
+        build_mesh_for_export_with_operator_snapshot(&molecule, &options);
     validate_mesh_for_export(&mesh)?;
-    let metadata = export_metadata_for_molecule(&molecule, &options);
+    let metadata = export_metadata_for_molecule(&molecule, &options, &assembly_operators);
     Ok(export_ply_with_metadata(&mesh, &metadata).into_bytes())
+}
+
+pub fn convert_to_render_object_bundle(
+    data: &[u8],
+    options_json: &[u8],
+) -> Result<Vec<u8>, String> {
+    let options = MeshOptions::from_json(options_json)?;
+    let mesh_format = render_object_mesh_format(options_json)?;
+    let ParsedMolecule {
+        molecule,
+        available_alt_locs,
+    } = parse_molecule_with_options_and_metadata(data, &options)?;
+    let (mut scene, export_center) = build_render_scene_for_export(&molecule, &options);
+    let info_json = molecule_info_json_with_summaries(
+        &options,
+        &available_alt_locs,
+        &molecule,
+        Some(&scene.summaries),
+    );
+
+    match mesh_format {
+        RenderObjectMeshFormat::Obj => {
+            validate_mesh_for_export(&scene.mesh)?;
+            let mut metadata =
+                export_metadata_for_molecule(&molecule, &options, &scene.assembly_operators);
+            metadata.vertex_offset = export_center.negated();
+            let materials_json = export_maquette_material_map_json(&scene.mesh);
+            let obj = export_obj_with_metadata(&scene.mesh, &metadata).into_bytes();
+            render_object_bundle(&materials_json, &info_json, obj)
+        }
+        RenderObjectMeshFormat::Stl => {
+            validate_mesh_for_export(&scene.mesh)?;
+            let metadata = ExportMetadata {
+                vertex_offset: export_center.negated(),
+                ..ExportMetadata::default()
+            };
+            render_object_bundle(
+                "{}",
+                &info_json,
+                export_stl_with_metadata(&scene.mesh, &metadata),
+            )
+        }
+        RenderObjectMeshFormat::Ply => {
+            if options.center {
+                center_mesh_on_export_center(&mut scene.mesh, export_center.to_vec3());
+            }
+            validate_mesh_for_export(&scene.mesh)?;
+            let metadata =
+                export_metadata_for_molecule(&molecule, &options, &scene.assembly_operators);
+            render_object_bundle(
+                "{}",
+                &info_json,
+                export_ply_with_metadata(&scene.mesh, &metadata).into_bytes(),
+            )
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RenderObjectMeshFormat {
+    Obj,
+    Stl,
+    Ply,
+}
+
+fn render_object_mesh_format(options_json: &[u8]) -> Result<RenderObjectMeshFormat, String> {
+    let text =
+        std::str::from_utf8(options_json).map_err(|_| "options must be UTF-8 JSON".to_string())?;
+    let value = json_string_field(text, "mesh-format")
+        .or_else(|| json_string_field(text, "mesh_format"))
+        .unwrap_or_else(|| "obj".to_string());
+    match value.to_ascii_lowercase().as_str() {
+        "obj" => Ok(RenderObjectMeshFormat::Obj),
+        "stl" => Ok(RenderObjectMeshFormat::Stl),
+        "ply" => Ok(RenderObjectMeshFormat::Ply),
+        other => Err(format!(
+            "mesh-format must be one of \"obj\", \"stl\", or \"ply\"; got {other}"
+        )),
+    }
+}
+
+fn json_string_field(text: &str, key: &str) -> Option<String> {
+    let marker = format!("\"{key}\"");
+    let mut tail = text.split_once(&marker)?.1;
+    tail = tail.split_once(':')?.1.trim_start();
+    if !tail.starts_with('"') {
+        return None;
+    }
+    let mut value = String::new();
+    let mut escape = false;
+    for ch in tail[1..].chars() {
+        if escape {
+            value.push(ch);
+            escape = false;
+        } else if ch == '\\' {
+            escape = true;
+        } else if ch == '"' {
+            return Some(value);
+        } else {
+            value.push(ch);
+        }
+    }
+    None
 }
 
 pub fn stl_facet_semantic_context(
@@ -214,14 +374,14 @@ pub fn stl_facet_semantic_context_with_vertex_offset_timed(
     Ok(context)
 }
 
-fn export_context_geometry(molecule: &Molecule) -> Molecule {
+fn export_context_geometry(molecule: &Molecule) -> Cow<'_, Molecule> {
     if let Some(molecule) = molecule.identity_assembly_subset_for_geometry() {
-        return molecule;
+        return Cow::Owned(molecule);
     }
     if molecule.selected_assembly.is_some() {
         molecule.expanded_for_geometry()
     } else {
-        molecule.clone()
+        Cow::Borrowed(molecule)
     }
 }
 
@@ -270,20 +430,32 @@ fn export_vec3_json(value: ExportVec3) -> String {
     format!("[{:.17},{:.17},{:.17}]", value.x, value.y, value.z)
 }
 
-fn build_mesh_for_export(molecule: &Molecule, options: &MeshOptions) -> Mesh {
+fn build_mesh_for_export_with_operator_snapshot(
+    molecule: &Molecule,
+    options: &MeshOptions,
+) -> (Mesh, Vec<UnitOperator>) {
     if !options.center {
-        return build_mesh(molecule, options);
+        let (mesh, _, operators) = build_mesh_with_visible_bounding_sphere_and_operator_snapshot(
+            molecule,
+            options,
+            options.include_operator_metadata,
+        );
+        return (mesh, operators);
     }
 
     let mut geometry_options = options.clone();
     geometry_options.center = false;
-    let (mut mesh, visible_sphere) =
-        build_mesh_with_visible_bounding_sphere(molecule, &geometry_options);
+    let (mut mesh, visible_sphere, operators) =
+        build_mesh_with_visible_bounding_sphere_and_operator_snapshot(
+            molecule,
+            &geometry_options,
+            options.include_operator_metadata,
+        );
     let center = visible_sphere
         .map(|sphere| export_box_center_from_sphere(&sphere))
         .unwrap_or_else(|| export_mesh_boundary_sphere_center(&mesh));
     center_mesh_on_export_center(&mut mesh, center.to_vec3());
-    mesh
+    (mesh, operators)
 }
 
 fn build_mesh_for_obj_export(molecule: &Molecule, options: &MeshOptions) -> (Mesh, ExportVec3) {
@@ -299,6 +471,55 @@ fn build_mesh_for_obj_export(molecule: &Molecule, options: &MeshOptions) -> (Mes
         .map(|sphere| export_box_center_from_sphere(&sphere))
         .unwrap_or_else(|| export_mesh_boundary_sphere_center(&mesh));
     (mesh, center)
+}
+
+fn build_mesh_for_obj_export_with_operator_snapshot(
+    molecule: &Molecule,
+    options: &MeshOptions,
+) -> (Mesh, ExportVec3, Vec<UnitOperator>) {
+    if !options.center {
+        let (mesh, _, operators) = build_mesh_with_visible_bounding_sphere_and_operator_snapshot(
+            molecule,
+            options,
+            options.include_operator_metadata,
+        );
+        return (mesh, ExportVec3::default(), operators);
+    }
+
+    let mut geometry_options = options.clone();
+    geometry_options.center = false;
+    let (mesh, visible_sphere, operators) =
+        build_mesh_with_visible_bounding_sphere_and_operator_snapshot(
+            molecule,
+            &geometry_options,
+            options.include_operator_metadata,
+        );
+    let center = visible_sphere
+        .map(|sphere| export_box_center_from_sphere(&sphere))
+        .unwrap_or_else(|| export_mesh_boundary_sphere_center(&mesh));
+    (mesh, center, operators)
+}
+
+fn build_render_scene_for_export(
+    molecule: &Molecule,
+    options: &MeshOptions,
+) -> (RenderScene, ExportVec3) {
+    if !options.center {
+        return (
+            build_render_scene_with_summaries(molecule, options),
+            ExportVec3::default(),
+        );
+    }
+
+    let mut geometry_options = options.clone();
+    geometry_options.center = false;
+    let scene = build_render_scene_with_summaries(molecule, &geometry_options);
+    let center = scene
+        .visible_bounding_sphere
+        .as_ref()
+        .map(export_box_center_from_sphere)
+        .unwrap_or_else(|| export_mesh_boundary_sphere_center(&scene.mesh));
+    (scene, center)
 }
 
 fn center_mesh_on_export_center(mesh: &mut Mesh, center: Vec3) {
@@ -550,7 +771,11 @@ fn validate_mesh_sections_for_export(mesh: &Mesh) -> Result<(), String> {
     Ok(())
 }
 
-fn export_metadata_for_molecule(molecule: &Molecule, options: &MeshOptions) -> ExportMetadata {
+fn export_metadata_for_molecule(
+    molecule: &Molecule,
+    options: &MeshOptions,
+    assembly_operators: &[UnitOperator],
+) -> ExportMetadata {
     let mut metadata = ExportMetadata {
         obj_basename: options.obj_basename.clone(),
         include_operator_metadata: options.include_operator_metadata,
@@ -560,20 +785,27 @@ fn export_metadata_for_molecule(molecule: &Molecule, options: &MeshOptions) -> E
     let Some(assembly) = &molecule.selected_assembly else {
         return metadata;
     };
-    let structure = molecule.atomic_structure();
-    let mut operators = Vec::new();
-    for unit in &structure.units {
-        let operator = &unit.operator;
-        if operators.iter().any(|existing: &ExportOperatorMetadata| {
-            existing.name == operator.name
-                && existing.instance_id == operator.instance_id
-                && existing.assembly_id == operator.assembly_id
-                && existing.oper_id == operator.oper_id
-                && existing.oper_list_ids == operator.oper_list_ids
-        }) {
+
+    metadata.assembly_id = Some(assembly.id.clone());
+    if !options.include_operator_metadata {
+        return metadata;
+    }
+
+    for operator in assembly_operators {
+        if metadata
+            .operators
+            .iter()
+            .any(|existing: &ExportOperatorMetadata| {
+                existing.name == operator.name
+                    && existing.instance_id == operator.instance_id
+                    && existing.assembly_id == operator.assembly_id
+                    && existing.oper_id == operator.oper_id
+                    && existing.oper_list_ids == operator.oper_list_ids
+            })
+        {
             continue;
         }
-        operators.push(ExportOperatorMetadata {
+        metadata.operators.push(ExportOperatorMetadata {
             name: operator.name.clone(),
             instance_id: operator.instance_id.clone(),
             assembly_id: operator.assembly_id.clone(),
@@ -583,21 +815,27 @@ fn export_metadata_for_molecule(molecule: &Molecule, options: &MeshOptions) -> E
         });
     }
 
-    metadata.assembly_id = Some(assembly.id.clone());
-    metadata.operators = operators;
     metadata
 }
 
 pub fn molecule_info(data: &[u8], options_json: &[u8]) -> Result<Vec<u8>, String> {
     let options = MeshOptions::from_json(options_json)?;
-    let mut all_options = options.clone();
-    all_options.alt_loc = "all".to_string();
-    all_options.assembly = None;
-    let available = parse_molecule_with_options(data, &all_options)?;
-    let molecule = parse_molecule_with_options(data, &options)?;
-    let geometry = molecule.expanded_for_geometry();
-    let (min, max) = bounds_molecule(&geometry).unwrap_or_default();
-    let alt_locs = unique_alt_locs(&available.atoms);
+    let ParsedMolecule {
+        molecule,
+        available_alt_locs,
+    } = parse_molecule_with_options_and_metadata(data, &options)?;
+    Ok(
+        molecule_info_json_with_summaries(&options, &available_alt_locs, &molecule, None)
+            .into_bytes(),
+    )
+}
+
+fn molecule_info_json_with_summaries(
+    options: &MeshOptions,
+    available_alt_locs: &[String],
+    molecule: &Molecule,
+    summaries: Option<&RenderSummaries>,
+) -> String {
     let assemblies = molecule
         .assemblies
         .iter()
@@ -616,18 +854,24 @@ pub fn molecule_info(data: &[u8], options_json: &[u8]) -> Result<Vec<u8>, String
         .map(|range| secondary_range_json("sheet", range))
         .collect::<Vec<_>>()
         .join(",");
-    let render_objects = render_object_summary_json(&molecule, &options);
-    let representation = representation_summary_json(&molecule, &options);
-    let structure = molecule.atomic_structure();
+    let summaries_storage;
+    let summaries = if let Some(summaries) = summaries {
+        summaries
+    } else {
+        summaries_storage = render_summaries_json(molecule, options);
+        &summaries_storage
+    };
+    let geometry = &summaries.geometry;
+    let (min, max) = geometry.bounds.unwrap_or_default();
     let assembly_id = options.assembly.as_deref().unwrap_or("asymmetric-unit");
-    let out = format!(
+    format!(
         "{{\"entry_count\":{},\"experiment_count\":{},\"atom_count\":{},\"anisotrop_count\":{},\"coarse_sphere_count\":{},\"coarse_gaussian_count\":{},\"entity_count\":{},\"entity_poly_count\":{},\"entity_poly_seq_count\":{},\"pdbx_entity_branch_count\":{},\"pdbx_entity_branch_link_count\":{},\"pdbx_branch_scheme_count\":{},\"pdbx_nonpoly_scheme_count\":{},\"pdbx_poly_seq_scheme_count\":{},\"ihm_model_count\":{},\"ihm_model_group_count\":{},\"ihm_model_group_link_count\":{},\"ihm_cross_link_restraint_count\":{},\"struct_asym_count\":{},\"chem_comp_count\":{},\"chem_comp_atom_count\":{},\"chem_comp_bond_count\":{},\"chem_comp_angle_count\":{},\"bond_count\":{},\"bond_metadata\":{},\"assembly_count\":{},\"alt_locs\":{},\"alt_locs_info\":{{\"policy\":\"{}\",\"available\":{}}},\"assemblies\":[{}],\"assembly\":{{\"id\":\"{}\"}},\"source_data\":{},\"structure\":{},\"secondary_structure\":{{\"helices\":[{}],\"sheets\":[{}]}},\"representation\":{},\"render_objects\":{},\"bounds\":{{\"min\":[{:.4},{:.4},{:.4}],\"max\":[{:.4},{:.4},{:.4}]}}}}",
         molecule.entries.len(),
         molecule.experiments.len(),
-        geometry.atoms.len(),
+        geometry.atom_count,
         molecule.atom_site_anisotrop.len(),
-        geometry.coarse_spheres.len(),
-        geometry.coarse_gaussians.len(),
+        geometry.coarse_sphere_count,
+        geometry.coarse_gaussian_count,
         molecule.entities.len(),
         molecule.entity_polymers.len(),
         molecule.entity_poly_seq.len(),
@@ -645,28 +889,27 @@ pub fn molecule_info(data: &[u8], options_json: &[u8]) -> Result<Vec<u8>, String
         molecule.chemical_component_atoms.len(),
         molecule.chemical_component_bonds.len(),
         molecule.chemical_component_angles.len(),
-        geometry.bonds.len(),
-        bond_metadata_json(&geometry),
+        geometry.bond_count,
+        bond_metadata_json(&geometry.bond_metadata),
         molecule.assemblies.len(),
-        json_string_array(&alt_locs),
+        json_string_array(available_alt_locs),
         json_escape(if options.alt_loc.is_empty() { "default" } else { &options.alt_loc }),
-        json_string_array(&alt_locs),
+        json_string_array(available_alt_locs),
         assemblies,
         json_escape(assembly_id),
         source_data_json(&molecule.source_data),
-        atomic_structure_json(&structure),
+        atomic_structure_json(&summaries.structure),
         helices,
         sheets,
-        representation,
-        render_objects,
+        summaries.representation_json,
+        summaries.render_objects_json,
         min.x,
         min.y,
         min.z,
         max.x,
         max.y,
         max.z
-    );
-    Ok(out.into_bytes())
+    )
 }
 
 fn source_data_json(source_data: &SourceData) -> String {
@@ -702,49 +945,25 @@ fn source_categories_json(categories: &[crate::model::SourceCategory]) -> String
         .join(",")
 }
 
-fn bond_metadata_json(molecule: &crate::model::Molecule) -> String {
-    let count_source = |source: BondSource| {
-        molecule
-            .bond_metadata
-            .iter()
-            .filter(|metadata| metadata.source == source)
-            .count()
-    };
-    let aromatic = molecule
-        .bond_metadata
-        .iter()
-        .filter(|metadata| metadata.flags.contains(BondFlags::AROMATIC))
-        .count();
-    let resonance = molecule
-        .bond_metadata
-        .iter()
-        .filter(|metadata| metadata.flags.contains(BondFlags::RESONANCE))
-        .count();
-    let count_flag = |flag: BondFlags| {
-        molecule
-            .bond_metadata
-            .iter()
-            .filter(|metadata| metadata.flags.contains(flag))
-            .count()
-    };
+fn bond_metadata_json(metadata: &BondMetadataSnapshot) -> String {
     format!(
         "{{\"count\":{},\"computed\":{},\"pdb_conect\":{},\"struct_conn\":{},\"index_pair\":{},\"chem_comp\":{},\"covalent\":{},\"metallic_coordination\":{},\"hydrogen_bond\":{},\"disulfide\":{},\"aromatic\":{},\"computed_flag\":{},\"resonance\":{},\"rings\":{},\"aromatic_rings\":{},\"delocalized_bonds\":{}}}",
-        molecule.bond_metadata.len(),
-        count_source(BondSource::Computed),
-        count_source(BondSource::PdbConect),
-        count_source(BondSource::StructConn),
-        count_source(BondSource::IndexPair),
-        count_source(BondSource::ChemComp),
-        count_flag(BondFlags::COVALENT),
-        count_flag(BondFlags::METALLIC_COORDINATION),
-        count_flag(BondFlags::HYDROGEN_BOND),
-        count_flag(BondFlags::DISULFIDE),
-        aromatic,
-        count_flag(BondFlags::COMPUTED),
-        resonance,
-        molecule.resonance.ring_count,
-        molecule.resonance.aromatic_ring_count,
-        molecule.resonance.delocalized_bond_count
+        metadata.count,
+        metadata.computed,
+        metadata.pdb_conect,
+        metadata.struct_conn,
+        metadata.index_pair,
+        metadata.chem_comp,
+        metadata.covalent,
+        metadata.metallic_coordination,
+        metadata.hydrogen_bond,
+        metadata.disulfide,
+        metadata.aromatic,
+        metadata.computed_flag,
+        metadata.resonance,
+        metadata.rings,
+        metadata.aromatic_rings,
+        metadata.delocalized_bonds
     )
 }
 
@@ -845,36 +1064,6 @@ fn atomic_structure_json(structure: &AtomicStructure) -> String {
         structure.ranges.cyclic_polymer_map.len(),
         structure.alt_loc_count()
     )
-}
-
-fn bounds_molecule(molecule: &Molecule) -> Option<(Vec3, Vec3)> {
-    let mut points = molecule
-        .atoms
-        .iter()
-        .map(|atom| atom.position)
-        .collect::<Vec<_>>();
-    for sphere in &molecule.coarse_spheres {
-        let radius = Vec3::new(sphere.radius, sphere.radius, sphere.radius);
-        points.push(sphere.position - radius);
-        points.push(sphere.position + radius);
-    }
-    for gaussian in &molecule.coarse_gaussians {
-        let extent = Vec3::new(
-            gaussian.covariance[0][0].abs().sqrt().max(0.1),
-            gaussian.covariance[1][1].abs().sqrt().max(0.1),
-            gaussian.covariance[2][2].abs().sqrt().max(0.1),
-        ) * gaussian.weight.abs().sqrt().max(0.1);
-        points.push(gaussian.position - extent);
-        points.push(gaussian.position + extent);
-    }
-    let first = points.first().copied()?;
-    let mut min = first;
-    let mut max = first;
-    for point in &points[1..] {
-        min = min.min(*point);
-        max = max.max(*point);
-    }
-    Some((min, max))
 }
 
 fn assembly_json(assembly: &Assembly) -> String {
