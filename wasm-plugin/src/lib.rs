@@ -13,9 +13,10 @@ mod parser;
 mod typst_plugin;
 
 pub use api::{
-    convert_to_mtl, convert_to_obj, convert_to_ply, convert_to_stl, maquette_material_map,
-    molecule_info, stl_export_facet_context, stl_export_facet_context_timed,
-    stl_facet_semantic_context, stl_facet_semantic_context_with_vertex_offset,
+    convert_to_mtl, convert_to_obj, convert_to_obj_bundle, convert_to_ply,
+    convert_to_render_object_bundle, convert_to_stl, maquette_material_map, molecule_info,
+    stl_export_facet_context, stl_export_facet_context_timed, stl_facet_semantic_context,
+    stl_facet_semantic_context_with_vertex_offset,
     stl_facet_semantic_context_with_vertex_offset_timed,
 };
 pub use diff::{diff_bytes, diff_bytes_with_options, diff_text, DiffBytesOptions, DiffReport};

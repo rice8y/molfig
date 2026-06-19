@@ -1,12 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 
 use crate::chemistry::{vdw_radius, vdw_radius64};
 use crate::json::{json_escape, json_string_array};
 use crate::model::{
-    get_saccharide_shape, AtomicStructure, BondFlags, Boundary, BoundingSphere, Face, Mesh,
-    MeshMaterial, Molecule, MoleculeType, NucleotideAtoms, NucleotideBaseKind, PolymerType,
+    get_saccharide_shape, AtomicStructure, BondFlags, BondSource, Boundary, BoundingSphere, Face,
+    Mesh, MeshMaterial, Molecule, MoleculeType, NucleotideAtoms, NucleotideBaseKind, PolymerType,
     PrincipalAxes, SaccharideShape, SecondaryRange, SecondaryStructureType, StructureUnit,
-    TraceResidue, Transform, UnitKind, Vec3,
+    TraceResidue, Transform, UnitKind, UnitOperator, Vec3,
 };
 use crate::options::{ColorTheme, MeshOptions, PolymerProfile, Representation};
 
@@ -20,11 +21,14 @@ pub(crate) use geometry::add_oriented_ribbon;
 pub(crate) use geometry::DVec3;
 use geometry::{
     add_curve_segment_ribbon, add_curve_segment_sheet, add_curve_segment_tube,
-    add_dashed_tube_path, add_ellipsoid, add_fixed_count_dashed_cylinder,
-    add_molstar_buffered_open_cylinder, add_molstar_buffered_open_cylinder_with_radius64,
-    add_molstar_cylinder_caps, add_open_cylinder, add_oriented_ribbon_with_profile, add_ribbon,
-    add_sheet, add_sphere, add_sphere_with_radius64, add_tube_path, fallback_side, helix_trace,
-    molstar_sphere_triangle_count, sample_path, MolstarLocalTransform, MolstarPrimitiveTransform,
+    add_dashed_tube_path_cached, add_dashed_tube_samples_cached, add_ellipsoid,
+    add_fixed_count_dashed_cylinder_cached, add_molstar_buffered_open_cylinder_cached,
+    add_molstar_buffered_open_cylinder_with_radius64_cached, add_molstar_cylinder_caps_cached,
+    add_open_cylinder_cached, add_oriented_ribbon_with_profile, add_ribbon, add_sheet, add_sphere,
+    add_sphere_with_radius64, add_tube_path, fallback_side, helix_trace,
+    molstar_cylinder_mesh_counts, molstar_sphere_mesh_counts, molstar_sphere_triangle_count,
+    sample_path, sample_path_point_count, CurveSegmentScratch, CylinderPrimitiveCache,
+    MolstarLocalTransform, MolstarPrimitiveTransform,
 };
 #[cfg(test)]
 pub(crate) use geometry::{
@@ -37,19 +41,192 @@ pub(crate) fn build_mesh(molecule: &Molecule, options: &MeshOptions) -> Mesh {
     build_mesh_with_visible_bounding_sphere(molecule, options).0
 }
 
+pub(crate) fn render_materials(molecule: &Molecule, options: &MeshOptions) -> Vec<MeshMaterial> {
+    let geometry = molecule.expanded_for_geometry();
+    let options = resolved_mesh_options(&geometry, options);
+    let structure = geometry.atomic_structure();
+    let objects = build_semantic_render_objects_resolved_limited(
+        &geometry,
+        &options,
+        None,
+        Some(&structure),
+        |_| {},
+    );
+    let cylinder_radial_segments = molstar_export_cylinder_radial_segments(
+        objects
+            .iter()
+            .map(|object| render_object_export_cylinder_count(&object.object))
+            .sum(),
+    );
+    let mut materials = Vec::new();
+    for object in &objects {
+        if object
+            .object
+            .mesh_estimate(&options, cylinder_radial_segments)
+            .faces
+            == 0
+        {
+            continue;
+        }
+        let Some(material) = object.material else {
+            continue;
+        };
+        if !materials.contains(&material) {
+            materials.push(material);
+        }
+    }
+    materials
+}
+
 pub(crate) fn build_mesh_with_visible_bounding_sphere(
     molecule: &Molecule,
     options: &MeshOptions,
 ) -> (Mesh, Option<BoundingSphere>) {
+    let (mesh, sphere, _) =
+        build_mesh_with_visible_bounding_sphere_and_operator_snapshot(molecule, options, false);
+    (mesh, sphere)
+}
+
+pub(crate) fn build_mesh_with_visible_bounding_sphere_and_operator_snapshot(
+    molecule: &Molecule,
+    options: &MeshOptions,
+    capture_operators: bool,
+) -> (Mesh, Option<BoundingSphere>, Vec<UnitOperator>) {
+    let expansion = molecule.expanded_for_geometry_with_operator_snapshot(capture_operators);
+    let geometry = expansion.molecule;
+    let options = resolved_mesh_options(&geometry, options);
+    let structure = geometry.atomic_structure();
+    let objects = build_semantic_render_objects_resolved_limited(
+        &geometry,
+        &options,
+        None,
+        Some(&structure),
+        |_| {},
+    );
+    let structure_sphere =
+        molstar_visible_renderable_bounding_sphere_with_structure(&geometry, &options, &structure);
+    let (mesh, mesh_slice_sphere, _) =
+        flatten_semantic_render_objects_with_visible_bounding_sphere_and_stats(
+            &objects,
+            &geometry,
+            &options,
+            structure_sphere.is_none(),
+        );
+    let visible_bounding_sphere = structure_sphere.or(mesh_slice_sphere);
+    (mesh, visible_bounding_sphere, expansion.assembly_operators)
+}
+
+pub(crate) struct RenderSummaries {
+    pub(crate) render_objects_json: String,
+    pub(crate) representation_json: String,
+    pub(crate) structure: AtomicStructure,
+    pub(crate) geometry: GeometryInfoSnapshot,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct GeometryInfoSnapshot {
+    pub(crate) atom_count: usize,
+    pub(crate) coarse_sphere_count: usize,
+    pub(crate) coarse_gaussian_count: usize,
+    pub(crate) bond_count: usize,
+    pub(crate) bond_metadata: BondMetadataSnapshot,
+    pub(crate) bounds: Option<(Vec3, Vec3)>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct BondMetadataSnapshot {
+    pub(crate) count: usize,
+    pub(crate) computed: usize,
+    pub(crate) pdb_conect: usize,
+    pub(crate) struct_conn: usize,
+    pub(crate) index_pair: usize,
+    pub(crate) chem_comp: usize,
+    pub(crate) covalent: usize,
+    pub(crate) metallic_coordination: usize,
+    pub(crate) hydrogen_bond: usize,
+    pub(crate) disulfide: usize,
+    pub(crate) aromatic: usize,
+    pub(crate) computed_flag: usize,
+    pub(crate) resonance: usize,
+    pub(crate) rings: usize,
+    pub(crate) aromatic_rings: usize,
+    pub(crate) delocalized_bonds: usize,
+}
+
+pub(crate) struct RenderScene {
+    pub(crate) mesh: Mesh,
+    pub(crate) visible_bounding_sphere: Option<BoundingSphere>,
+    pub(crate) summaries: RenderSummaries,
+    pub(crate) assembly_operators: Vec<UnitOperator>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct RenderObjectMeshStats {
+    draw_count: usize,
+    vertex_count: usize,
+    group_count: usize,
+}
+
+pub(crate) fn render_summaries_json(molecule: &Molecule, options: &MeshOptions) -> RenderSummaries {
     let geometry = molecule.expanded_for_geometry();
     let options = resolved_mesh_options(&geometry, options);
-    let objects = build_semantic_render_objects_resolved(&geometry, &options);
-    let (mesh, mesh_slice_sphere) =
-        flatten_semantic_render_objects_with_visible_bounding_sphere(&objects, &geometry, &options);
-    (
-        mesh,
-        molstar_visible_renderable_bounding_sphere(&geometry, &options).or(mesh_slice_sphere),
+    let structure = geometry.atomic_structure();
+    let objects = build_semantic_render_objects_resolved_limited(
+        &geometry,
+        &options,
+        None,
+        Some(&structure),
+        |_| {},
+    );
+    let object_stats = render_object_mesh_stats_from_estimates(&objects, &options);
+    render_summaries_json_from_resolved(
+        &options,
+        structure,
+        GeometryInfoSnapshot::from_molecule(&geometry),
+        &objects,
+        &object_stats,
     )
+}
+
+pub(crate) fn build_render_scene_with_summaries(
+    molecule: &Molecule,
+    options: &MeshOptions,
+) -> RenderScene {
+    let expansion =
+        molecule.expanded_for_geometry_with_operator_snapshot(options.include_operator_metadata);
+    let geometry = expansion.molecule;
+    let options = resolved_mesh_options(&geometry, options);
+    let structure = geometry.atomic_structure();
+    let objects = build_semantic_render_objects_resolved_limited(
+        &geometry,
+        &options,
+        None,
+        Some(&structure),
+        |_| {},
+    );
+    let structure_sphere =
+        molstar_visible_renderable_bounding_sphere_with_structure(&geometry, &options, &structure);
+    let (mesh, mesh_slice_sphere, object_stats) =
+        flatten_semantic_render_objects_with_visible_bounding_sphere_and_stats(
+            &objects,
+            &geometry,
+            &options,
+            structure_sphere.is_none(),
+        );
+    let visible_bounding_sphere = structure_sphere.or(mesh_slice_sphere);
+    let summaries = render_summaries_json_from_resolved(
+        &options,
+        structure,
+        GeometryInfoSnapshot::from_molecule(&geometry),
+        &objects,
+        &object_stats,
+    );
+    RenderScene {
+        mesh,
+        visible_bounding_sphere,
+        summaries,
+        assembly_operators: expansion.assembly_operators,
+    }
 }
 
 pub(crate) fn visible_renderable_bounding_sphere_for_export_with_structure(
@@ -227,6 +404,37 @@ pub(crate) enum RenderObject {
     },
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct RenderObjectMeshEstimate {
+    vertices: usize,
+    faces: usize,
+}
+
+struct RenderObjectMeshPlan {
+    estimate: RenderObjectMeshEstimate,
+    dashed_samples: Option<Vec<Vec3>>,
+}
+
+impl RenderObjectMeshEstimate {
+    fn from_counts((vertices, faces): (usize, usize)) -> Self {
+        Self { vertices, faces }
+    }
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            vertices: self.vertices.saturating_add(other.vertices),
+            faces: self.faces.saturating_add(other.faces),
+        }
+    }
+
+    fn scale(self, count: usize) -> Self {
+        Self {
+            vertices: self.vertices.saturating_mul(count),
+            faces: self.faces.saturating_mul(count),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CarbohydrateSymbolPart {
     Whole,
@@ -388,69 +596,212 @@ pub(crate) fn build_render_objects(
         .collect()
 }
 
+#[cfg(test)]
 pub(crate) fn render_object_summary_json(molecule: &Molecule, options: &MeshOptions) -> String {
     let geometry = molecule.expanded_for_geometry();
     let options = resolved_mesh_options(&geometry, options);
-    let objects = build_semantic_render_objects_resolved(&geometry, &options);
+    let structure = geometry.atomic_structure();
+    let objects = build_semantic_render_objects_resolved_limited(
+        &geometry,
+        &options,
+        None,
+        Some(&structure),
+        |_| {},
+    );
+    let (_, _, object_stats) =
+        flatten_semantic_render_objects_with_visible_bounding_sphere_and_stats(
+            &objects, &geometry, &options, false,
+        );
+    render_object_summary_json_from_resolved(&options, &objects, &object_stats)
+}
+
+fn render_summaries_json_from_resolved(
+    options: &MeshOptions,
+    structure: AtomicStructure,
+    geometry: GeometryInfoSnapshot,
+    objects: &[SemanticRenderObject],
+    object_stats: &[RenderObjectMeshStats],
+) -> RenderSummaries {
+    let representation_json =
+        representation_summary_json_from_resolved(options, &structure, objects);
+    RenderSummaries {
+        render_objects_json: render_object_summary_json_from_resolved(
+            options,
+            objects,
+            object_stats,
+        ),
+        representation_json,
+        structure,
+        geometry,
+    }
+}
+
+impl GeometryInfoSnapshot {
+    fn from_molecule(molecule: &Molecule) -> Self {
+        Self {
+            atom_count: molecule.atoms.len(),
+            coarse_sphere_count: molecule.coarse_spheres.len(),
+            coarse_gaussian_count: molecule.coarse_gaussians.len(),
+            bond_count: molecule.bonds.len(),
+            bond_metadata: BondMetadataSnapshot::from_molecule(molecule),
+            bounds: info_bounds_molecule(molecule),
+        }
+    }
+}
+
+impl BondMetadataSnapshot {
+    fn from_molecule(molecule: &Molecule) -> Self {
+        let count_source = |source: BondSource| {
+            molecule
+                .bond_metadata
+                .iter()
+                .filter(|metadata| metadata.source == source)
+                .count()
+        };
+        let count_flag = |flag: BondFlags| {
+            molecule
+                .bond_metadata
+                .iter()
+                .filter(|metadata| metadata.flags.contains(flag))
+                .count()
+        };
+        Self {
+            count: molecule.bond_metadata.len(),
+            computed: count_source(BondSource::Computed),
+            pdb_conect: count_source(BondSource::PdbConect),
+            struct_conn: count_source(BondSource::StructConn),
+            index_pair: count_source(BondSource::IndexPair),
+            chem_comp: count_source(BondSource::ChemComp),
+            covalent: count_flag(BondFlags::COVALENT),
+            metallic_coordination: count_flag(BondFlags::METALLIC_COORDINATION),
+            hydrogen_bond: count_flag(BondFlags::HYDROGEN_BOND),
+            disulfide: count_flag(BondFlags::DISULFIDE),
+            aromatic: count_flag(BondFlags::AROMATIC),
+            computed_flag: count_flag(BondFlags::COMPUTED),
+            resonance: count_flag(BondFlags::RESONANCE),
+            rings: molecule.resonance.ring_count,
+            aromatic_rings: molecule.resonance.aromatic_ring_count,
+            delocalized_bonds: molecule.resonance.delocalized_bond_count,
+        }
+    }
+}
+
+fn info_bounds_molecule(molecule: &Molecule) -> Option<(Vec3, Vec3)> {
+    let mut points = molecule
+        .atoms
+        .iter()
+        .map(|atom| atom.position)
+        .collect::<Vec<_>>();
+    for sphere in &molecule.coarse_spheres {
+        let radius = Vec3::new(sphere.radius, sphere.radius, sphere.radius);
+        points.push(sphere.position - radius);
+        points.push(sphere.position + radius);
+    }
+    for gaussian in &molecule.coarse_gaussians {
+        let extent = Vec3::new(
+            gaussian.covariance[0][0].abs().sqrt().max(0.1),
+            gaussian.covariance[1][1].abs().sqrt().max(0.1),
+            gaussian.covariance[2][2].abs().sqrt().max(0.1),
+        ) * gaussian.weight.abs().sqrt().max(0.1);
+        points.push(gaussian.position - extent);
+        points.push(gaussian.position + extent);
+    }
+    let first = points.first().copied()?;
+    let mut min = first;
+    let mut max = first;
+    for point in &points[1..] {
+        min = min.min(*point);
+        max = max.max(*point);
+    }
+    Some((min, max))
+}
+
+fn render_object_summary_json_from_resolved(
+    options: &MeshOptions,
+    objects: &[SemanticRenderObject],
+    object_stats: &[RenderObjectMeshStats],
+) -> String {
     let semantic_group_count = objects
         .iter()
         .map(|object| object.group_id)
         .max()
         .map_or(0, |group_id| group_id + 1);
-    format!(
-        "[{}]",
-        objects
-            .iter()
-            .map(|object| {
-                let chain = object.chain.as_deref().unwrap_or("");
-                let start = object
-                    .residue_start
-                    .map(|value| value.to_string())
-                    .unwrap_or_else(|| "null".to_string());
-                let end = object
-                    .residue_end
-                    .map(|value| value.to_string())
-                    .unwrap_or_else(|| "null".to_string());
-                let object_faces = object.object.face_estimate(&options);
-                let single_object = [object.object.clone()];
-                let object_mesh =
-                    flatten_render_objects_with_groups(&single_object, &[0], &geometry, &options);
-                let draw_count = object_mesh.faces.len().saturating_mul(3);
-                let vertex_count = object_mesh.vertices.len();
-                let group_count = object_mesh.group_count;
-                let bool_json = |value| if value { "true" } else { "false" };
-                format!(
-                    "{{\"geometry_type\":\"{}\",\"visual\":\"{}\",\"representation\":\"{}\",\"secondary_type\":\"{}\",\"chain\":\"{}\",\"residue_start\":{},\"residue_end\":{},\"group_id\":{},\"polymer_trace\":{{\"initial\":{},\"final\":{},\"sec_struc_first\":{},\"sec_struc_last\":{}}},\"value_cell\":{{\"group_id\":{},\"draw_count\":{},\"u_group_count\":{}}},\"valueCell\":{{\"drawCount\":{},\"uVertexCount\":{},\"uGroupCount\":{},\"instanceCount\":1,\"uInstanceCount\":1}}}}",
-                    json_escape(object.geometry_type),
-                    json_escape(object.visual),
-                    json_escape(object.representation),
-                    json_escape(object.secondary_type),
-                    json_escape(chain),
-                    start,
-                    end,
-                    object.group_id,
-                    bool_json(object.initial),
-                    bool_json(object.final_residue),
-                    bool_json(object.sec_struc_first),
-                    bool_json(object.sec_struc_last),
-                    object.group_id,
-                    object_faces,
-                    semantic_group_count,
-                    draw_count,
-                    vertex_count,
-                    group_count
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(",")
-    )
+    let mut out = String::with_capacity(objects.len().saturating_mul(480).saturating_add(2));
+    out.push('[');
+    for (index, (object, stats)) in objects.iter().zip(object_stats).enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        write!(
+            out,
+            "{{\"geometry_type\":\"{}\",\"visual\":\"{}\",\"representation\":\"{}\",\"secondary_type\":\"{}\",\"chain\":\"{}\",\"residue_start\":",
+            json_escape(object.geometry_type),
+            json_escape(object.visual),
+            json_escape(object.representation),
+            json_escape(object.secondary_type),
+            json_escape(object.chain.as_deref().unwrap_or("")),
+        )
+        .expect("writing to String cannot fail");
+        write_optional_i32(&mut out, object.residue_start);
+        out.push_str(",\"residue_end\":");
+        write_optional_i32(&mut out, object.residue_end);
+        write!(
+            out,
+            ",\"group_id\":{},\"polymer_trace\":{{\"initial\":{},\"final\":{},\"sec_struc_first\":{},\"sec_struc_last\":{}}},\"value_cell\":{{\"group_id\":{},\"draw_count\":{},\"u_group_count\":{}}},\"valueCell\":{{\"drawCount\":{},\"uVertexCount\":{},\"uGroupCount\":{},\"instanceCount\":1,\"uInstanceCount\":1}}}}",
+            object.group_id,
+            bool_json(object.initial),
+            bool_json(object.final_residue),
+            bool_json(object.sec_struc_first),
+            bool_json(object.sec_struc_last),
+            object.group_id,
+            object.object.face_estimate(options),
+            semantic_group_count,
+            stats.draw_count,
+            stats.vertex_count,
+            stats.group_count,
+        )
+        .expect("writing to String cannot fail");
+    }
+    out.push(']');
+    out
 }
 
+fn write_optional_i32(out: &mut String, value: Option<i32>) {
+    if let Some(value) = value {
+        write!(out, "{value}").expect("writing to String cannot fail");
+    } else {
+        out.push_str("null");
+    }
+}
+
+fn bool_json(value: bool) -> &'static str {
+    if value {
+        "true"
+    } else {
+        "false"
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn representation_summary_json(molecule: &Molecule, options: &MeshOptions) -> String {
-    let structure = molecule.atomic_structure();
     let geometry = molecule.expanded_for_geometry();
     let options = resolved_mesh_options(&geometry, options);
-    let objects = build_semantic_render_objects_resolved(&geometry, &options);
+    let structure = geometry.atomic_structure();
+    let objects = build_semantic_render_objects_resolved_limited(
+        &geometry,
+        &options,
+        None,
+        Some(&structure),
+        |_| {},
+    );
+    representation_summary_json_from_resolved(&options, &structure, &objects)
+}
+
+fn representation_summary_json_from_resolved(
+    options: &MeshOptions,
+    structure: &AtomicStructure,
+    objects: &[SemanticRenderObject],
+) -> String {
     let selected_visuals = selected_visuals(&structure, &options);
     let realized_visuals = realized_visuals(&structure, &options, &objects);
     format!(
@@ -475,11 +826,19 @@ pub(crate) fn render_object_span_summary_json(
             .map(|object| render_object_export_cylinder_count(&object.object))
             .sum::<usize>(),
     );
-    let mut state = MeshBuilderState::default();
+    let (estimate, plans) = render_objects_mesh_plan(
+        objects.iter().map(|object| &object.object),
+        &options,
+        cylinder_radial_segments,
+    );
+    let mut state = MeshBuilderState::with_capacity(estimate, objects.len(), false);
+    let mut cylinder_cache = CylinderPrimitiveCache::default();
+    let mut curve_scratch = CurveSegmentScratch::default();
     let spans = objects
         .iter()
+        .zip(&plans)
         .enumerate()
-        .map(|(index, object)| {
+        .map(|(index, (object, plan))| {
             let vertex_start = state.mesh.vertices.len();
             let face_start = state.mesh.faces.len();
             state.set_current_group(object.group_id);
@@ -488,6 +847,9 @@ pub(crate) fn render_object_span_summary_json(
                 &object.object,
                 &options,
                 cylinder_radial_segments,
+                &mut cylinder_cache,
+                &mut curve_scratch,
+                Some(plan),
             );
             state.mark_appended(vertex_start, face_start);
             let vertex_end = state.mesh.vertices.len();
@@ -573,6 +935,7 @@ pub(crate) fn render_object_stl_facet_context_json_timed(
     checkpoint("begin-render-stl-facet-context");
     let geometry = molecule
         .identity_assembly_trace_subset_for_geometry()
+        .map(std::borrow::Cow::Owned)
         .unwrap_or_else(|| molecule.expanded_for_geometry());
     checkpoint("expand-geometry");
     let options = resolved_mesh_options(&geometry, options);
@@ -634,6 +997,8 @@ fn render_object_stl_facet_context_from_resolved_geometry_json_timed(
     );
     checkpoint("resolve-cylinder-segments");
     let mut face_start = 0usize;
+    let mut cylinder_cache = CylinderPrimitiveCache::default();
+    let mut curve_scratch = CurveSegmentScratch::default();
 
     for (index, object) in objects.iter().enumerate() {
         let estimated_face_count = object.object.face_estimate(&options);
@@ -643,12 +1008,23 @@ fn render_object_stl_facet_context_from_resolved_geometry_json_timed(
             continue;
         }
 
-        let mut mesh = Mesh::default();
+        let plan = render_objects_mesh_plan(
+            std::iter::once(&object.object),
+            &options,
+            cylinder_radial_segments,
+        )
+        .1
+        .pop()
+        .expect("single render object plan");
+        let mut mesh = mesh_with_capacity(plan.estimate);
         append_render_object_to_mesh(
             &mut mesh,
             &object.object,
             &options,
             cylinder_radial_segments,
+            &mut cylinder_cache,
+            &mut curve_scratch,
+            Some(&plan),
         );
         checkpoint("append-target-render-object");
         let actual_face_count = mesh.faces.len();
@@ -959,12 +1335,11 @@ fn polymer_trace_iterator_reference_json_with_options(
     molecule: &Molecule,
     use_helix_orientation: bool,
 ) -> String {
-    let mut trace = backbone_residues(molecule);
-    apply_polymer_trace_terminal_flags(molecule, &mut trace);
-    apply_cyclic_polymer_trace_flags(molecule, &mut trace);
-    apply_polymer_trace_secondary_flags(molecule, &mut trace);
-
     let structure = molecule.atomic_structure();
+    let mut trace = backbone_residues(molecule, &structure);
+    apply_polymer_trace_terminal_flags(&structure, &mut trace);
+    apply_cyclic_polymer_trace_flags(&structure, &mut trace);
+    apply_polymer_trace_secondary_flags(&structure, &mut trace);
     let hierarchy = &structure.model.hierarchy;
 
     let polymer_ranges = paired_usize_json(&structure.ranges.polymer_ranges);
@@ -1804,6 +2179,192 @@ fn molecule_type_name(value: MoleculeType) -> &'static str {
 }
 
 impl RenderObject {
+    fn mesh_estimate(
+        &self,
+        options: &MeshOptions,
+        cylinder_radial_segments: usize,
+    ) -> RenderObjectMeshEstimate {
+        match self {
+            RenderObject::Sphere { .. } | RenderObject::Ellipsoid { .. } => {
+                RenderObjectMeshEstimate::from_counts(molstar_sphere_mesh_counts(
+                    options.sphere_detail,
+                ))
+            }
+            RenderObject::Cylinder { start, end, radius } => {
+                let midpoint = molstar_link_midpoint_buffer(*start, *end);
+                cylinder_mesh_estimate(
+                    *start,
+                    midpoint,
+                    *radius as f64,
+                    cylinder_radial_segments,
+                    false,
+                    false,
+                )
+                .add(cylinder_mesh_estimate(
+                    midpoint,
+                    *end,
+                    *radius as f64,
+                    cylinder_radial_segments,
+                    false,
+                    false,
+                ))
+            }
+            RenderObject::LinkCylinder { start, end, radius } => cylinder_mesh_estimate(
+                *start,
+                molstar_link_midpoint_buffer(*start, *end),
+                *radius as f64,
+                options.radial_segments.max(3),
+                false,
+                false,
+            ),
+            RenderObject::LinkCylinderWithSegments {
+                start,
+                end,
+                radius,
+                radial_segments,
+            } => cylinder_mesh_estimate(
+                *start,
+                molstar_link_midpoint_buffer(*start, *end),
+                *radius,
+                (*radial_segments).max(3),
+                false,
+                false,
+            ),
+            RenderObject::Tube { points, .. } => profile_tube_mesh_estimate(
+                sample_path_point_count(points, 4),
+                options.radial_segments.max(3),
+                true,
+                true,
+            ),
+            RenderObject::DashedTube { points, radius } => {
+                dashed_tube_mesh_estimate(points, *radius, options.radial_segments.max(3))
+            }
+            RenderObject::FixedCountDashedCylinder {
+                start,
+                end,
+                radius,
+                length_scale,
+                segment_count,
+            } => fixed_count_dashed_cylinder_mesh_estimate(
+                *start,
+                *end,
+                *radius,
+                options.radial_segments.max(3),
+                *length_scale,
+                *segment_count,
+            ),
+            RenderObject::Ribbon { points, .. } => ribbon_mesh_estimate(sample_path_point_count(
+                points,
+                options.linear_segments.max(1),
+            )),
+            RenderObject::Sheet {
+                points,
+                arrow_height,
+                start_cap,
+                end_cap,
+                ..
+            } => sheet_mesh_estimate(
+                sample_path_point_count(points, options.linear_segments.max(1)),
+                *arrow_height,
+                *start_cap,
+                *end_cap,
+            ),
+            RenderObject::OrientedRibbon {
+                centers,
+                normals,
+                profile,
+                start_cap,
+                end_cap,
+                ..
+            } => {
+                let sample_count = if centers.len() < 2 || centers.len() != normals.len() {
+                    0
+                } else {
+                    (centers.len() - 1)
+                        .saturating_mul(options.linear_segments.max(1))
+                        .saturating_add(1)
+                };
+                if options.radial_segments == 2 {
+                    ribbon_mesh_estimate(sample_count)
+                } else if options.radial_segments == 4 || *profile == PolymerProfile::Square {
+                    sheet_mesh_estimate(sample_count, 0.0, *start_cap, *end_cap)
+                } else {
+                    profile_tube_mesh_estimate(
+                        sample_count,
+                        options.radial_segments.max(3),
+                        *start_cap,
+                        *end_cap,
+                    )
+                }
+            }
+            RenderObject::PolymerTraceSegment {
+                shift,
+                kind,
+                start_cap,
+                end_cap,
+                initial,
+                final_residue,
+                ..
+            } => {
+                let segment_count = polymer_trace_segment_count(
+                    options.linear_segments.max(1),
+                    *shift,
+                    *initial,
+                    *final_residue,
+                );
+                let sample_count = segment_count + 1;
+                match kind {
+                    PolymerTraceSegmentKind::Ribbon { .. } => ribbon_mesh_estimate(sample_count),
+                    PolymerTraceSegmentKind::Tube { .. } => profile_tube_mesh_estimate(
+                        sample_count,
+                        options.radial_segments.max(3),
+                        *start_cap,
+                        *end_cap,
+                    ),
+                    PolymerTraceSegmentKind::Sheet { arrow_height } => {
+                        sheet_mesh_estimate(sample_count, *arrow_height, *start_cap, *end_cap)
+                    }
+                }
+            }
+            RenderObject::NucleotideRing {
+                radius,
+                base,
+                detail,
+                radial_segments,
+                ..
+            } => nucleotide_ring_mesh_estimate(*base, *radius, *detail, *radial_segments),
+            RenderObject::NucleotideBlock {
+                geometry,
+                radius,
+                radial_segments,
+                ..
+            } => {
+                let mut estimate = cylinder_mesh_estimate(
+                    geometry.anchor,
+                    geometry.trace,
+                    *radius as f64,
+                    (*radial_segments).max(3),
+                    false,
+                    true,
+                );
+                if geometry.block.is_some() {
+                    estimate = estimate.add(RenderObjectMeshEstimate {
+                        vertices: 24,
+                        faces: 12,
+                    });
+                }
+                estimate
+            }
+            RenderObject::DirectionWedge { .. } => RenderObjectMeshEstimate {
+                vertices: 24,
+                faces: 8,
+            },
+            RenderObject::CarbohydrateSymbol { shape, part, .. } => {
+                carbohydrate_symbol_mesh_estimate(*shape, *part)
+            }
+        }
+    }
+
     fn face_estimate(&self, options: &MeshOptions) -> usize {
         match self {
             RenderObject::Sphere { .. } => molstar_sphere_triangle_count(options.sphere_detail),
@@ -1824,8 +2385,8 @@ impl RenderObject {
                 dash_count * options.radial_segments.max(3) * 4
             }
             RenderObject::Ribbon { points, .. } => {
-                let samples = sample_path(points, options.linear_segments.max(1));
-                samples.len().saturating_sub(1) * 4
+                sample_path_point_count(points, options.linear_segments.max(1)).saturating_sub(1)
+                    * 4
             }
             RenderObject::Sheet {
                 points,
@@ -1834,8 +2395,7 @@ impl RenderObject {
                 end_cap,
                 ..
             } => {
-                let segments = sample_path(points, options.linear_segments.max(1))
-                    .len()
+                let segments = sample_path_point_count(points, options.linear_segments.max(1))
                     .saturating_sub(1);
                 let caps = usize::from(*start_cap || *arrow_height > 0.0)
                     + usize::from(*end_cap && *arrow_height == 0.0);
@@ -1848,16 +2408,22 @@ impl RenderObject {
                 end_cap,
                 ..
             } => {
-                let samples = sample_path(centers, options.linear_segments.max(1));
+                let sample_count = if centers.len() < 2 {
+                    0
+                } else {
+                    (centers.len() - 1)
+                        .saturating_mul(options.linear_segments.max(1))
+                        .saturating_add(1)
+                };
                 if options.radial_segments == 2 {
-                    samples.len().saturating_sub(1) * 4
+                    sample_count.saturating_sub(1) * 4
                 } else if options.radial_segments == 4 || *profile == PolymerProfile::Square {
                     let caps = usize::from(*start_cap) + usize::from(*end_cap);
-                    samples.len().saturating_sub(1) * 8 + caps * 2
+                    sample_count.saturating_sub(1) * 8 + caps * 2
                 } else {
                     let radial = options.radial_segments.max(3);
                     let caps = usize::from(*start_cap) + usize::from(*end_cap);
-                    samples.len().saturating_sub(1) * radial * 2 + caps * radial
+                    sample_count.saturating_sub(1) * radial * 2 + caps * radial
                 }
             }
             RenderObject::PolymerTraceSegment {
@@ -1918,6 +2484,334 @@ impl RenderObject {
     }
 }
 
+fn cylinder_mesh_estimate(
+    start: Vec3,
+    end: Vec3,
+    radius: f64,
+    radial_segments: usize,
+    top_cap: bool,
+    bottom_cap: bool,
+) -> RenderObjectMeshEstimate {
+    if DVec3::from_vec3(start).distance(DVec3::from_vec3(end)) <= 0.001 {
+        return RenderObjectMeshEstimate::default();
+    }
+    RenderObjectMeshEstimate::from_counts(molstar_cylinder_mesh_counts(
+        radial_segments,
+        top_cap,
+        bottom_cap,
+        radius,
+    ))
+}
+
+fn profile_tube_mesh_estimate(
+    sample_count: usize,
+    radial_segments: usize,
+    start_cap: bool,
+    end_cap: bool,
+) -> RenderObjectMeshEstimate {
+    if sample_count < 2 || radial_segments < 3 {
+        return RenderObjectMeshEstimate::default();
+    }
+    let cap_count = usize::from(start_cap) + usize::from(end_cap);
+    RenderObjectMeshEstimate {
+        vertices: sample_count
+            .saturating_mul(radial_segments)
+            .saturating_add(cap_count.saturating_mul(radial_segments + 1)),
+        faces: (sample_count - 1)
+            .saturating_mul(radial_segments)
+            .saturating_mul(2)
+            .saturating_add(cap_count.saturating_mul(radial_segments)),
+    }
+}
+
+fn ribbon_mesh_estimate(sample_count: usize) -> RenderObjectMeshEstimate {
+    if sample_count < 2 {
+        return RenderObjectMeshEstimate::default();
+    }
+    RenderObjectMeshEstimate {
+        vertices: sample_count.saturating_mul(4),
+        faces: (sample_count - 1).saturating_mul(4),
+    }
+}
+
+fn sheet_mesh_estimate(
+    sample_count: usize,
+    arrow_height: f32,
+    start_cap: bool,
+    end_cap: bool,
+) -> RenderObjectMeshEstimate {
+    if sample_count < 2 {
+        return RenderObjectMeshEstimate::default();
+    }
+    let arrow = arrow_height.max(0.0) > 0.0;
+    let cap_count = if start_cap {
+        1
+    } else if arrow {
+        2
+    } else {
+        0
+    } + usize::from(end_cap && !arrow);
+    RenderObjectMeshEstimate {
+        vertices: sample_count
+            .saturating_mul(8)
+            .saturating_add(cap_count.saturating_mul(4)),
+        faces: (sample_count - 1)
+            .saturating_mul(8)
+            .saturating_add(cap_count.saturating_mul(2)),
+    }
+}
+
+fn dashed_tube_mesh_estimate(
+    points: &[Vec3],
+    radius: f32,
+    radial_segments: usize,
+) -> RenderObjectMeshEstimate {
+    if points.len() < 2 {
+        return RenderObjectMeshEstimate::default();
+    }
+    let samples = sample_path(points, 8);
+    dashed_tube_mesh_estimate_from_samples(&samples, radius, radial_segments)
+}
+
+fn dashed_tube_mesh_estimate_from_samples(
+    samples: &[Vec3],
+    radius: f32,
+    radial_segments: usize,
+) -> RenderObjectMeshEstimate {
+    if samples.len() < 2 {
+        return RenderObjectMeshEstimate::default();
+    }
+    let dash_len = (radius * 3.8).max(0.55);
+    let gap_len = (radius * 2.2).max(0.32);
+    let period = dash_len + gap_len;
+    let mut distance = 0.0;
+    let mut dash_count = 0usize;
+
+    for pair in samples.windows(2) {
+        let length = pair[0].distance(pair[1]);
+        if length <= 0.000_001 {
+            continue;
+        }
+        let mut local = 0.0;
+        while local < length {
+            let phase = (distance + local) % period;
+            let in_dash = phase < dash_len;
+            let remaining_phase = if in_dash {
+                dash_len - phase
+            } else {
+                period - phase
+            };
+            let step = remaining_phase.min(length - local);
+            if in_dash && step > 0.02 {
+                dash_count += 1;
+            }
+            local += step.max(0.000_001);
+        }
+        distance += length;
+    }
+
+    RenderObjectMeshEstimate::from_counts(molstar_cylinder_mesh_counts(
+        radial_segments,
+        true,
+        true,
+        radius as f64,
+    ))
+    .scale(dash_count)
+}
+
+fn fixed_count_dashed_cylinder_mesh_estimate(
+    start: Vec3,
+    end: Vec3,
+    radius: f32,
+    radial_segments: usize,
+    length_scale: f32,
+    segment_count: usize,
+) -> RenderObjectMeshEstimate {
+    let distance = DVec3::from_vec3(start).distance(DVec3::from_vec3(end)) * length_scale as f64;
+    if distance <= 0.000_001 || segment_count == 0 {
+        return RenderObjectMeshEstimate::default();
+    }
+
+    let dash_count = segment_count.div_ceil(2);
+    let is_odd = !segment_count.is_multiple_of(2);
+    let step = distance / (segment_count as f64 + 0.5);
+    let full = RenderObjectMeshEstimate::from_counts(molstar_cylinder_mesh_counts(
+        radial_segments,
+        true,
+        true,
+        radius as f64,
+    ));
+    let half = RenderObjectMeshEstimate::from_counts(molstar_cylinder_mesh_counts(
+        radial_segments,
+        false,
+        true,
+        radius as f64,
+    ));
+    let mut estimate = RenderObjectMeshEstimate::default();
+    for dash_index in 0..dash_count {
+        let last_odd = is_odd && dash_index + 1 == dash_count;
+        let dash_length = if last_odd { step * 0.5 } else { step };
+        if dash_length > 0.001 {
+            estimate = estimate.add(if last_odd { half } else { full });
+        }
+    }
+    estimate
+}
+
+fn nucleotide_ring_mesh_estimate(
+    base: Option<NucleotideRingBase>,
+    radius: f32,
+    detail: usize,
+    radial_segments: usize,
+) -> RenderObjectMeshEstimate {
+    let Some(base) = base else {
+        return RenderObjectMeshEstimate::default();
+    };
+    let (trace, anchor, ring_faces) = match base {
+        NucleotideRingBase::PurineConnector { trace, n9 } => (trace, n9, 0),
+        NucleotideRingBase::Purine { trace, n9, .. } => {
+            (trace, n9, molstar_nucleotide_ring_5_6_face_count())
+        }
+        NucleotideRingBase::PyrimidineConnector { trace, n1 } => (trace, n1, 0),
+        NucleotideRingBase::Pyrimidine { trace, n1, .. } => {
+            (trace, n1, molstar_nucleotide_ring_6_face_count())
+        }
+    };
+    cylinder_mesh_estimate(
+        anchor,
+        trace,
+        radius as f64,
+        radial_segments.max(3),
+        false,
+        false,
+    )
+    .add(RenderObjectMeshEstimate::from_counts(
+        molstar_sphere_mesh_counts(detail),
+    ))
+    .add(RenderObjectMeshEstimate {
+        vertices: ring_faces.saturating_mul(3),
+        faces: ring_faces,
+    })
+}
+
+fn carbohydrate_symbol_mesh_estimate(
+    shape: SaccharideShape,
+    part: CarbohydrateSymbolPart,
+) -> RenderObjectMeshEstimate {
+    if part == CarbohydrateSymbolPart::Secondary && !carbohydrate_symbol_has_secondary_part(shape) {
+        return RenderObjectMeshEstimate::default();
+    }
+    match shape {
+        SaccharideShape::FilledSphere => RenderObjectMeshEstimate::from_counts(
+            molstar_sphere_mesh_counts(MOLSTAR_CARBOHYDRATE_SYMBOL_DETAIL),
+        ),
+        SaccharideShape::FilledCube | SaccharideShape::FlatBox => RenderObjectMeshEstimate {
+            vertices: 24,
+            faces: 12,
+        },
+        SaccharideShape::CrossedCube => RenderObjectMeshEstimate {
+            vertices: 18,
+            faces: 6,
+        },
+        SaccharideShape::FilledCone => RenderObjectMeshEstimate {
+            vertices: 48,
+            faces: 16,
+        },
+        SaccharideShape::DevidedCone => RenderObjectMeshEstimate {
+            vertices: 24,
+            faces: 8,
+        },
+        SaccharideShape::FilledStar => RenderObjectMeshEstimate {
+            vertices: 60,
+            faces: 20,
+        },
+        SaccharideShape::FilledDiamond => RenderObjectMeshEstimate {
+            vertices: 24,
+            faces: 8,
+        },
+        SaccharideShape::DividedDiamond => RenderObjectMeshEstimate {
+            vertices: 12,
+            faces: 4,
+        },
+        SaccharideShape::FlatDiamond | SaccharideShape::DiamondPrism => RenderObjectMeshEstimate {
+            vertices: 24,
+            faces: 12,
+        },
+        SaccharideShape::PentagonalPrism | SaccharideShape::Pentagon => RenderObjectMeshEstimate {
+            vertices: 50,
+            faces: 20,
+        },
+        SaccharideShape::HexagonalPrism | SaccharideShape::FlatHexagon => {
+            RenderObjectMeshEstimate {
+                vertices: 60,
+                faces: 24,
+            }
+        }
+        SaccharideShape::HeptagonalPrism => RenderObjectMeshEstimate {
+            vertices: 70,
+            faces: 28,
+        },
+    }
+}
+
+#[cfg(test)]
+fn render_objects_mesh_estimate<'a>(
+    objects: impl Iterator<Item = &'a RenderObject>,
+    options: &MeshOptions,
+    cylinder_radial_segments: usize,
+) -> RenderObjectMeshEstimate {
+    objects.fold(RenderObjectMeshEstimate::default(), |total, object| {
+        total.add(object.mesh_estimate(options, cylinder_radial_segments))
+    })
+}
+
+fn render_objects_mesh_plan<'a>(
+    objects: impl Iterator<Item = &'a RenderObject>,
+    options: &MeshOptions,
+    cylinder_radial_segments: usize,
+) -> (RenderObjectMeshEstimate, Vec<RenderObjectMeshPlan>) {
+    let mut total = RenderObjectMeshEstimate::default();
+    let mut plans = Vec::new();
+    for object in objects {
+        let (estimate, dashed_samples) = match object {
+            RenderObject::DashedTube { points, radius } if points.len() >= 2 => {
+                let samples = sample_path(points, 8);
+                (
+                    dashed_tube_mesh_estimate_from_samples(
+                        &samples,
+                        *radius,
+                        options.radial_segments.max(3),
+                    ),
+                    Some(samples),
+                )
+            }
+            _ => (
+                object.mesh_estimate(options, cylinder_radial_segments),
+                None,
+            ),
+        };
+        total = total.add(estimate);
+        plans.push(RenderObjectMeshPlan {
+            estimate,
+            dashed_samples,
+        });
+    }
+    (total, plans)
+}
+
+fn mesh_with_capacity(estimate: RenderObjectMeshEstimate) -> Mesh {
+    Mesh {
+        vertices: Vec::with_capacity(estimate.vertices),
+        normals: Vec::with_capacity(estimate.vertices),
+        faces: Vec::with_capacity(estimate.faces),
+        vertex_groups: Vec::with_capacity(estimate.vertices),
+        face_groups: Vec::with_capacity(estimate.faces),
+        face_materials: Vec::new(),
+        sections: Vec::new(),
+        group_count: 0,
+    }
+}
+
 pub(crate) fn build_semantic_render_objects(
     molecule: &Molecule,
     options: &MeshOptions,
@@ -1974,18 +2868,6 @@ fn build_semantic_render_objects_resolved_limited(
 
     match options.representation {
         Representation::Molstar | Representation::Cartoon | Representation::Ribbon => {
-            let mut trace = if target_face_index.is_some() {
-                backbone_residues_from_atoms(molecule)
-            } else {
-                backbone_residues(molecule)
-            };
-            checkpoint("backbone-residues");
-            if target_face_index.is_none() {
-                apply_polymer_trace_terminal_flags(molecule, &mut trace);
-                apply_cyclic_polymer_trace_flags(molecule, &mut trace);
-                apply_polymer_trace_secondary_flags(molecule, &mut trace);
-            }
-            checkpoint("polymer-trace-flags");
             let structure_storage;
             let structure = match prebuilt_structure {
                 Some(structure) => structure,
@@ -1995,42 +2877,39 @@ fn build_semantic_render_objects_resolved_limited(
                 }
             };
             checkpoint("atomic-structure-for-representation");
-            let helix_orientation_centers = (options.tubular_helices
-                && options.representation != Representation::Ribbon)
-                .then(|| molstar_helix_orientation_centers(&structure));
-            let backbone: Vec<(String, i32, String, Vec3)> = trace
-                .iter()
-                .map(|r| (r.chain.clone(), r.seq, r.insertion_code.clone(), r.position))
-                .collect();
-            let mut covered = Vec::<(String, i32, String)>::new();
-
+            let mut trace = if target_face_index.is_some() {
+                backbone_residues_from_atoms(molecule)
+            } else {
+                backbone_residues(molecule, structure)
+            };
+            checkpoint("backbone-residues");
+            if target_face_index.is_none() {
+                apply_polymer_trace_terminal_flags(structure, &mut trace);
+                apply_cyclic_polymer_trace_flags(structure, &mut trace);
+                apply_polymer_trace_secondary_flags(structure, &mut trace);
+            }
+            checkpoint("polymer-trace-flags");
             if options.representation == Representation::Ribbon {
+                let backbone: Vec<(String, i32, String, Vec3)> = trace
+                    .iter()
+                    .map(|residue| {
+                        (
+                            residue.chain.clone(),
+                            residue.seq,
+                            residue.insertion_code.clone(),
+                            residue.position,
+                        )
+                    })
+                    .collect();
+                let mut covered = Vec::<(String, i32, String)>::new();
                 for range in &molecule.helices {
                     let residues: Vec<&TraceResidue> = trace
                         .iter()
                         .filter(|residue| residue_in_secondary_range(residue, range))
                         .collect();
                     let points: Vec<Vec3> = residues.iter().map(|r| r.position - center).collect();
-                    let oriented_points = helix_orientation_centers.as_ref().map(|centers| {
-                        residues
-                            .iter()
-                            .map(|residue| {
-                                model_residue_index_for_trace_residue(
-                                    &structure.model.hierarchy,
-                                    residue,
-                                )
-                                .and_then(|residue_index| centers.get(residue_index).copied())
-                                .filter(|point| point.is_finite())
-                                .unwrap_or(residue.position)
-                                    - center
-                            })
-                            .collect::<Vec<_>>()
-                    });
-                    let directions: Vec<Option<Vec3>> = if oriented_points.is_some() {
-                        vec![Some(Vec3::new(1.0, 0.0, 0.0)); residues.len()]
-                    } else {
-                        residues.iter().map(|r| r.direction).collect()
-                    };
+                    let directions: Vec<Option<Vec3>> =
+                        residues.iter().map(|residue| residue.direction).collect();
                     if points.len() == 1 {
                         covered.extend(
                             residues
@@ -2065,8 +2944,7 @@ fn build_semantic_render_objects_resolved_limited(
                                 .iter()
                                 .map(|r| (range.chain.clone(), r.seq, r.insertion_code.clone())),
                         );
-                        let (centers, normals) =
-                            helix_trace(oriented_points.as_deref().unwrap_or(&points), &directions);
+                        let (centers, normals) = helix_trace(&points, &directions);
                         let trace_flags = secondary_trace_flags(
                             &trace,
                             &residues,
@@ -2074,7 +2952,7 @@ fn build_semantic_render_objects_resolved_limited(
                             SecondaryTraceKind::Helix,
                         );
                         let (start_cap, end_cap) =
-                            secondary_trace_cap_flags(molecule, &residues, trace_flags);
+                            secondary_trace_cap_flags(structure, &residues, trace_flags);
                         let (width, thickness) = if options.tubular_helices
                             && options.representation != Representation::Ribbon
                         {
@@ -2174,7 +3052,7 @@ fn build_semantic_render_objects_resolved_limited(
                             SecondaryTraceKind::Sheet,
                         );
                         let (start_cap, end_cap) =
-                            secondary_trace_cap_flags(molecule, &residues, trace_flags);
+                            secondary_trace_cap_flags(structure, &residues, trace_flags);
                         covered.extend(residues.iter().map(|residue| {
                             (
                                 range.chain.clone(),
@@ -2318,6 +3196,7 @@ fn build_semantic_render_objects_resolved_limited(
             }
             add_polymer_gap_semantic_objects(
                 molecule,
+                structure,
                 options,
                 center,
                 representation,
@@ -2342,6 +3221,7 @@ fn build_semantic_render_objects_resolved_limited(
             }
             add_carbohydrate_symbol_semantic_objects(
                 molecule,
+                structure,
                 center,
                 representation,
                 &mut group_id,
@@ -2353,6 +3233,7 @@ fn build_semantic_render_objects_resolved_limited(
             }
             add_carbohydrate_link_semantic_objects(
                 molecule,
+                structure,
                 options,
                 center,
                 representation,
@@ -2365,6 +3246,7 @@ fn build_semantic_render_objects_resolved_limited(
             }
             add_carbohydrate_terminal_link_semantic_objects(
                 molecule,
+                structure,
                 options,
                 center,
                 representation,
@@ -2376,60 +3258,78 @@ fn build_semantic_render_objects_resolved_limited(
                 return objects;
             }
 
-            if options.representation == Representation::Molstar {
-                add_molstar_component_ball_and_stick_semantic_objects(
-                    molecule,
-                    options,
-                    center,
-                    representation,
-                    "ligand",
-                    &molstar_ligand_atom_mask(molecule),
-                    &selected,
-                    &mut objects,
-                );
-                if semantic_objects_cover_target_face(&objects, options, target_face_index) {
-                    return objects;
+            if options.representation == Representation::Molstar
+                && selected_has_molstar_component_visuals(&selected)
+            {
+                let mut branched_mask = None::<Vec<bool>>;
+                if has_ligand_component(structure) {
+                    let branched = branched_mask
+                        .get_or_insert_with(|| molstar_branched_atom_mask(molecule, structure));
+                    let ligand_mask = molstar_ligand_atom_mask(molecule, structure, branched);
+                    add_molstar_component_ball_and_stick_semantic_objects(
+                        molecule,
+                        options,
+                        center,
+                        representation,
+                        "ligand",
+                        &ligand_mask,
+                        &selected,
+                        &mut objects,
+                    );
+                    if semantic_objects_cover_target_face(&objects, options, target_face_index) {
+                        return objects;
+                    }
                 }
-                add_molstar_component_ball_and_stick_semantic_objects(
-                    molecule,
-                    options,
-                    center,
-                    representation,
-                    "branched",
-                    &molstar_branched_atom_mask(molecule),
-                    &selected,
-                    &mut objects,
-                );
-                if semantic_objects_cover_target_face(&objects, options, target_face_index) {
-                    return objects;
+                if has_branched_component(structure) {
+                    let branched = branched_mask
+                        .get_or_insert_with(|| molstar_branched_atom_mask(molecule, structure));
+                    add_molstar_component_ball_and_stick_semantic_objects(
+                        molecule,
+                        options,
+                        center,
+                        representation,
+                        "branched",
+                        branched,
+                        &selected,
+                        &mut objects,
+                    );
+                    if semantic_objects_cover_target_face(&objects, options, target_face_index) {
+                        return objects;
+                    }
                 }
-                add_molstar_component_ball_and_stick_semantic_objects(
-                    molecule,
-                    options,
-                    center,
-                    representation,
-                    "ion",
-                    &molstar_ion_atom_mask(molecule),
-                    &selected,
-                    &mut objects,
-                );
-                if semantic_objects_cover_target_face(&objects, options, target_face_index) {
-                    return objects;
+                if has_ion_component(structure) {
+                    let ion_mask = molstar_ion_atom_mask(structure);
+                    add_molstar_component_ball_and_stick_semantic_objects(
+                        molecule,
+                        options,
+                        center,
+                        representation,
+                        "ion",
+                        &ion_mask,
+                        &selected,
+                        &mut objects,
+                    );
+                    if semantic_objects_cover_target_face(&objects, options, target_face_index) {
+                        return objects;
+                    }
                 }
-                add_molstar_component_ball_and_stick_semantic_objects(
-                    molecule,
-                    options,
-                    center,
-                    representation,
-                    "water",
-                    &molstar_water_atom_mask(molecule),
-                    &selected,
-                    &mut objects,
-                );
-                if semantic_objects_cover_target_face(&objects, options, target_face_index) {
-                    return objects;
+                if has_water_component(structure) {
+                    let water_mask = molstar_water_atom_mask(structure);
+                    add_molstar_component_ball_and_stick_semantic_objects(
+                        molecule,
+                        options,
+                        center,
+                        representation,
+                        "water",
+                        &water_mask,
+                        &selected,
+                        &mut objects,
+                    );
+                    if semantic_objects_cover_target_face(&objects, options, target_face_index) {
+                        return objects;
+                    }
                 }
-            } else if backbone.is_empty() {
+            } else if trace.is_empty() {
                 add_ball_and_stick_semantic_objects(
                     molecule,
                     options,
@@ -2456,6 +3356,7 @@ fn build_semantic_render_objects_resolved_limited(
             checkpoint("selected-visuals");
             add_polymer_backbone_semantic_objects(
                 molecule,
+                structure,
                 options,
                 center,
                 representation,
@@ -2468,6 +3369,7 @@ fn build_semantic_render_objects_resolved_limited(
             }
             add_polymer_gap_semantic_objects(
                 molecule,
+                structure,
                 options,
                 center,
                 representation,
@@ -3116,6 +4018,7 @@ fn add_polymer_trace_segment_semantic_objects(
 
 fn add_polymer_gap_semantic_objects(
     molecule: &Molecule,
+    structure: &AtomicStructure,
     options: &MeshOptions,
     center: Vec3,
     representation: &'static str,
@@ -3126,7 +4029,6 @@ fn add_polymer_gap_semantic_objects(
         return;
     }
 
-    let structure = molecule.atomic_structure();
     let mut group_id = 0usize;
     for unit in &structure.units {
         if unit.kind != crate::model::UnitKind::Atomic {
@@ -3328,6 +4230,15 @@ fn selected_visuals(structure: &AtomicStructure, options: &MeshOptions) -> Vec<S
     }
 }
 
+fn selected_has_molstar_component_visuals(selected: &[String]) -> bool {
+    selected.iter().any(|visual| {
+        matches!(
+            visual.as_str(),
+            "element-sphere" | "structure-element-sphere" | "intra-bond" | "structure-intra-bond"
+        )
+    })
+}
+
 fn molstar_selected_visuals(structure: &AtomicStructure) -> Vec<String> {
     let mut visuals = cartoon_selected_visuals(structure);
     if has_ligand_component(structure) {
@@ -3484,42 +4395,37 @@ fn has_water_component(structure: &AtomicStructure) -> bool {
         .contains(&MoleculeType::Water)
 }
 
-fn molstar_ligand_atom_mask(molecule: &Molecule) -> Vec<bool> {
-    let structure = molecule.atomic_structure();
+fn molstar_ligand_atom_mask(
+    molecule: &Molecule,
+    structure: &AtomicStructure,
+    branched_mask: &[bool],
+) -> Vec<bool> {
     let direct = (0..molecule.atoms.len())
         .map(|atom_index| atom_is_molstar_ligand(&structure, atom_index))
         .collect::<Vec<_>>();
-    expand_mask_to_connected_whole_residues(
-        molecule,
-        &structure,
-        &direct,
-        Some(&molstar_branched_atom_mask(molecule)),
-    )
+    expand_mask_to_connected_whole_residues(molecule, structure, &direct, Some(branched_mask))
 }
 
-fn molstar_branched_atom_mask(molecule: &Molecule) -> Vec<bool> {
-    let structure = molecule.atomic_structure();
+fn molstar_branched_atom_mask(molecule: &Molecule, structure: &AtomicStructure) -> Vec<bool> {
     let direct = (0..molecule.atoms.len())
         .map(|atom_index| atom_is_molstar_branched(&structure, atom_index))
         .collect::<Vec<_>>();
-    expand_mask_to_connected_whole_residues(molecule, &structure, &direct, None)
+    expand_mask_to_connected_whole_residues(molecule, structure, &direct, None)
 }
 
-fn molstar_ion_atom_mask(molecule: &Molecule) -> Vec<bool> {
-    let structure = molecule.atomic_structure();
-    (0..molecule.atoms.len())
+fn molstar_ion_atom_mask(structure: &AtomicStructure) -> Vec<bool> {
+    (0..structure.model.hierarchy.atoms.len())
         .map(|atom_index| {
-            atom_molecule_type(&structure, atom_index)
+            atom_molecule_type(structure, atom_index)
                 .is_some_and(|molecule_type| molecule_type == MoleculeType::Ion)
         })
         .collect()
 }
 
-fn molstar_water_atom_mask(molecule: &Molecule) -> Vec<bool> {
-    let structure = molecule.atomic_structure();
-    (0..molecule.atoms.len())
+fn molstar_water_atom_mask(structure: &AtomicStructure) -> Vec<bool> {
+    (0..structure.model.hierarchy.atoms.len())
         .map(|atom_index| {
-            atom_molecule_type(&structure, atom_index)
+            atom_molecule_type(structure, atom_index)
                 .is_some_and(|molecule_type| molecule_type == MoleculeType::Water)
         })
         .collect()
@@ -3771,6 +4677,7 @@ struct PolymerBackboneLink {
 
 fn add_polymer_backbone_semantic_objects(
     molecule: &Molecule,
+    structure: &AtomicStructure,
     options: &MeshOptions,
     center: Vec3,
     representation: &'static str,
@@ -3778,7 +4685,7 @@ fn add_polymer_backbone_semantic_objects(
     objects: &mut Vec<SemanticRenderObject>,
     selected: &[String],
 ) {
-    let trace = backbone_residues(molecule);
+    let trace = backbone_residues(molecule, structure);
     if trace.is_empty() {
         return;
     }
@@ -3788,7 +4695,7 @@ fn add_polymer_backbone_semantic_objects(
         .iter()
         .any(|visual| visual == "polymer-backbone-cylinder")
     {
-        for link in polymer_backbone_links(molecule, &trace) {
+        for link in polymer_backbone_links(structure, &trace) {
             let from = &trace[link.from_group];
             let to = &trace[link.to_group];
             let middle = from.position + (to.position - from.position) * link.shift as f32;
@@ -3856,8 +4763,10 @@ fn add_polymer_backbone_semantic_objects(
     *group_id = (*group_id).max(trace.len());
 }
 
-fn polymer_backbone_links(molecule: &Molecule, trace: &[TraceResidue]) -> Vec<PolymerBackboneLink> {
-    let structure = molecule.atomic_structure();
+fn polymer_backbone_links(
+    structure: &AtomicStructure,
+    trace: &[TraceResidue],
+) -> Vec<PolymerBackboneLink> {
     let hierarchy = &structure.model.hierarchy;
     let mut links = Vec::new();
 
@@ -4359,7 +5268,8 @@ fn add_direction_wedge_semantic_objects(
 }
 
 fn add_carbohydrate_symbol_semantic_objects(
-    molecule: &Molecule,
+    _molecule: &Molecule,
+    structure: &AtomicStructure,
     center: Vec3,
     representation: &'static str,
     group_id: &mut usize,
@@ -4372,7 +5282,6 @@ fn add_carbohydrate_symbol_semantic_objects(
     {
         return;
     }
-    let structure = molecule.atomic_structure();
     *group_id = 0;
 
     for (carbohydrate_index, carb) in structure.carbohydrates.elements.iter().enumerate() {
@@ -4428,6 +5337,7 @@ fn add_carbohydrate_symbol_semantic_objects(
 
 fn add_carbohydrate_link_semantic_objects(
     molecule: &Molecule,
+    structure: &AtomicStructure,
     options: &MeshOptions,
     center: Vec3,
     representation: &'static str,
@@ -4438,7 +5348,6 @@ fn add_carbohydrate_link_semantic_objects(
     if !selected.iter().any(|visual| visual == "carbohydrate-link") {
         return;
     }
-    let structure = molecule.atomic_structure();
     let carbohydrates = &structure.carbohydrates;
     *group_id = 0;
 
@@ -4474,6 +5383,7 @@ fn add_carbohydrate_link_semantic_objects(
 
 fn add_carbohydrate_terminal_link_semantic_objects(
     molecule: &Molecule,
+    structure: &AtomicStructure,
     options: &MeshOptions,
     center: Vec3,
     representation: &'static str,
@@ -4487,7 +5397,6 @@ fn add_carbohydrate_terminal_link_semantic_objects(
     {
         return;
     }
-    let structure = molecule.atomic_structure();
     let carbohydrates = &structure.carbohydrates;
     *group_id = 0;
 
@@ -4789,7 +5698,7 @@ fn secondary_trace_flags(
 }
 
 fn secondary_trace_cap_flags(
-    molecule: &Molecule,
+    structure: &AtomicStructure,
     residues: &[&TraceResidue],
     flags: TraceFlags,
 ) -> (bool, bool) {
@@ -4798,17 +5707,16 @@ fn secondary_trace_cap_flags(
     };
     let last = residues.last().copied().unwrap_or(first);
     (
-        flags.sec_struc_first || trace_residue_is_polymer_range_boundary(molecule, first, true),
-        flags.sec_struc_last || trace_residue_is_polymer_range_boundary(molecule, last, false),
+        flags.sec_struc_first || trace_residue_is_polymer_range_boundary(structure, first, true),
+        flags.sec_struc_last || trace_residue_is_polymer_range_boundary(structure, last, false),
     )
 }
 
 fn trace_residue_is_polymer_range_boundary(
-    molecule: &Molecule,
+    structure: &AtomicStructure,
     trace_residue: &TraceResidue,
     start: bool,
 ) -> bool {
-    let structure = molecule.atomic_structure();
     let hierarchy = &structure.model.hierarchy;
     for pair in structure.ranges.polymer_ranges.chunks_exact(2) {
         let element_index = if start { pair[0] } else { pair[1] };
@@ -4883,12 +5791,11 @@ fn trace_flags_for_segment(
     flags
 }
 
-fn apply_polymer_trace_terminal_flags(molecule: &Molecule, trace: &mut [TraceResidue]) {
+fn apply_polymer_trace_terminal_flags(structure: &AtomicStructure, trace: &mut [TraceResidue]) {
     if trace.is_empty() {
         return;
     }
 
-    let structure = molecule.atomic_structure();
     let hierarchy = &structure.model.hierarchy;
     if structure.ranges.polymer_ranges.is_empty() {
         return;
@@ -4954,11 +5861,10 @@ fn set_trace_terminal_flag(
     }
 }
 
-fn apply_cyclic_polymer_trace_flags(molecule: &Molecule, trace: &mut [TraceResidue]) {
+fn apply_cyclic_polymer_trace_flags(structure: &AtomicStructure, trace: &mut [TraceResidue]) {
     if trace.is_empty() {
         return;
     }
-    let structure = molecule.atomic_structure();
     if structure.ranges.cyclic_polymer_map.is_empty() {
         return;
     }
@@ -4990,7 +5896,7 @@ fn apply_cyclic_polymer_trace_flags(molecule: &Molecule, trace: &mut [TraceResid
     }
 }
 
-fn apply_polymer_trace_secondary_flags(molecule: &Molecule, trace: &mut [TraceResidue]) {
+fn apply_polymer_trace_secondary_flags(structure: &AtomicStructure, trace: &mut [TraceResidue]) {
     if trace.is_empty() {
         return;
     }
@@ -4999,7 +5905,6 @@ fn apply_polymer_trace_secondary_flags(molecule: &Molecule, trace: &mut [TraceRe
         residue.sec_struc_last = false;
     }
 
-    let structure = molecule.atomic_structure();
     if structure.ranges.polymer_ranges.is_empty() {
         return;
     }
@@ -5578,14 +6483,6 @@ fn molstar_edge_builder_directed_slots(
     slots.into_iter().flatten().collect()
 }
 
-fn molstar_visible_renderable_bounding_sphere(
-    molecule: &Molecule,
-    options: &MeshOptions,
-) -> Option<BoundingSphere> {
-    let structure = molecule.atomic_structure();
-    molstar_visible_renderable_bounding_sphere_with_structure(molecule, options, &structure)
-}
-
 fn molstar_visible_renderable_bounding_sphere_with_structure(
     molecule: &Molecule,
     options: &MeshOptions,
@@ -5982,36 +6879,110 @@ fn molstar_expand_bounding_sphere(sphere: &BoundingSphere, delta: f64) -> Boundi
     out
 }
 
-fn flatten_semantic_render_objects_with_visible_bounding_sphere(
+fn flatten_semantic_render_objects_with_visible_bounding_sphere_and_stats(
     objects: &[SemanticRenderObject],
-    molecule: &Molecule,
+    _molecule: &Molecule,
     options: &MeshOptions,
-) -> (Mesh, Option<BoundingSphere>) {
-    let render_objects = objects
-        .iter()
-        .map(|object| object.object.clone())
-        .collect::<Vec<_>>();
-    let groups = objects
-        .iter()
-        .map(|object| object.group_id)
-        .collect::<Vec<_>>();
-    let materials = objects
-        .iter()
-        .map(|object| object.material)
-        .collect::<Vec<_>>();
-    let section_keys = objects
-        .iter()
-        .map(|object| object.visual.to_string())
-        .collect::<Vec<_>>();
-    flatten_render_objects_with_groups_and_visible_bounding_sphere(
-        &render_objects,
-        &groups,
-        Some(&materials),
-        Some(&section_keys),
-        molecule,
+    collect_visible_bounding_sphere: bool,
+) -> (Mesh, Option<BoundingSphere>, Vec<RenderObjectMeshStats>) {
+    let cylinder_radial_segments = molstar_export_cylinder_radial_segments(
+        objects
+            .iter()
+            .map(|object| render_object_export_cylinder_count(&object.object))
+            .sum::<usize>(),
+    );
+    let (estimate, plans) = render_objects_mesh_plan(
+        objects.iter().map(|object| &object.object),
         options,
-        true,
-    )
+        cylinder_radial_segments,
+    );
+    let mut state = MeshBuilderState::with_capacity(estimate, objects.len(), true);
+    let mut object_spheres = Vec::with_capacity(if collect_visible_bounding_sphere {
+        objects.len()
+    } else {
+        0
+    });
+    let mut cylinder_cache = CylinderPrimitiveCache::default();
+    let mut curve_scratch = CurveSegmentScratch::default();
+    let mut object_stats = Vec::with_capacity(objects.len());
+    for (object, plan) in objects.iter().zip(&plans) {
+        state.set_current_group(object.group_id);
+        state.set_current_material(object.material);
+        state.set_current_section(Some(object.visual));
+        let vertex_start = state.mesh.vertices.len();
+        let face_start = state.mesh.faces.len();
+        append_render_object_to_mesh(
+            &mut state.mesh,
+            &object.object,
+            options,
+            cylinder_radial_segments,
+            &mut cylinder_cache,
+            &mut curve_scratch,
+            Some(plan),
+        );
+        state.mark_appended(vertex_start, face_start);
+        let vertex_count = state.mesh.vertices.len().saturating_sub(vertex_start);
+        let face_count = state.mesh.faces.len().saturating_sub(face_start);
+        object_stats.push(render_object_mesh_stats(
+            &object.object,
+            vertex_count,
+            face_count,
+        ));
+        if collect_visible_bounding_sphere && face_count > 0 && vertex_count > 0 {
+            let boundary = Boundary::from_positions(&state.mesh.vertices[vertex_start..]);
+            if boundary.sphere.radius > 0.0 {
+                object_spheres.push(boundary.sphere);
+            }
+        }
+    }
+    let visible_sphere = if object_spheres.is_empty() {
+        None
+    } else {
+        Some(Boundary::from_bounding_spheres(&object_spheres).sphere)
+    };
+    (state.into_mesh(), visible_sphere, object_stats)
+}
+
+fn render_object_mesh_stats(
+    object: &RenderObject,
+    vertex_count: usize,
+    face_count: usize,
+) -> RenderObjectMeshStats {
+    if matches!(object, RenderObject::Cylinder { .. }) && face_count > 0 {
+        let radial_segments =
+            molstar_export_cylinder_radial_segments(render_object_export_cylinder_count(object));
+        return RenderObjectMeshStats {
+            draw_count: radial_segments * 4 * 3,
+            vertex_count: (radial_segments + 1) * 4,
+            group_count: 1,
+        };
+    }
+    RenderObjectMeshStats {
+        draw_count: face_count.saturating_mul(3),
+        vertex_count,
+        group_count: usize::from(face_count > 0),
+    }
+}
+
+fn render_object_mesh_stats_from_estimates(
+    objects: &[SemanticRenderObject],
+    options: &MeshOptions,
+) -> Vec<RenderObjectMeshStats> {
+    let cylinder_radial_segments = molstar_export_cylinder_radial_segments(
+        objects
+            .iter()
+            .map(|object| render_object_export_cylinder_count(&object.object))
+            .sum(),
+    );
+    objects
+        .iter()
+        .map(|object| {
+            let estimate = object
+                .object
+                .mesh_estimate(options, cylinder_radial_segments);
+            render_object_mesh_stats(&object.object, estimate.vertices, estimate.faces)
+        })
+        .collect()
 }
 
 #[allow(dead_code)]
@@ -6045,15 +7016,27 @@ fn flatten_render_objects_with_groups_and_visible_bounding_sphere(
     options: &MeshOptions,
     collect_visible_bounding_sphere: bool,
 ) -> (Mesh, Option<BoundingSphere>) {
-    let mut state = MeshBuilderState::default();
-    let mut object_spheres = Vec::new();
     let cylinder_radial_segments = molstar_export_cylinder_radial_segments(
         objects
             .iter()
             .map(render_object_export_cylinder_count)
             .sum::<usize>(),
     );
-    for (index, object) in objects.iter().enumerate() {
+    let (estimate, plans) =
+        render_objects_mesh_plan(objects.iter(), options, cylinder_radial_segments);
+    let mut state = MeshBuilderState::with_capacity(
+        estimate,
+        section_keys.map_or(0, <[String]>::len),
+        materials.is_some(),
+    );
+    let mut object_spheres = Vec::with_capacity(if collect_visible_bounding_sphere {
+        objects.len()
+    } else {
+        0
+    });
+    let mut cylinder_cache = CylinderPrimitiveCache::default();
+    let mut curve_scratch = CurveSegmentScratch::default();
+    for (index, (object, plan)) in objects.iter().zip(&plans).enumerate() {
         let group = groups.get(index).copied().unwrap_or(index);
         state.set_current_group(group);
         state.set_current_material(
@@ -6063,7 +7046,15 @@ fn flatten_render_objects_with_groups_and_visible_bounding_sphere(
             .set_current_section(section_keys.and_then(|keys| keys.get(index).map(String::as_str)));
         let vertex_start = state.mesh.vertices.len();
         let face_start = state.mesh.faces.len();
-        append_render_object_to_mesh(&mut state.mesh, object, options, cylinder_radial_segments);
+        append_render_object_to_mesh(
+            &mut state.mesh,
+            object,
+            options,
+            cylinder_radial_segments,
+            &mut cylinder_cache,
+            &mut curve_scratch,
+            Some(plan),
+        );
         state.mark_appended(vertex_start, face_start);
         if collect_visible_bounding_sphere
             && state.mesh.faces.len() > face_start
@@ -6088,22 +7079,42 @@ fn append_render_object_to_mesh(
     object: &RenderObject,
     options: &MeshOptions,
     cylinder_radial_segments: usize,
+    cylinder_cache: &mut CylinderPrimitiveCache,
+    curve_scratch: &mut CurveSegmentScratch,
+    plan: Option<&RenderObjectMeshPlan>,
 ) {
+    #[cfg(debug_assertions)]
+    let (vertex_start, face_start, expected) = (
+        mesh.vertices.len(),
+        mesh.faces.len(),
+        plan.map_or_else(
+            || object.mesh_estimate(options, cylinder_radial_segments),
+            |plan| plan.estimate,
+        ),
+    );
     match object {
         RenderObject::Sphere { center, radius } => {
             add_sphere_with_radius64(mesh, *center, *radius, options.sphere_detail);
         }
         RenderObject::Cylinder { start, end, radius } => {
-            add_molstar_export_bond_cylinder(mesh, *start, *end, *radius, cylinder_radial_segments);
+            add_molstar_export_bond_cylinder(
+                mesh,
+                *start,
+                *end,
+                *radius,
+                cylinder_radial_segments,
+                cylinder_cache,
+            );
         }
         RenderObject::LinkCylinder { start, end, radius } => {
             let midpoint = molstar_link_midpoint_buffer(*start, *end);
-            add_molstar_buffered_open_cylinder(
+            add_molstar_buffered_open_cylinder_cached(
                 mesh,
                 *start,
                 midpoint,
                 *radius,
                 options.radial_segments.max(3),
+                cylinder_cache,
             );
         }
         RenderObject::LinkCylinderWithSegments {
@@ -6113,19 +7124,36 @@ fn append_render_object_to_mesh(
             radial_segments,
         } => {
             let midpoint = molstar_link_midpoint_buffer(*start, *end);
-            add_molstar_buffered_open_cylinder_with_radius64(
+            add_molstar_buffered_open_cylinder_with_radius64_cached(
                 mesh,
                 *start,
                 midpoint,
                 *radius,
                 (*radial_segments).max(3),
+                cylinder_cache,
             );
         }
         RenderObject::Tube { points, radius } => {
             add_tube_path(mesh, points, *radius, options.radial_segments.max(3));
         }
         RenderObject::DashedTube { points, radius } => {
-            add_dashed_tube_path(mesh, points, *radius, options.radial_segments.max(3));
+            if let Some(samples) = plan.and_then(|plan| plan.dashed_samples.as_deref()) {
+                add_dashed_tube_samples_cached(
+                    mesh,
+                    samples,
+                    *radius,
+                    options.radial_segments.max(3),
+                    cylinder_cache,
+                );
+            } else {
+                add_dashed_tube_path_cached(
+                    mesh,
+                    points,
+                    *radius,
+                    options.radial_segments.max(3),
+                    cylinder_cache,
+                );
+            }
         }
         RenderObject::FixedCountDashedCylinder {
             start,
@@ -6133,7 +7161,7 @@ fn append_render_object_to_mesh(
             radius,
             length_scale,
             segment_count,
-        } => add_fixed_count_dashed_cylinder(
+        } => add_fixed_count_dashed_cylinder_cached(
             mesh,
             *start,
             *end,
@@ -6141,6 +7169,7 @@ fn append_render_object_to_mesh(
             options.radial_segments.max(3),
             *length_scale,
             *segment_count,
+            cylinder_cache,
         ),
         RenderObject::Ribbon {
             points,
@@ -6217,6 +7246,7 @@ fn append_render_object_to_mesh(
                 *swap_normal_binormal,
                 *swap_width_height,
                 options.linear_segments,
+                curve_scratch,
             ),
             PolymerTraceSegmentKind::Tube { profile, round_cap } => add_curve_segment_tube(
                 mesh,
@@ -6235,6 +7265,7 @@ fn append_render_object_to_mesh(
                 options.linear_segments,
                 options.radial_segments,
                 *profile,
+                curve_scratch,
             ),
             PolymerTraceSegmentKind::Sheet { arrow_height } => add_curve_segment_sheet(
                 mesh,
@@ -6251,6 +7282,7 @@ fn append_render_object_to_mesh(
                 *final_residue,
                 *swap_normal_binormal,
                 options.linear_segments,
+                curve_scratch,
             ),
         },
         RenderObject::NucleotideRing {
@@ -6268,6 +7300,7 @@ fn append_render_object_to_mesh(
             *base,
             *detail,
             *radial_segments,
+            cylinder_cache,
         ),
         RenderObject::NucleotideBlock {
             geometry,
@@ -6275,7 +7308,15 @@ fn append_render_object_to_mesh(
             width,
             depth,
             radial_segments,
-        } => add_nucleotide_block(mesh, *geometry, *radius, *width, *depth, *radial_segments),
+        } => add_nucleotide_block(
+            mesh,
+            *geometry,
+            *radius,
+            *width,
+            *depth,
+            *radial_segments,
+            cylinder_cache,
+        ),
         RenderObject::DirectionWedge {
             center,
             tangent,
@@ -6292,6 +7333,19 @@ fn append_render_object_to_mesh(
         RenderObject::Ellipsoid { center, axes } => {
             add_ellipsoid(mesh, *center, *axes, options.sphere_detail)
         }
+    }
+    #[cfg(debug_assertions)]
+    {
+        debug_assert_eq!(
+            mesh.vertices.len() - vertex_start,
+            expected.vertices,
+            "render object vertex estimate drifted for {object:?}"
+        );
+        debug_assert_eq!(
+            mesh.faces.len() - face_start,
+            expected.faces,
+            "render object face estimate drifted for {object:?}"
+        );
     }
 }
 
@@ -6319,10 +7373,25 @@ fn add_molstar_export_bond_cylinder(
     end: Vec3,
     radius: f32,
     radial_segments: usize,
+    cylinder_cache: &mut CylinderPrimitiveCache,
 ) {
     let midpoint = molstar_link_midpoint_buffer(start, end);
-    add_molstar_buffered_open_cylinder(mesh, start, midpoint, radius, radial_segments);
-    add_molstar_buffered_open_cylinder(mesh, midpoint, end, radius, radial_segments);
+    add_molstar_buffered_open_cylinder_cached(
+        mesh,
+        start,
+        midpoint,
+        radius,
+        radial_segments,
+        cylinder_cache,
+    );
+    add_molstar_buffered_open_cylinder_cached(
+        mesh,
+        midpoint,
+        end,
+        radius,
+        radial_segments,
+        cylinder_cache,
+    );
 }
 
 fn molstar_link_midpoint_buffer(start: Vec3, end: Vec3) -> Vec3 {
@@ -6342,6 +7411,24 @@ struct MeshBuilderState {
 }
 
 impl MeshBuilderState {
+    fn with_capacity(
+        estimate: RenderObjectMeshEstimate,
+        section_count: usize,
+        include_materials: bool,
+    ) -> Self {
+        let mut mesh = mesh_with_capacity(estimate);
+        mesh.sections = Vec::with_capacity(section_count);
+        if include_materials {
+            mesh.face_materials = Vec::with_capacity(estimate.faces);
+        }
+        Self {
+            current_group: None,
+            current_material: None,
+            current_section: None,
+            mesh,
+        }
+    }
+
     fn set_current_group(&mut self, group: usize) {
         self.current_group = Some(group);
     }
@@ -6415,7 +7502,7 @@ impl MeshBuilderState {
     }
 }
 
-fn backbone_residues(molecule: &Molecule) -> Vec<TraceResidue> {
+fn backbone_residues(molecule: &Molecule, structure: &AtomicStructure) -> Vec<TraceResidue> {
     #[derive(Clone, Copy, Debug)]
     struct DerivedTraceAtoms {
         molecule_type: MoleculeType,
@@ -6440,7 +7527,6 @@ fn backbone_residues(molecule: &Molecule) -> Vec<TraceResidue> {
         nucleotide_atoms: NucleotideAtoms,
     }
 
-    let structure = molecule.atomic_structure();
     let hierarchy = &structure.model.hierarchy;
     let derived_residues = hierarchy
         .residues
@@ -7032,12 +8118,14 @@ fn add_nucleotide_ring(
     base: Option<NucleotideRingBase>,
     detail: usize,
     radial_segments: usize,
+    cylinder_cache: &mut CylinderPrimitiveCache,
 ) {
     if let Some(base) = base {
-        add_nucleotide_named_atom_ring(mesh, base, radius, detail, radial_segments);
+        add_nucleotide_named_atom_ring(mesh, base, radius, detail, radial_segments, cylinder_cache);
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn add_nucleotide_block(
     mesh: &mut Mesh,
     geometry: NucleotideBlockGeometry,
@@ -7045,8 +8133,9 @@ fn add_nucleotide_block(
     width: f32,
     depth: f32,
     radial_segments: usize,
+    cylinder_cache: &mut CylinderPrimitiveCache,
 ) {
-    add_molstar_cylinder_caps(
+    add_molstar_cylinder_caps_cached(
         mesh,
         geometry.anchor,
         geometry.trace,
@@ -7054,6 +8143,7 @@ fn add_nucleotide_block(
         radial_segments,
         false,
         true,
+        cylinder_cache,
     );
     if let Some(block) = geometry.block {
         add_molstar_nucleotide_block_box(mesh, block, width, depth);
@@ -7359,11 +8449,12 @@ fn add_nucleotide_named_atom_ring(
     radius: f32,
     detail: usize,
     radial_segments: usize,
+    cylinder_cache: &mut CylinderPrimitiveCache,
 ) {
     let radial_segments = radial_segments.max(3);
     match base {
         NucleotideRingBase::PurineConnector { trace, n9 } => {
-            add_open_cylinder(mesh, n9, trace, radius, radial_segments);
+            add_open_cylinder_cached(mesh, n9, trace, radius, radial_segments, cylinder_cache);
             add_sphere(mesh, n9, radius, detail);
         }
         NucleotideRingBase::Purine {
@@ -7378,7 +8469,7 @@ fn add_nucleotide_named_atom_ring(
             c8,
             n9,
         } => {
-            add_open_cylinder(mesh, n9, trace, radius, radial_segments);
+            add_open_cylinder_cached(mesh, n9, trace, radius, radial_segments, cylinder_cache);
             add_sphere(mesh, n9, radius, detail);
             add_molstar_nucleotide_ring_5_6_faces(
                 mesh,
@@ -7387,7 +8478,7 @@ fn add_nucleotide_named_atom_ring(
             );
         }
         NucleotideRingBase::PyrimidineConnector { trace, n1 } => {
-            add_open_cylinder(mesh, n1, trace, radius, radial_segments);
+            add_open_cylinder_cached(mesh, n1, trace, radius, radial_segments, cylinder_cache);
             add_sphere(mesh, n1, radius, detail);
         }
         NucleotideRingBase::Pyrimidine {
@@ -7399,7 +8490,7 @@ fn add_nucleotide_named_atom_ring(
             c5,
             c6,
         } => {
-            add_open_cylinder(mesh, n1, trace, radius, radial_segments);
+            add_open_cylinder_cached(mesh, n1, trace, radius, radial_segments, cylinder_cache);
             add_sphere(mesh, n1, radius, detail);
             add_molstar_nucleotide_ring_6_faces(mesh, radius, [n1, c2, n3, c4, c5, c6]);
         }
@@ -7581,6 +8672,285 @@ mod tests {
             chain_index_by_element: Vec::new(),
             props,
             operator: Default::default(),
+        }
+    }
+
+    fn assert_render_object_mesh_estimate(
+        object: RenderObject,
+        options: &MeshOptions,
+        cylinder_radial_segments: usize,
+    ) {
+        let estimate = object.mesh_estimate(options, cylinder_radial_segments);
+        let mut mesh = Mesh::default();
+        let mut cylinder_cache = CylinderPrimitiveCache::default();
+        let mut curve_scratch = CurveSegmentScratch::default();
+        append_render_object_to_mesh(
+            &mut mesh,
+            &object,
+            options,
+            cylinder_radial_segments,
+            &mut cylinder_cache,
+            &mut curve_scratch,
+            None,
+        );
+        assert_eq!(
+            estimate.vertices,
+            mesh.vertices.len(),
+            "vertex estimate mismatch for {object:?}"
+        );
+        assert_eq!(
+            estimate.faces,
+            mesh.faces.len(),
+            "face estimate mismatch for {object:?}"
+        );
+        assert_eq!(
+            render_object_mesh_stats(&object, estimate.vertices, estimate.faces),
+            render_object_mesh_stats(&object, mesh.vertices.len(), mesh.faces.len()),
+            "value-cell estimate mismatch for {object:?}"
+        );
+    }
+
+    #[test]
+    fn render_object_mesh_estimates_match_every_geometry_builder() {
+        let options = MeshOptions {
+            sphere_detail: 1,
+            linear_segments: 6,
+            radial_segments: 12,
+            ..MeshOptions::default()
+        };
+        let cylinder_radial_segments = 24;
+        let points = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.3, 0.1),
+            Vec3::new(2.0, -0.2, 0.2),
+        ];
+        let controls = CurveSegmentControls {
+            sec_struc_first: false,
+            sec_struc_last: false,
+            p0: DVec3::new(-2.0, 0.0, 0.0),
+            p1: DVec3::new(-1.0, 0.2, 0.0),
+            p2: DVec3::new(0.0, 0.0, 0.0),
+            p3: DVec3::new(1.0, 0.2, 0.0),
+            p4: DVec3::new(2.0, 0.0, 0.0),
+            d12: DVec3::new(0.0, 1.0, 0.0),
+            d23: DVec3::new(0.0, 1.0, 0.0),
+        };
+        let block = NucleotideBlockBox {
+            p1: Vec3::new(0.0, 0.0, 0.0),
+            p2: Vec3::new(1.0, 0.0, 0.0),
+            p3: Vec3::new(0.0, 1.0, 0.0),
+            p4: Vec3::new(1.0, 1.0, 0.0),
+            height: 1.2,
+        };
+        let mut objects = vec![
+            RenderObject::Sphere {
+                center: Vec3::default(),
+                radius: 1.0,
+            },
+            RenderObject::Cylinder {
+                start: Vec3::default(),
+                end: Vec3::new(2.0, 0.0, 0.0),
+                radius: 0.2,
+            },
+            RenderObject::LinkCylinder {
+                start: Vec3::default(),
+                end: Vec3::new(2.0, 0.0, 0.0),
+                radius: 0.2,
+            },
+            RenderObject::LinkCylinderWithSegments {
+                start: Vec3::default(),
+                end: Vec3::new(2.0, 0.0, 0.0),
+                radius: 0.2,
+                radial_segments: 4,
+            },
+            RenderObject::Tube {
+                points: points.clone(),
+                radius: 0.3,
+            },
+            RenderObject::DashedTube {
+                points: points.clone(),
+                radius: 0.2,
+            },
+            RenderObject::FixedCountDashedCylinder {
+                start: Vec3::default(),
+                end: Vec3::new(4.0, 0.0, 0.0),
+                radius: 0.2,
+                length_scale: 1.0,
+                segment_count: 5,
+            },
+            RenderObject::Ribbon {
+                points: points.clone(),
+                width: 0.8,
+                thickness: 0.2,
+            },
+            RenderObject::Sheet {
+                points: points.clone(),
+                width: 0.8,
+                thickness: 0.2,
+                arrow_height: 0.6,
+                start_cap: false,
+                end_cap: true,
+            },
+            RenderObject::OrientedRibbon {
+                centers: points.clone(),
+                normals: vec![Vec3::new(0.0, 1.0, 0.0); points.len()],
+                width: 0.8,
+                thickness: 0.2,
+                profile: PolymerProfile::Rounded,
+                start_cap: true,
+                end_cap: true,
+                round_cap: true,
+            },
+            RenderObject::PolymerTraceSegment {
+                controls: controls.clone(),
+                widths: [0.8; 3],
+                heights: [0.2; 3],
+                tension: 0.5,
+                shift: 0.5,
+                overhang_width: 0.8,
+                kind: PolymerTraceSegmentKind::Ribbon {
+                    arrow_height: 0.0,
+                    swap_width_height: false,
+                },
+                start_cap: false,
+                end_cap: false,
+                initial: true,
+                final_residue: false,
+                swap_normal_binormal: false,
+            },
+            RenderObject::PolymerTraceSegment {
+                controls: controls.clone(),
+                widths: [0.8; 3],
+                heights: [0.2; 3],
+                tension: 0.5,
+                shift: 0.5,
+                overhang_width: 0.8,
+                kind: PolymerTraceSegmentKind::Tube {
+                    profile: PolymerProfile::Rounded,
+                    round_cap: true,
+                },
+                start_cap: true,
+                end_cap: true,
+                initial: false,
+                final_residue: false,
+                swap_normal_binormal: false,
+            },
+            RenderObject::PolymerTraceSegment {
+                controls,
+                widths: [0.8; 3],
+                heights: [0.2; 3],
+                tension: 0.5,
+                shift: 0.5,
+                overhang_width: 0.8,
+                kind: PolymerTraceSegmentKind::Sheet { arrow_height: 0.6 },
+                start_cap: false,
+                end_cap: true,
+                initial: false,
+                final_residue: true,
+                swap_normal_binormal: false,
+            },
+            RenderObject::NucleotideRing {
+                center: Vec3::default(),
+                normal: Vec3::new(0.0, 0.0, 1.0),
+                radius: 0.2,
+                base: Some(NucleotideRingBase::Pyrimidine {
+                    trace: Vec3::new(-1.0, 0.0, 0.0),
+                    n1: Vec3::new(0.0, 0.0, 0.0),
+                    c2: Vec3::new(0.5, 0.8, 0.0),
+                    n3: Vec3::new(1.5, 0.8, 0.0),
+                    c4: Vec3::new(2.0, 0.0, 0.0),
+                    c5: Vec3::new(1.5, -0.8, 0.0),
+                    c6: Vec3::new(0.5, -0.8, 0.0),
+                }),
+                detail: 1,
+                radial_segments: 12,
+            },
+            RenderObject::NucleotideBlock {
+                geometry: NucleotideBlockGeometry {
+                    trace: Vec3::new(-1.0, 0.0, 0.0),
+                    anchor: Vec3::default(),
+                    block: Some(block),
+                },
+                radius: 0.2,
+                width: 1.0,
+                depth: 0.4,
+                radial_segments: 12,
+            },
+            RenderObject::DirectionWedge {
+                center: Vec3::default(),
+                tangent: Vec3::new(1.0, 0.0, 0.0),
+                up: Vec3::new(0.0, 1.0, 0.0),
+                size: 0.5,
+            },
+            RenderObject::Ellipsoid {
+                center: Vec3::default(),
+                axes: [
+                    Vec3::new(1.0, 0.0, 0.0),
+                    Vec3::new(0.0, 2.0, 0.0),
+                    Vec3::new(0.0, 0.0, 3.0),
+                ],
+            },
+        ];
+
+        for shape in [
+            SaccharideShape::FilledSphere,
+            SaccharideShape::FilledCube,
+            SaccharideShape::CrossedCube,
+            SaccharideShape::FilledCone,
+            SaccharideShape::DevidedCone,
+            SaccharideShape::FlatBox,
+            SaccharideShape::FilledStar,
+            SaccharideShape::FilledDiamond,
+            SaccharideShape::DividedDiamond,
+            SaccharideShape::FlatDiamond,
+            SaccharideShape::DiamondPrism,
+            SaccharideShape::PentagonalPrism,
+            SaccharideShape::Pentagon,
+            SaccharideShape::HexagonalPrism,
+            SaccharideShape::HeptagonalPrism,
+            SaccharideShape::FlatHexagon,
+        ] {
+            objects.push(RenderObject::CarbohydrateSymbol {
+                center: Vec3::default(),
+                normal: Vec3::new(0.0, 1.0, 0.0),
+                direction: Vec3::new(1.0, 0.0, 0.0),
+                shape,
+                part: CarbohydrateSymbolPart::Primary,
+            });
+            if carbohydrate_symbol_has_secondary_part(shape) {
+                objects.push(RenderObject::CarbohydrateSymbol {
+                    center: Vec3::default(),
+                    normal: Vec3::new(0.0, 1.0, 0.0),
+                    direction: Vec3::new(1.0, 0.0, 0.0),
+                    shape,
+                    part: CarbohydrateSymbolPart::Secondary,
+                });
+            }
+        }
+
+        let flatten_cylinder_radial_segments = molstar_export_cylinder_radial_segments(
+            objects
+                .iter()
+                .map(render_object_export_cylinder_count)
+                .sum(),
+        );
+        let total = render_objects_mesh_estimate(
+            objects.iter(),
+            &options,
+            flatten_cylinder_radial_segments,
+        );
+        let mesh = flatten_render_objects(&objects, &Molecule::default(), &options);
+        assert_eq!(mesh.vertices.len(), total.vertices);
+        assert_eq!(mesh.normals.len(), total.vertices);
+        assert_eq!(mesh.faces.len(), total.faces);
+        assert!(mesh.vertices.capacity() >= total.vertices);
+        assert!(mesh.normals.capacity() >= total.vertices);
+        assert!(mesh.faces.capacity() >= total.faces);
+        assert!(mesh.vertex_groups.capacity() >= total.vertices);
+        assert!(mesh.face_groups.capacity() >= total.faces);
+
+        for object in objects {
+            assert_render_object_mesh_estimate(object, &options, cylinder_radial_segments);
         }
     }
 
@@ -7828,6 +9198,7 @@ mod tests {
     #[test]
     fn nucleotide_ring_mesh_uses_molstar_default_size_and_detail() {
         let mut mesh = Mesh::default();
+        let mut cylinder_cache = CylinderPrimitiveCache::default();
         add_nucleotide_named_atom_ring(
             &mut mesh,
             NucleotideRingBase::Pyrimidine {
@@ -7842,6 +9213,7 @@ mod tests {
             0.2,
             0,
             16,
+            &mut cylinder_cache,
         );
 
         assert_eq!(mesh.faces.len(), 72);
@@ -7861,6 +9233,7 @@ mod tests {
     #[test]
     fn nucleotide_ring_mesh_uses_resolved_detail_and_radial_segments() {
         let mut mesh = Mesh::default();
+        let mut cylinder_cache = CylinderPrimitiveCache::default();
         let base = NucleotideRingBase::Pyrimidine {
             trace: Vec3::new(0.0, -1.5, 0.0),
             n1: Vec3::new(0.0, 0.0, 0.0),
@@ -7870,7 +9243,7 @@ mod tests {
             c5: Vec3::new(-1.0, 1.0, 0.0),
             c6: Vec3::new(-1.0, 0.0, 0.0),
         };
-        add_nucleotide_named_atom_ring(&mut mesh, base, 0.2, 1, 12);
+        add_nucleotide_named_atom_ring(&mut mesh, base, 0.2, 1, 12, &mut cylinder_cache);
 
         let expected_faces =
             12 * 2 + molstar_sphere_triangle_count(1) + molstar_nucleotide_ring_6_face_count();
@@ -7881,6 +9254,7 @@ mod tests {
         );
 
         let mut connector = Mesh::default();
+        let mut connector_cache = CylinderPrimitiveCache::default();
         add_nucleotide_named_atom_ring(
             &mut connector,
             NucleotideRingBase::PyrimidineConnector {
@@ -7890,6 +9264,7 @@ mod tests {
             0.2,
             1,
             8,
+            &mut connector_cache,
         );
         assert_eq!(
             connector.faces.len(),
@@ -7908,6 +9283,7 @@ mod tests {
         );
 
         let mut fallback = Mesh::default();
+        let mut fallback_cache = CylinderPrimitiveCache::default();
         add_nucleotide_ring(
             &mut fallback,
             Vec3::default(),
@@ -7916,6 +9292,7 @@ mod tests {
             None,
             1,
             8,
+            &mut fallback_cache,
         );
         assert!(
             fallback.faces.is_empty(),
@@ -7973,6 +9350,7 @@ mod tests {
         // addCylinder(p5, trace, bottomCap=true), then targetTo(p1, p2, vC)
         // scaled by width/depth/height and translated to p1 + v12 * (height / 2 - 0.2).
         let mut mesh = Mesh::default();
+        let mut cylinder_cache = CylinderPrimitiveCache::default();
         add_nucleotide_block(
             &mut mesh,
             NucleotideBlockGeometry {
@@ -7990,6 +9368,7 @@ mod tests {
             0.9,
             0.4,
             16,
+            &mut cylinder_cache,
         );
 
         let box_start = 67;

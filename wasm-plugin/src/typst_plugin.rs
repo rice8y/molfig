@@ -1,6 +1,6 @@
 use crate::{
-    convert_to_mtl, convert_to_obj, convert_to_ply, convert_to_stl, maquette_material_map,
-    molecule_info,
+    convert_to_mtl, convert_to_obj, convert_to_obj_bundle, convert_to_ply,
+    convert_to_render_object_bundle, convert_to_stl, maquette_material_map, molecule_info,
 };
 
 #[link(wasm_import_module = "typst_env")]
@@ -47,6 +47,16 @@ fn call1(a_len: usize, f: fn(&[u8]) -> Result<Vec<u8>, String>) -> i32 {
 #[no_mangle]
 pub extern "C" fn to_obj(data_len: usize, options_len: usize) -> i32 {
     call2(data_len, options_len, convert_to_obj)
+}
+
+#[no_mangle]
+pub extern "C" fn to_obj_bundle(data_len: usize, options_len: usize) -> i32 {
+    call2(data_len, options_len, convert_to_obj_bundle)
+}
+
+#[no_mangle]
+pub extern "C" fn render_object_bundle(data_len: usize, options_len: usize) -> i32 {
+    call2(data_len, options_len, convert_to_render_object_bundle)
 }
 
 #[no_mangle]
