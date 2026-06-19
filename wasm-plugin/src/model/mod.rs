@@ -1,5 +1,13 @@
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+#[cfg(test)]
+thread_local! {
+    static GEOMETRY_EXPANSION_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static OWNED_GEOMETRY_EXPANSION_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static ATOMIC_STRUCTURE_BUILD_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 #[derive(Clone, Debug)]
 pub struct Atom {
@@ -1253,6 +1261,33 @@ pub struct SourceCategory {
     pub column_count: usize,
 }
 
+#[cfg(test)]
+pub(crate) fn reset_geometry_expansion_count_for_test() {
+    GEOMETRY_EXPANSION_COUNT.with(|count| count.set(0));
+    OWNED_GEOMETRY_EXPANSION_COUNT.with(|count| count.set(0));
+    ATOMIC_STRUCTURE_BUILD_COUNT.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn geometry_expansion_count_for_test() -> usize {
+    GEOMETRY_EXPANSION_COUNT.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+pub(crate) fn owned_geometry_expansion_count_for_test() -> usize {
+    OWNED_GEOMETRY_EXPANSION_COUNT.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+pub(crate) fn atomic_structure_build_count_for_test() -> usize {
+    ATOMIC_STRUCTURE_BUILD_COUNT.with(std::cell::Cell::get)
+}
+
+pub(crate) struct GeometryExpansion<'a> {
+    pub(crate) molecule: Cow<'a, Molecule>,
+    pub(crate) assembly_operators: Vec<UnitOperator>,
+}
+
 impl Molecule {
     pub fn atomic_structure(&self) -> AtomicStructure {
         AtomicStructure::from_molecule(self)
@@ -1262,12 +1297,34 @@ impl Molecule {
         self.atomic_structure().carbohydrates
     }
 
-    pub(crate) fn expanded_for_geometry(&self) -> Molecule {
-        let structure = self.atomic_structure();
+    pub(crate) fn expanded_for_geometry(&self) -> Cow<'_, Molecule> {
+        self.expanded_for_geometry_with_operator_snapshot(false)
+            .molecule
+    }
+
+    pub(crate) fn expanded_for_geometry_with_operator_snapshot(
+        &self,
+        capture_operators: bool,
+    ) -> GeometryExpansion<'_> {
+        #[cfg(test)]
+        GEOMETRY_EXPANSION_COUNT.with(|count| count.set(count.get() + 1));
+
         if self.selected_assembly.is_none() {
-            return self.clone();
+            return GeometryExpansion {
+                molecule: Cow::Borrowed(self),
+                assembly_operators: Vec::new(),
+            };
         }
 
+        #[cfg(test)]
+        OWNED_GEOMETRY_EXPANSION_COUNT.with(|count| count.set(count.get() + 1));
+
+        let structure = self.atomic_structure();
+        let assembly_operators = if capture_operators {
+            unique_assembly_unit_operators(&structure.units)
+        } else {
+            Vec::new()
+        };
         let mut atoms = Vec::new();
         let mut expanded_indices = Vec::<(usize, usize)>::new();
         for unit in &structure.units {
@@ -1301,7 +1358,10 @@ impl Molecule {
         molecule.coarse_spheres = coarse_spheres;
         molecule.coarse_gaussians = coarse_gaussians;
         molecule.selected_assembly = None;
-        molecule
+        GeometryExpansion {
+            molecule: Cow::Owned(molecule),
+            assembly_operators,
+        }
     }
 
     pub(crate) fn identity_assembly_subset_for_geometry(&self) -> Option<Molecule> {
@@ -1519,6 +1579,24 @@ impl Molecule {
     }
 }
 
+fn unique_assembly_unit_operators(units: &[StructureUnit]) -> Vec<UnitOperator> {
+    let mut operators = Vec::new();
+    for unit in units {
+        let operator = &unit.operator;
+        if operators.iter().any(|existing: &UnitOperator| {
+            existing.name == operator.name
+                && existing.instance_id == operator.instance_id
+                && existing.assembly_id == operator.assembly_id
+                && existing.oper_id == operator.oper_id
+                && existing.oper_list_ids == operator.oper_list_ids
+        }) {
+            continue;
+        }
+        operators.push(operator.clone());
+    }
+    operators
+}
+
 fn molstar_bond_site_export_value_order(order: i8, flags: BondFlags) -> Option<&'static str> {
     let mut value_order = match order {
         1 => Some("sing"),
@@ -1611,6 +1689,9 @@ pub struct AtomicStructure {
 
 impl AtomicStructure {
     fn from_molecule(molecule: &Molecule) -> Self {
+        #[cfg(test)]
+        ATOMIC_STRUCTURE_BUILD_COUNT.with(|count| count.set(count.get() + 1));
+
         let mut models = atomic_models(&molecule.atoms, molecule);
         let mut coarse_models = coarse_models(molecule);
         if coarse_models.is_empty() {
@@ -2088,8 +2169,8 @@ impl AtomicModel {
         let mut occupancies = Vec::with_capacity(atoms.len());
         let mut b_iso = Vec::with_capacity(atoms.len());
         let mut formal_charges = Vec::with_capacity(atoms.len());
-        let mut residue_keys = Vec::<ResidueKey>::new();
-        let mut chain_keys = Vec::<ChainKey>::new();
+        let mut residue_key_index = HashMap::<ResidueKey, usize>::new();
+        let mut chain_key_index = HashMap::<ChainKey, usize>::new();
 
         let sorted_atoms = sorted_model_atoms(atoms);
         for (element_index, atom) in sorted_atoms.iter().copied().enumerate() {
@@ -2097,20 +2178,18 @@ impl AtomicModel {
                 id: atom.chain.clone(),
                 entity_id: atom.entity_id.clone(),
             };
-            let chain_index = chain_keys
-                .iter()
-                .position(|key| key == &chain_key)
-                .unwrap_or_else(|| {
-                    chain_keys.push(chain_key.clone());
-                    hierarchy.chains.push(AtomicChain {
-                        id: chain_key.id,
-                        auth_id: atom.auth_chain.clone(),
-                        entity_id: chain_key.entity_id,
-                        start_residue: usize::MAX,
-                        end_residue: 0,
-                    });
-                    chain_keys.len() - 1
+            let chain_index = chain_key_index.get(&chain_key).copied().unwrap_or_else(|| {
+                let chain_index = hierarchy.chains.len();
+                hierarchy.chains.push(AtomicChain {
+                    id: chain_key.id.clone(),
+                    auth_id: atom.auth_chain.clone(),
+                    entity_id: chain_key.entity_id.clone(),
+                    start_residue: usize::MAX,
+                    end_residue: 0,
                 });
+                chain_key_index.insert(chain_key, chain_index);
+                chain_index
+            });
 
             let residue_key = ResidueKey {
                 chain_index,
@@ -2118,24 +2197,25 @@ impl AtomicModel {
                 auth_seq_id: atom.auth_residue_seq.clone(),
                 insertion_code: atom.insertion_code.clone(),
             };
-            let residue_index = residue_keys
-                .iter()
-                .position(|key| key == &residue_key)
+            let residue_index = residue_key_index
+                .get(&residue_key)
+                .copied()
                 .unwrap_or_else(|| {
-                    residue_keys.push(residue_key.clone());
+                    let residue_index = hierarchy.residues.len();
                     hierarchy.residues.push(AtomicResidue {
                         chain_index,
                         comp_id: atom.residue.clone(),
                         auth_comp_id: atom.auth_residue.clone(),
                         group_pdb: atom.group_pdb.clone(),
-                        label_seq_id: residue_key.label_seq_id,
-                        auth_seq_id: residue_key.auth_seq_id,
-                        insertion_code: residue_key.insertion_code,
+                        label_seq_id: residue_key.label_seq_id.clone(),
+                        auth_seq_id: residue_key.auth_seq_id.clone(),
+                        insertion_code: residue_key.insertion_code.clone(),
                         start_atom: element_index,
                         end_atom: element_index + 1,
                         is_het: atom.het,
                     });
-                    residue_keys.len() - 1
+                    residue_key_index.insert(residue_key, residue_index);
+                    residue_index
                 });
 
             if let Some(residue) = hierarchy.residues.get_mut(residue_index) {
@@ -5181,13 +5261,13 @@ pub struct UnitSymmetryGroup {
     pub transform_hash: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct ChainKey {
     id: String,
     entity_id: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct ResidueKey {
     chain_index: usize,
     label_seq_id: String,
@@ -5616,21 +5696,18 @@ impl<'a> StructureUnitBuilder<'a> {
         let Some(&chain_index) = chain_indices.first() else {
             return;
         };
-        let elements = chain_indices
-            .iter()
-            .flat_map(|chain_index| {
-                hierarchy
-                    .atoms
-                    .iter()
-                    .enumerate()
-                    .filter(move |(_, atom)| atom.chain_index == *chain_index)
-                    .filter(move |(_, atom)| match operator_name {
-                        Some(operator_name) => atom.operator_name == operator_name,
-                        None => true,
-                    })
-                    .map(|(element_index, _)| element_index)
-            })
-            .collect::<Vec<_>>();
+        let mut elements = Vec::new();
+        for &chain_index in &chain_indices {
+            let (start_atom, end_atom) = chain_atom_range(hierarchy, chain_index);
+            for element_index in start_atom..end_atom {
+                let Some(atom) = hierarchy.atoms.get(element_index) else {
+                    continue;
+                };
+                if operator_name.is_none_or(|operator_name| atom.operator_name == operator_name) {
+                    elements.push(element_index);
+                }
+            }
+        }
         if elements.is_empty() {
             return;
         }
@@ -5714,13 +5791,18 @@ fn canonical_single_element_key_coordinate(value: f32) -> f32 {
 }
 
 fn chain_atom_count(hierarchy: &AtomicHierarchy, chain_index: usize) -> usize {
+    let (start, end) = chain_atom_range(hierarchy, chain_index);
+    end.saturating_sub(start)
+}
+
+fn chain_atom_range(hierarchy: &AtomicHierarchy, chain_index: usize) -> (usize, usize) {
     hierarchy
         .chain_atom_segments
         .offsets
         .get(chain_index + 1)
         .zip(hierarchy.chain_atom_segments.offsets.get(chain_index))
-        .map(|(end, start)| end.saturating_sub(*start))
-        .unwrap_or(0)
+        .map(|(end, start)| (*start, *end))
+        .unwrap_or((0, 0))
 }
 
 fn is_water_chain(hierarchy: &AtomicHierarchy, chain_index: usize) -> bool {
@@ -5742,11 +5824,13 @@ fn chains_have_same_operator(hierarchy: &AtomicHierarchy, a: usize, b: usize) ->
 }
 
 fn first_chain_operator(hierarchy: &AtomicHierarchy, chain_index: usize) -> Option<&str> {
-    hierarchy
-        .atoms
-        .iter()
-        .find(|atom| atom.chain_index == chain_index)
-        .map(|atom| atom.operator_name.as_str())
+    let (start, end) = chain_atom_range(hierarchy, chain_index);
+    (start..end).find_map(|atom_index| {
+        hierarchy
+            .atoms
+            .get(atom_index)
+            .map(|atom| atom.operator_name.as_str())
+    })
 }
 
 fn asymmetric_operator(operator_name: &str) -> UnitOperator {
@@ -5793,6 +5877,27 @@ struct IntraUnitBondBuild {
     metadata: Vec<BondMetadata>,
 }
 
+type UnitEndpoint = (usize, usize, usize);
+
+fn unit_endpoints_by_source_atom(units: &[StructureUnit]) -> Vec<Vec<UnitEndpoint>> {
+    let Some(max_source_index) = units
+        .iter()
+        .flat_map(|unit| unit.atom_indices.iter().copied())
+        .max()
+    else {
+        return Vec::new();
+    };
+    let mut endpoints = vec![Vec::<UnitEndpoint>::new(); max_source_index + 1];
+    for (unit_index, unit) in units.iter().enumerate() {
+        for (index, &source_index) in unit.atom_indices.iter().enumerate() {
+            if let Some(entries) = endpoints.get_mut(source_index) {
+                entries.push((unit.id, unit_index, index));
+            }
+        }
+    }
+    endpoints
+}
+
 fn assign_unit_bonds(
     units: &mut [StructureUnit],
     bonds: &[Bond],
@@ -5804,28 +5909,19 @@ fn assign_unit_bonds(
     let mut intra_builders = (0..units.len())
         .map(|_| IntraUnitBondBuild::default())
         .collect::<Vec<_>>();
+    let endpoints_by_atom = unit_endpoints_by_source_atom(units);
     for (source_bond, bond) in bonds.iter().enumerate() {
-        let mut endpoints_a = Vec::<(usize, usize, usize)>::new();
-        let mut endpoints_b = Vec::<(usize, usize, usize)>::new();
-        for (unit_index, unit) in units.iter().enumerate() {
-            if let Some(index) = unit
-                .atom_indices
-                .iter()
-                .position(|source_index| *source_index == bond.a)
-            {
-                endpoints_a.push((unit.id, unit_index, index));
-            }
-            if let Some(index) = unit
-                .atom_indices
-                .iter()
-                .position(|source_index| *source_index == bond.b)
-            {
-                endpoints_b.push((unit.id, unit_index, index));
-            }
-        }
+        let endpoints_a = endpoints_by_atom
+            .get(bond.a)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let endpoints_b = endpoints_by_atom
+            .get(bond.b)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
         let bond_metadata = metadata.get(source_bond).cloned().unwrap_or_default();
-        for (unit_a_id, unit_a_index, index_a) in &endpoints_a {
-            for (unit_b_id, unit_b_index, index_b) in &endpoints_b {
+        for (unit_a_id, unit_a_index, index_a) in endpoints_a {
+            for (unit_b_id, unit_b_index, index_b) in endpoints_b {
                 if unit_a_id == unit_b_id {
                     if !metadata_allows_intra_bond(&bond_metadata, &units[*unit_a_index])
                         || !metadata_allows_bond_distance(

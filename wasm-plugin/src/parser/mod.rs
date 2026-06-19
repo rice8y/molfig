@@ -10,6 +10,11 @@ use crate::model::{
 };
 use crate::options::{InputFormat, MeshOptions};
 
+#[cfg(test)]
+thread_local! {
+    static SOURCE_PARSE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 mod pdb;
 
 pub(crate) use pdb::parse_pdb;
@@ -31,10 +36,35 @@ pub fn parse_molecule(data: &[u8], format: InputFormat) -> Result<Molecule, Stri
     )
 }
 
+pub(crate) struct ParsedMolecule {
+    pub(crate) molecule: Molecule,
+    pub(crate) available_alt_locs: Vec<String>,
+}
+
 pub(crate) fn parse_molecule_with_options(
     data: &[u8],
     options: &MeshOptions,
 ) -> Result<Molecule, String> {
+    let molecule = parse_molecule_source(data, options)?;
+    Ok(apply_molecule_options(molecule, options))
+}
+
+pub(crate) fn parse_molecule_with_options_and_metadata(
+    data: &[u8],
+    options: &MeshOptions,
+) -> Result<ParsedMolecule, String> {
+    let molecule = parse_molecule_source(data, options)?;
+    let available_alt_locs = unique_alt_locs(&molecule.atoms);
+    Ok(ParsedMolecule {
+        molecule: apply_molecule_options(molecule, options),
+        available_alt_locs,
+    })
+}
+
+fn parse_molecule_source(data: &[u8], options: &MeshOptions) -> Result<Molecule, String> {
+    #[cfg(test)]
+    SOURCE_PARSE_COUNT.with(|count| count.set(count.get() + 1));
+
     let format = options.format;
     let detected = match format {
         InputFormat::Auto if looks_like_binary_cif(data) => InputFormat::BinaryCif,
@@ -49,20 +79,33 @@ pub(crate) fn parse_molecule_with_options(
         }
         f => f,
     };
-    let mut molecule = match detected {
+    match detected {
         InputFormat::Auto => unreachable!(),
         InputFormat::Pdb => {
             let text = std::str::from_utf8(data)
                 .map_err(|_| "PDB input must be UTF-8 text".to_string())?;
-            parse_pdb(text)?
+            parse_pdb(text)
         }
         InputFormat::Cif => {
             let text = std::str::from_utf8(data)
                 .map_err(|_| "mmCIF input must be UTF-8 text".to_string())?;
-            parse_cif(text)?
+            parse_cif(text)
         }
-        InputFormat::BinaryCif => binary::parse_binary_cif(data, options)?,
-    };
+        InputFormat::BinaryCif => binary::parse_binary_cif(data, options),
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn reset_source_parse_count_for_test() {
+    SOURCE_PARSE_COUNT.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn source_parse_count_for_test() -> usize {
+    SOURCE_PARSE_COUNT.with(std::cell::Cell::get)
+}
+
+fn apply_molecule_options(mut molecule: Molecule, options: &MeshOptions) -> Molecule {
     molecule = select_alt_loc(molecule, &options.alt_loc);
     if let Some(id) = &options.assembly {
         molecule = apply_assembly(molecule, id);
@@ -84,7 +127,7 @@ pub(crate) fn parse_molecule_with_options(
         molecule.bond_metadata = bond_metadata;
     }
     molecule.refresh_topology_metadata();
-    Ok(molecule)
+    molecule
 }
 
 fn looks_like_binary_cif(data: &[u8]) -> bool {

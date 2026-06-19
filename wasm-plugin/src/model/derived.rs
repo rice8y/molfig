@@ -1,3 +1,6 @@
+use std::collections::BTreeMap;
+use std::sync::OnceLock;
+
 use crate::chemistry::atomic_number;
 
 use super::{AtomicChain, AtomicHierarchy, AtomicResidue, ChemicalComponent};
@@ -154,26 +157,43 @@ pub fn saccharide_component_with_map(
         return None;
     }
 
-    let mut component = None;
-    let mut glycam_component = None;
-    for mono in monosaccharides() {
-        if saccharide_name_map_contains("CommonSaccharideNames", &mono.abbr, &comp_id)
-            || saccharide_name_map_contains("CharmmSaccharideNames", &mono.abbr, &comp_id)
-        {
-            component = Some(mono.clone());
-        }
-        if map_type == SaccharideCompIdMapType::Glycam
-            && component.is_none()
-            && glycam_component.is_none()
-            && saccharide_name_map_contains("GlycamSaccharideNames", &mono.abbr, &comp_id)
-        {
-            glycam_component = Some(mono);
-        }
-    }
+    let maps = saccharide_component_maps();
+    maps.default
+        .get(&comp_id)
+        .cloned()
+        .or_else(|| {
+            (map_type == SaccharideCompIdMapType::Glycam)
+                .then(|| maps.glycam.get(&comp_id).cloned())
+                .flatten()
+        })
+        .or_else(|| {
+            molstar_generated_name_set_contains(MOLSTAR_SACCHARIDE_NAMES, &comp_id)
+                .then(unknown_saccharide_component)
+        })
+}
 
-    component.or(glycam_component).or_else(|| {
-        molstar_generated_name_set_contains(MOLSTAR_SACCHARIDE_NAMES, &comp_id)
-            .then(unknown_saccharide_component)
+struct SaccharideComponentMaps {
+    default: BTreeMap<String, SaccharideComponent>,
+    glycam: BTreeMap<String, SaccharideComponent>,
+}
+
+fn saccharide_component_maps() -> &'static SaccharideComponentMaps {
+    static MAPS: OnceLock<SaccharideComponentMaps> = OnceLock::new();
+    MAPS.get_or_init(|| {
+        let mut default = BTreeMap::new();
+        let mut glycam = BTreeMap::new();
+        for mono in monosaccharides() {
+            for name in saccharide_names_for_map("CommonSaccharideNames", &mono.abbr) {
+                default.insert(name, mono.clone());
+            }
+            for name in saccharide_names_for_map("CharmmSaccharideNames", &mono.abbr) {
+                default.insert(name, mono.clone());
+            }
+            for name in saccharide_names_for_map("GlycamSaccharideNames", &mono.abbr) {
+                glycam.entry(name).or_insert_with(|| mono.clone());
+            }
+        }
+        SaccharideComponentMaps { default, glycam }
     })
 }
 
@@ -668,7 +688,14 @@ fn unknown_saccharide_component() -> SaccharideComponent {
     }
 }
 
-fn monosaccharides() -> Vec<SaccharideComponent> {
+fn monosaccharides() -> &'static [SaccharideComponent] {
+    static MONOSACCHARIDES: OnceLock<Vec<SaccharideComponent>> = OnceLock::new();
+    MONOSACCHARIDES
+        .get_or_init(parse_monosaccharides)
+        .as_slice()
+}
+
+fn parse_monosaccharides() -> Vec<SaccharideComponent> {
     let Some(section) = source_section(MOLSTAR_CARBOHYDRATE_CONSTANTS, "const Monosaccharides")
     else {
         return Vec::new();
@@ -690,11 +717,11 @@ fn monosaccharides() -> Vec<SaccharideComponent> {
         .collect()
 }
 
-fn saccharide_name_map_contains(map_name: &str, abbr: &str, comp_id: &str) -> bool {
+fn saccharide_names_for_map(map_name: &str, abbr: &str) -> Vec<String> {
     let Some(section) =
         source_section(MOLSTAR_CARBOHYDRATE_CONSTANTS, &format!("const {map_name}"))
     else {
-        return false;
+        return Vec::new();
     };
     let mut in_entry = false;
     let mut entry = String::new();
@@ -707,10 +734,28 @@ fn saccharide_name_map_contains(map_name: &str, abbr: &str, comp_id: &str) -> bo
         entry.push_str(line);
         entry.push('\n');
         if trimmed.contains("],") || trimmed.ends_with(']') {
-            return molstar_generated_name_set_contains(&entry, comp_id);
+            return quoted_list_values(&entry);
         }
     }
-    in_entry && molstar_generated_name_set_contains(&entry, comp_id)
+    if in_entry {
+        quoted_list_values(&entry)
+    } else {
+        Vec::new()
+    }
+}
+
+fn quoted_list_values(entry: &str) -> Vec<String> {
+    let list = entry.split_once('[').map(|(_, list)| list).unwrap_or(entry);
+    let mut values = Vec::new();
+    let mut rest = list;
+    while let Some((_, after_open)) = rest.split_once('\'') {
+        let Some((value, after_close)) = after_open.split_once('\'') else {
+            break;
+        };
+        values.push(value.to_string());
+        rest = after_close;
+    }
+    values
 }
 
 fn source_section<'a>(source: &'a str, marker: &str) -> Option<&'a str> {
