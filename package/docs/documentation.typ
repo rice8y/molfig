@@ -6,7 +6,7 @@
 #let product-name = "Molfig"
 #let package-import = "@preview/" + package-id + ":" + package-version
 #let rendered-9r1o-pdf = "../examples/9R1O.pdf"
-#let example-9r1o-code = "#import \"" + package-import + "\"\n\n#set page(width: auto, height: auto, margin: 0mm)\n\n// Uses structural data from RCSB PDB / wwPDB.\n// PDB ID: 9R1O\n// PDB DOI: https://doi.org/10.2210/pdb9R1O/pdb\n// PDB archive data files are available under CC0 1.0.\n#let pdb = path(\"9R1O.pdb\")\n\n#molfig.render(\n  pdb,\n  format: \"pdb\",\n  representation: \"molstar\",\n  assembly: \"1\",\n  mesh-format: \"obj\",\n  quality: \"high\",\n  center: true,\n  output-format: \"png\",\n  config: (\n    azimuth: 35,\n    elevation: 24,\n    zoom: 1.0,\n    background: \"\",\n  ),\n)"
+#let example-9r1o-code = "#import \"" + package-import + "\"\n\n#set page(width: auto, height: auto, margin: 0mm)\n\n// Uses structural data from RCSB PDB / wwPDB.\n// PDB ID: 9R1O\n// PDB DOI: https://doi.org/10.2210/pdb9R1O/pdb\n// PDB archive data files are available under CC0 1.0.\n#let pdb = path(\"9R1O.pdb\")\n\n#molfig.render(\n  pdb,\n  format: \"pdb\",\n  representation: \"molstar\",\n  assembly: \"1\",\n  mesh-format: \"obj\",\n  quality: \"high\",\n  center: true,\n  output-format: \"png\",\n  config: (\n    azimuth: 35,\n    elevation: 24,\n    background: \"\",\n  ),\n)"
 
 #let ic(value) = raw(str(value))
 
@@ -517,7 +517,7 @@ STL has no material channel, and Molfig's current PLY schema contains no vertex
 or face color properties. Consequently, maquette renders STL and PLY without
 the selected color theme.
 
-#code("typ", "#let cif = read(\"structure.cif\", encoding: none)\n\n#molfig.render(\n  cif,\n  format: \"cif\",\n  representation: \"ball-and-stick\",\n  mesh-format: \"ply\",\n  config: (\n    azimuth: 45,\n    elevation: 20,\n    zoom: 1.15,\n    background: \"\",\n  ),\n  width: 75mm,\n)", title: "Camera and background passthrough")
+#code("typ", "#let cif = read(\"structure.cif\", encoding: none)\n\n#molfig.render(\n  cif,\n  format: \"cif\",\n  representation: \"ball-and-stick\",\n  mesh-format: \"ply\",\n  config: (\n    azimuth: 45,\n    elevation: 20,\n    background: \"\",\n  ),\n  width: 75mm,\n)", title: "Camera and background passthrough")
 
 Molfig does not validate maquette-specific keys. Unknown keys are passed to
 maquette, so maquette remains the source of truth for camera and renderer
