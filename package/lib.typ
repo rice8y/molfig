@@ -35,12 +35,26 @@
   }
 }
 
-#let _material-map(mesh, mesh-format) = {
-  if mesh-format == "obj" {
-    json(_plugin.material_map(mesh))
-  } else {
-    (:)
-  }
+#let _obj-bundle(bundle) = {
+  let materials-len = int(str(bundle.slice(0, 8)))
+  let obj-start = 8 + materials-len
+  (
+    mesh: bundle.slice(obj-start),
+    materials: json(bundle.slice(8, obj-start)),
+  )
+}
+
+#let _render-object-bundle(bundle) = {
+  let materials-len = int(str(bundle.slice(0, 8)))
+  let info-len = int(str(bundle.slice(8, 16)))
+  let materials-start = 16
+  let info-start = materials-start + materials-len
+  let mesh-start = info-start + info-len
+  (
+    mesh: bundle.slice(mesh-start),
+    materials: json(bundle.slice(materials-start, info-start)),
+    info: json(bundle.slice(info-start, mesh-start)),
+  )
 }
 
 #let _render-mesh(mesh, mesh-format, config, materials, width, height, output-format) = {
@@ -247,17 +261,16 @@
 ) = {
   let mesh-config = _mesh-options(format, representation, color-theme, sphere-detail, radius-scale, atom-radius, bond-radius, infer-bonds, center, assembly, alt-loc, block-index, block-header, ribbon-radius, ribbon-width, helix-profile, round-cap, sheet-arrow-factor, tubular-helices, linear-segments, radial-segments, quality)
   let source = _normalize-data(data)
-  let mesh = if mesh-format == "obj" {
-    _plugin.to_obj(source, bytes(mesh-config))
+  let object = if mesh-format == "obj" {
+    _obj-bundle(_plugin.to_obj_bundle(source, bytes(mesh-config)))
   } else if mesh-format == "stl" {
-    _plugin.to_stl(source, bytes(mesh-config))
+    (mesh: _plugin.to_stl(source, bytes(mesh-config)), materials: (:))
   } else if mesh-format == "ply" {
-    _plugin.to_ply(source, bytes(mesh-config))
+    (mesh: _plugin.to_ply(source, bytes(mesh-config)), materials: (:))
   } else {
     panic("mesh-format must be one of \"obj\", \"stl\", or \"ply\"")
   }
-  let materials = _material-map(mesh, mesh-format)
-  _render-mesh(mesh, mesh-format, config, materials, width, height, output-format)
+  _render-mesh(object.mesh, mesh-format, config, object.materials, width, height, output-format)
 }
 
 #let render-object(
@@ -315,25 +328,16 @@
     quality: quality,
   )
   let source = _normalize-data(data)
-  let mesh-config = _mesh-options(format, representation, color-theme, sphere-detail, radius-scale, atom-radius, bond-radius, infer-bonds, center, assembly, alt-loc, block-index, block-header, ribbon-radius, ribbon-width, helix-profile, round-cap, sheet-arrow-factor, tubular-helices, linear-segments, radial-segments, quality)
-  let mesh = if mesh-format == "obj" {
-    _plugin.to_obj(source, bytes(mesh-config))
-  } else if mesh-format == "stl" {
-    _plugin.to_stl(source, bytes(mesh-config))
-  } else if mesh-format == "ply" {
-    _plugin.to_ply(source, bytes(mesh-config))
-  } else {
-    panic("mesh-format must be one of \"obj\", \"stl\", or \"ply\"")
-  }
-  let materials = _material-map(mesh, mesh-format)
+  let render-object-config = json.encode(options + (mesh-format: mesh-format))
+  let object = _render-object-bundle(_plugin.render_object_bundle(source, bytes(render-object-config)))
   (
     kind: "render-object",
     format: mesh-format,
     mesh_format: mesh-format,
-    mesh: mesh,
-    materials: materials,
-    info: info(source, ..options),
-    content: _render-mesh(mesh, mesh-format, config, materials, width, height, output-format),
+    mesh: object.mesh,
+    materials: object.materials,
+    info: object.info,
+    content: _render-mesh(object.mesh, mesh-format, config, object.materials, width, height, output-format),
   )
 }
 
