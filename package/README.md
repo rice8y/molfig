@@ -89,7 +89,7 @@ OBJ output can be paired with `to-mtl`. During `render`, OBJ material colors are
 
 ## Documentation
 
-The full Mantys manual is available at [`docs/documentation.pdf`](docs/documentation.pdf). It documents:
+The full Molfig manual is available at [`docs/documentation.pdf`](docs/documentation.pdf). It documents:
 
 - installation and import conventions;
 - input format handling and BinaryCIF block selection;
