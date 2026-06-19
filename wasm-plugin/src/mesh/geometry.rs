@@ -1,9 +1,17 @@
 use std::f32::consts::PI;
+use std::sync::OnceLock;
 
 use crate::model::{Face, Mesh, Vec3};
 use crate::options::PolymerProfile;
 
 const MOLSTAR_NUMBER_EPSILON: f32 = f64::EPSILON as f32;
+const SPHERE_PRIMITIVE_DETAIL_COUNT: usize = 6;
+static SPHERE_PRIMITIVES: [OnceLock<Primitive>; SPHERE_PRIMITIVE_DETAIL_COUNT] =
+    [const { OnceLock::new() }; SPHERE_PRIMITIVE_DETAIL_COUNT];
+const MAX_TUBE_RADIAL_SEGMENTS: usize = 56;
+const TUBE_TRIG_TABLE_COUNT: usize = (MAX_TUBE_RADIAL_SEGMENTS + 1) * 2;
+static TUBE_TRIG_TABLES: [OnceLock<TubeTrigTable>; TUBE_TRIG_TABLE_COUNT] =
+    [const { OnceLock::new() }; TUBE_TRIG_TABLE_COUNT];
 
 pub(super) fn add_sphere(mesh: &mut Mesh, center: Vec3, radius: f32, detail: usize) {
     add_sphere_with_radius64(
@@ -40,11 +48,94 @@ pub(super) fn molstar_sphere_triangle_count(detail: usize) -> usize {
     20 * 4usize.pow(detail as u32)
 }
 
+pub(super) fn molstar_sphere_mesh_counts(detail: usize) -> (usize, usize) {
+    let primitive = molstar_sphere_primitive(detail);
+    (primitive.vertices.len(), primitive.faces.len())
+}
+
+pub(super) fn molstar_cylinder_mesh_counts(
+    radial_segments: usize,
+    top_cap: bool,
+    bottom_cap: bool,
+    radius: f64,
+) -> (usize, usize) {
+    let radial_segments = radial_segments.max(3);
+    let cap_count = usize::from(top_cap) + usize::from(bottom_cap);
+    if radial_segments <= 4 {
+        let (cap_vertices, cap_faces) = if radial_segments == 3 { (3, 1) } else { (4, 2) };
+        return (
+            radial_segments * 4 + cap_count * cap_vertices,
+            radial_segments * 2 + cap_count * cap_faces,
+        );
+    }
+
+    let cap_count = if radius > 0.0 { cap_count } else { 0 };
+    (
+        (radial_segments + 1) * 2 + cap_count * (radial_segments * 2 + 1),
+        radial_segments * 2 + cap_count * radial_segments,
+    )
+}
+
 #[derive(Clone, Debug)]
 struct Primitive {
     vertices: Vec<Vec3>,
     normals: Vec<Vec3>,
     faces: Vec<Face>,
+}
+
+struct TubeTrigTable {
+    cos: Vec<f64>,
+    sin: Vec<f64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CylinderPrimitiveKey {
+    radial_segments: usize,
+    top_cap: bool,
+    bottom_cap: bool,
+    radius_bits: u64,
+}
+
+#[derive(Default)]
+pub(super) struct CylinderPrimitiveCache {
+    entries: Vec<(CylinderPrimitiveKey, Primitive)>,
+}
+
+impl CylinderPrimitiveCache {
+    fn get(
+        &mut self,
+        radial_segments: usize,
+        top_cap: bool,
+        bottom_cap: bool,
+        radius: f64,
+    ) -> &Primitive {
+        let key = CylinderPrimitiveKey {
+            radial_segments: radial_segments.max(3),
+            top_cap,
+            bottom_cap,
+            radius_bits: radius.to_bits(),
+        };
+        let index = self
+            .entries
+            .iter()
+            .position(|(existing, _)| *existing == key)
+            .unwrap_or_else(|| {
+                let primitive = build_molstar_cylinder_primitive_with_radius64(
+                    key.radial_segments,
+                    top_cap,
+                    bottom_cap,
+                    radius,
+                );
+                self.entries.push((key, primitive));
+                self.entries.len() - 1
+            });
+        &self.entries[index].1
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -186,7 +277,14 @@ fn add_molstar_primitive(
     }
 }
 
-fn molstar_sphere_primitive(detail: usize) -> Primitive {
+fn molstar_sphere_primitive(detail: usize) -> &'static Primitive {
+    SPHERE_PRIMITIVES
+        .get(detail)
+        .unwrap_or_else(|| panic!("sphere detail {detail} exceeds the supported maximum 5"))
+        .get_or_init(|| build_molstar_sphere_primitive(detail))
+}
+
+fn build_molstar_sphere_primitive(detail: usize) -> Primitive {
     let t = (1.0 + 5.0f64.sqrt()) / 2.0;
     let icosahedron_vertices = [
         DVec3::new(-1.0, t, 0.0),
@@ -992,6 +1090,41 @@ mod tests {
     }
 
     #[test]
+    fn sphere_primitive_cache_matches_uncached_builder_for_all_supported_details() {
+        for detail in 0..SPHERE_PRIMITIVE_DETAIL_COUNT {
+            let cached = molstar_sphere_primitive(detail);
+            assert!(std::ptr::eq(cached, molstar_sphere_primitive(detail)));
+
+            let uncached = build_molstar_sphere_primitive(detail);
+            assert_eq!(cached.vertices.len(), uncached.vertices.len());
+            assert_eq!(cached.normals.len(), uncached.normals.len());
+            assert_eq!(cached.faces.len(), uncached.faces.len());
+            for (index, (actual, expected)) in
+                cached.vertices.iter().zip(&uncached.vertices).enumerate()
+            {
+                assert_eq!(actual.x.to_bits(), expected.x.to_bits(), "vertex {index} x");
+                assert_eq!(actual.y.to_bits(), expected.y.to_bits(), "vertex {index} y");
+                assert_eq!(actual.z.to_bits(), expected.z.to_bits(), "vertex {index} z");
+            }
+            for (index, (actual, expected)) in
+                cached.normals.iter().zip(&uncached.normals).enumerate()
+            {
+                assert_eq!(actual.x.to_bits(), expected.x.to_bits(), "normal {index} x");
+                assert_eq!(actual.y.to_bits(), expected.y.to_bits(), "normal {index} y");
+                assert_eq!(actual.z.to_bits(), expected.z.to_bits(), "normal {index} z");
+            }
+            for (index, (actual, expected)) in cached.faces.iter().zip(&uncached.faces).enumerate()
+            {
+                assert_eq!(
+                    [actual.a, actual.b, actual.c],
+                    [expected.a, expected.b, expected.c],
+                    "face {index}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn sphere_primitive_detail_three_matches_molstar_reference_vertices() {
         let primitive = molstar_sphere_primitive(3);
         assert_faces_eq(&[primitive.faces[113]], &[[67, 72, 71]]);
@@ -1190,6 +1323,59 @@ mod tests {
                 [21, 20, 17],
             ],
         );
+    }
+
+    #[test]
+    fn cylinder_primitive_cache_reuses_exact_radius_and_cap_keys() {
+        let mut cache = CylinderPrimitiveCache::default();
+        let cases = [
+            (3, true, true, 0.2_f64),
+            (4, false, true, 0.2_f64),
+            (8, false, false, 0.2_f64),
+            (12, true, false, 0.125_f64),
+            (36, true, true, 0.1_f32 as f64),
+        ];
+
+        for (segments, top_cap, bottom_cap, radius) in cases {
+            let cached_ptr = cache.get(segments, top_cap, bottom_cap, radius) as *const Primitive;
+            let cached_again_ptr =
+                cache.get(segments, top_cap, bottom_cap, radius) as *const Primitive;
+            assert_eq!(cached_ptr, cached_again_ptr);
+
+            let cached = cache.get(segments, top_cap, bottom_cap, radius);
+            let uncached = build_molstar_cylinder_primitive_with_radius64(
+                segments, top_cap, bottom_cap, radius,
+            );
+            assert_eq!(cached.vertices.len(), uncached.vertices.len());
+            assert_eq!(cached.normals.len(), uncached.normals.len());
+            assert_eq!(cached.faces.len(), uncached.faces.len());
+            for (index, (actual, expected)) in
+                cached.vertices.iter().zip(&uncached.vertices).enumerate()
+            {
+                assert_eq!(actual.x.to_bits(), expected.x.to_bits(), "vertex {index} x");
+                assert_eq!(actual.y.to_bits(), expected.y.to_bits(), "vertex {index} y");
+                assert_eq!(actual.z.to_bits(), expected.z.to_bits(), "vertex {index} z");
+            }
+            for (index, (actual, expected)) in
+                cached.normals.iter().zip(&uncached.normals).enumerate()
+            {
+                assert_eq!(actual.x.to_bits(), expected.x.to_bits(), "normal {index} x");
+                assert_eq!(actual.y.to_bits(), expected.y.to_bits(), "normal {index} y");
+                assert_eq!(actual.z.to_bits(), expected.z.to_bits(), "normal {index} z");
+            }
+            for (index, (actual, expected)) in cached.faces.iter().zip(&uncached.faces).enumerate()
+            {
+                assert_eq!(
+                    [actual.a, actual.b, actual.c],
+                    [expected.a, expected.b, expected.c],
+                    "face {index}"
+                );
+            }
+        }
+
+        assert_eq!(cache.len(), cases.len());
+        cache.get(8, false, false, f64::from_bits(0.2_f64.to_bits() + 1));
+        assert_eq!(cache.len(), cases.len() + 1);
     }
 
     #[test]
@@ -1713,6 +1899,7 @@ mod tests {
             d12: DVec3::from_vec3(Vec3::new(0.0, 1.0, 0.0)),
             d23: DVec3::from_vec3(Vec3::new(0.0, 1.0, 0.0)),
         };
+        let mut scratch = CurveSegmentScratch::default();
         let mut standard = Mesh::default();
         add_curve_segment_ribbon(
             &mut standard,
@@ -1728,6 +1915,7 @@ mod tests {
             false,
             false,
             4,
+            &mut scratch,
         );
         let mut swapped = Mesh::default();
         add_curve_segment_ribbon(
@@ -1744,6 +1932,7 @@ mod tests {
             false,
             true,
             4,
+            &mut scratch,
         );
 
         assert_eq!(standard.vertices.len(), 20);
@@ -1752,6 +1941,89 @@ mod tests {
             vertex_axis_span(&standard.vertices, Axis::Y)
                 > vertex_axis_span(&swapped.vertices, Axis::Y) * 4.5,
             "Mol* nucleic radialSegments=2 swaps width/height arrays before addRibbon"
+        );
+    }
+
+    #[test]
+    fn curve_segment_scratch_reuses_state_and_sample_buffers() {
+        let controls = CurveSegmentControls {
+            sec_struc_first: false,
+            sec_struc_last: false,
+            p0: DVec3::new(-2.0, 0.0, 0.0),
+            p1: DVec3::new(-1.0, 0.2, 0.0),
+            p2: DVec3::new(0.0, 0.0, 0.0),
+            p3: DVec3::new(1.0, 0.2, 0.0),
+            p4: DVec3::new(2.0, 0.0, 0.0),
+            d12: DVec3::new(0.0, 1.0, 0.0),
+            d23: DVec3::new(0.0, 1.0, 0.0),
+        };
+        let mut scratch = CurveSegmentScratch::default();
+
+        curve_segment_samples_into(
+            &mut scratch,
+            &controls,
+            [1.0, 2.0, 4.0],
+            [10.0, 20.0, 40.0],
+            0.5,
+            0.5,
+            2.0,
+            false,
+            false,
+            true,
+            false,
+            16,
+        );
+        let state_ptrs = [
+            scratch.state.curve_points.as_ptr() as usize,
+            scratch.state.tangent_vectors.as_ptr() as usize,
+            scratch.state.normal_vectors.as_ptr() as usize,
+            scratch.state.binormal_vectors.as_ptr() as usize,
+            scratch.state.width_values.as_ptr() as usize,
+            scratch.state.height_values.as_ptr() as usize,
+        ];
+        let sample_ptrs = [
+            scratch.samples.centers.as_ptr() as usize,
+            scratch.samples.normals.as_ptr() as usize,
+            scratch.samples.binormals.as_ptr() as usize,
+            scratch.samples.widths.as_ptr() as usize,
+            scratch.samples.heights.as_ptr() as usize,
+        ];
+
+        curve_segment_samples_into(
+            &mut scratch,
+            &controls,
+            [1.0, 2.0, 4.0],
+            [10.0, 20.0, 40.0],
+            0.5,
+            0.5,
+            2.0,
+            true,
+            false,
+            true,
+            true,
+            8,
+        );
+
+        assert_eq!(
+            state_ptrs,
+            [
+                scratch.state.curve_points.as_ptr() as usize,
+                scratch.state.tangent_vectors.as_ptr() as usize,
+                scratch.state.normal_vectors.as_ptr() as usize,
+                scratch.state.binormal_vectors.as_ptr() as usize,
+                scratch.state.width_values.as_ptr() as usize,
+                scratch.state.height_values.as_ptr() as usize,
+            ]
+        );
+        assert_eq!(
+            sample_ptrs,
+            [
+                scratch.samples.centers.as_ptr() as usize,
+                scratch.samples.normals.as_ptr() as usize,
+                scratch.samples.binormals.as_ptr() as usize,
+                scratch.samples.widths.as_ptr() as usize,
+                scratch.samples.heights.as_ptr() as usize,
+            ]
         );
     }
 
@@ -1966,6 +2238,39 @@ mod tests {
     }
 
     #[test]
+    fn tube_cos_sin_cache_matches_uncached_builder_for_all_supported_keys() {
+        for radial_segments in 2..=MAX_TUBE_RADIAL_SEGMENTS {
+            for shifted in [false, true] {
+                let (cached_cos, cached_sin) = molstar_tube_cos_sin(radial_segments, shifted);
+                let (cached_cos_again, cached_sin_again) =
+                    molstar_tube_cos_sin(radial_segments, shifted);
+                assert!(std::ptr::eq(cached_cos, cached_cos_again));
+                assert!(std::ptr::eq(cached_sin, cached_sin_again));
+
+                let uncached = build_molstar_tube_cos_sin(radial_segments, shifted);
+                assert_eq!(cached_cos.len(), uncached.cos.len());
+                assert_eq!(cached_sin.len(), uncached.sin.len());
+                for (index, (actual, expected)) in cached_cos.iter().zip(&uncached.cos).enumerate()
+                {
+                    assert_eq!(
+                        actual.to_bits(),
+                        expected.to_bits(),
+                        "cos radial_segments={radial_segments} shifted={shifted} index={index}"
+                    );
+                }
+                for (index, (actual, expected)) in cached_sin.iter().zip(&uncached.sin).enumerate()
+                {
+                    assert_eq!(
+                        actual.to_bits(),
+                        expected.to_bits(),
+                        "sin radial_segments={radial_segments} shifted={shifted} index={index}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn curve_segment_tension_keeps_molstar_js_number_precision() {
         let controls = CurveSegmentControls {
             sec_struc_first: false,
@@ -2128,48 +2433,54 @@ fn molstar_direction_transform(axes: [Vec3; 3]) -> [f32; 9] {
     ]
 }
 
+#[cfg(test)]
 pub(super) fn add_cylinder(mesh: &mut Mesh, start: Vec3, end: Vec3, radius: f32, segments: usize) {
-    add_cylinder_with_caps(mesh, start, end, radius, segments, true, true);
+    let mut cache = CylinderPrimitiveCache::default();
+    add_cylinder_with_caps_cached(mesh, start, end, radius, segments, true, true, &mut cache);
 }
 
-pub(super) fn add_open_cylinder(
+pub(super) fn add_open_cylinder_cached(
     mesh: &mut Mesh,
     start: Vec3,
     end: Vec3,
     radius: f32,
     segments: usize,
+    cache: &mut CylinderPrimitiveCache,
 ) {
-    add_cylinder_with_caps(mesh, start, end, radius, segments, false, false);
+    add_cylinder_with_caps_cached(mesh, start, end, radius, segments, false, false, cache);
 }
 
-pub(super) fn add_molstar_buffered_open_cylinder(
+pub(super) fn add_molstar_buffered_open_cylinder_cached(
     mesh: &mut Mesh,
     start: Vec3,
     end: Vec3,
     radius: f32,
     segments: usize,
+    cache: &mut CylinderPrimitiveCache,
 ) {
-    add_molstar_buffered_open_cylinder_with_radius64(
+    add_molstar_buffered_open_cylinder_with_radius64_cached(
         mesh,
         start,
         end,
         molstar_js_number_from_common_f32(radius),
         segments,
+        cache,
     );
 }
 
-pub(super) fn add_molstar_buffered_open_cylinder_with_radius64(
+pub(super) fn add_molstar_buffered_open_cylinder_with_radius64_cached(
     mesh: &mut Mesh,
     start: Vec3,
     end: Vec3,
     radius: f64,
     segments: usize,
+    cache: &mut CylinderPrimitiveCache,
 ) {
     let start = DVec3::from_vec3(start);
     let end = DVec3::from_vec3(end);
     let dir = end - start;
     let length = start.distance(end);
-    add_cylinder_dvec3_from_dir_with_caps_and_match_dir(
+    add_cylinder_dvec3_from_dir_with_caps_and_match_dir_cached(
         mesh,
         start,
         dir,
@@ -2181,10 +2492,12 @@ pub(super) fn add_molstar_buffered_open_cylinder_with_radius64(
             end_cap: false,
             match_dir: true,
         },
+        cache,
     );
 }
 
-pub(super) fn add_molstar_cylinder_caps(
+#[allow(clippy::too_many_arguments)]
+pub(super) fn add_molstar_cylinder_caps_cached(
     mesh: &mut Mesh,
     start: Vec3,
     end: Vec3,
@@ -2192,11 +2505,15 @@ pub(super) fn add_molstar_cylinder_caps(
     segments: usize,
     top_cap: bool,
     bottom_cap: bool,
+    cache: &mut CylinderPrimitiveCache,
 ) {
-    add_cylinder_with_caps(mesh, start, end, radius, segments, bottom_cap, top_cap);
+    add_cylinder_with_caps_cached(
+        mesh, start, end, radius, segments, bottom_cap, top_cap, cache,
+    );
 }
 
-fn add_cylinder_with_caps(
+#[allow(clippy::too_many_arguments)]
+fn add_cylinder_with_caps_cached(
     mesh: &mut Mesh,
     start: Vec3,
     end: Vec3,
@@ -2204,8 +2521,9 @@ fn add_cylinder_with_caps(
     segments: usize,
     start_cap: bool,
     end_cap: bool,
+    cache: &mut CylinderPrimitiveCache,
 ) {
-    add_cylinder_with_caps_and_match_dir(
+    add_cylinder_with_caps_and_match_dir_cached(
         mesh,
         start,
         end,
@@ -2216,6 +2534,7 @@ fn add_cylinder_with_caps(
             end_cap,
             match_dir: true,
         },
+        cache,
     );
 }
 
@@ -2226,21 +2545,26 @@ struct CylinderBuildMode {
     match_dir: bool,
 }
 
-fn add_cylinder_with_caps_and_match_dir(
+fn add_cylinder_with_caps_and_match_dir_cached(
     mesh: &mut Mesh,
     start: Vec3,
     end: Vec3,
     radius: f32,
     segments: usize,
     mode: CylinderBuildMode,
+    cache: &mut CylinderPrimitiveCache,
 ) {
     let axis = end - start;
     let length = axis.length();
     if length <= 0.001 {
         return;
     }
-    let primitive =
-        molstar_get_cylinder_primitive_with_radius(segments, mode.end_cap, mode.start_cap, radius);
+    let primitive = cache.get(
+        segments,
+        mode.end_cap,
+        mode.start_cap,
+        molstar_js_number_from_common_f32(radius),
+    );
     let rotation = MolstarRotation::from_up_to_axis(axis, mode.match_dir);
     let center = start + axis * 0.5;
     let base = mesh.vertices.len();
@@ -2269,6 +2593,7 @@ fn molstar_get_cylinder_primitive(
     molstar_get_cylinder_primitive_with_radius(radial_segments, top_cap, bottom_cap, 1.0)
 }
 
+#[cfg(test)]
 fn molstar_get_cylinder_primitive_with_radius(
     radial_segments: usize,
     top_cap: bool,
@@ -2283,7 +2608,17 @@ fn molstar_get_cylinder_primitive_with_radius(
     )
 }
 
+#[cfg(test)]
 fn molstar_get_cylinder_primitive_with_radius64(
+    radial_segments: usize,
+    top_cap: bool,
+    bottom_cap: bool,
+    radius: f64,
+) -> Primitive {
+    build_molstar_cylinder_primitive_with_radius64(radial_segments, top_cap, bottom_cap, radius)
+}
+
+fn build_molstar_cylinder_primitive_with_radius64(
     radial_segments: usize,
     top_cap: bool,
     bottom_cap: bool,
@@ -2603,11 +2938,27 @@ pub(crate) fn add_tube_path(mesh: &mut Mesh, points: &[Vec3], radius: f32, segme
     );
 }
 
-pub(super) fn add_dashed_tube_path(mesh: &mut Mesh, points: &[Vec3], radius: f32, segments: usize) {
+pub(super) fn add_dashed_tube_path_cached(
+    mesh: &mut Mesh,
+    points: &[Vec3],
+    radius: f32,
+    segments: usize,
+    cache: &mut CylinderPrimitiveCache,
+) {
     if points.len() < 2 {
         return;
     }
     let samples = sample_path(points, 8);
+    add_dashed_tube_samples_cached(mesh, &samples, radius, segments, cache);
+}
+
+pub(super) fn add_dashed_tube_samples_cached(
+    mesh: &mut Mesh,
+    samples: &[Vec3],
+    radius: f32,
+    segments: usize,
+    cache: &mut CylinderPrimitiveCache,
+) {
     if samples.len() < 2 {
         return;
     }
@@ -2636,12 +2987,15 @@ pub(super) fn add_dashed_tube_path(mesh: &mut Mesh, points: &[Vec3], radius: f32
             };
             let step = remaining_phase.min(length - local);
             if in_dash && step > 0.02 {
-                add_cylinder(
+                add_cylinder_with_caps_cached(
                     mesh,
                     start + direction * local,
                     start + direction * (local + step),
                     radius,
                     segments,
+                    true,
+                    true,
+                    cache,
                 );
             }
             local += step.max(0.000_001);
@@ -2650,6 +3004,7 @@ pub(super) fn add_dashed_tube_path(mesh: &mut Mesh, points: &[Vec3], radius: f32
     }
 }
 
+#[cfg(test)]
 pub(super) fn add_fixed_count_dashed_cylinder(
     mesh: &mut Mesh,
     start: Vec3,
@@ -2659,7 +3014,31 @@ pub(super) fn add_fixed_count_dashed_cylinder(
     length_scale: f32,
     segment_count: usize,
 ) {
-    add_fixed_count_dashed_cylinder_with_stub_cap(
+    let mut cache = CylinderPrimitiveCache::default();
+    add_fixed_count_dashed_cylinder_cached(
+        mesh,
+        start,
+        end,
+        radius,
+        segments,
+        length_scale,
+        segment_count,
+        &mut cache,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn add_fixed_count_dashed_cylinder_cached(
+    mesh: &mut Mesh,
+    start: Vec3,
+    end: Vec3,
+    radius: f32,
+    segments: usize,
+    length_scale: f32,
+    segment_count: usize,
+    cache: &mut CylinderPrimitiveCache,
+) {
+    add_fixed_count_dashed_cylinder_with_stub_cap_cached(
         mesh,
         start,
         end,
@@ -2668,9 +3047,11 @@ pub(super) fn add_fixed_count_dashed_cylinder(
         length_scale,
         segment_count,
         false,
+        cache,
     );
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn add_fixed_count_dashed_cylinder_with_stub_cap(
     mesh: &mut Mesh,
@@ -2681,6 +3062,32 @@ fn add_fixed_count_dashed_cylinder_with_stub_cap(
     length_scale: f32,
     segment_count: usize,
     stub_cap: bool,
+) {
+    let mut cache = CylinderPrimitiveCache::default();
+    add_fixed_count_dashed_cylinder_with_stub_cap_cached(
+        mesh,
+        start,
+        end,
+        radius,
+        segments,
+        length_scale,
+        segment_count,
+        stub_cap,
+        &mut cache,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_fixed_count_dashed_cylinder_with_stub_cap_cached(
+    mesh: &mut Mesh,
+    start: Vec3,
+    end: Vec3,
+    radius: f32,
+    segments: usize,
+    length_scale: f32,
+    segment_count: usize,
+    stub_cap: bool,
+    cache: &mut CylinderPrimitiveCache,
 ) {
     let start = DVec3::from_vec3(start);
     let end = DVec3::from_vec3(end);
@@ -2700,7 +3107,7 @@ fn add_fixed_count_dashed_cylinder_with_stub_cap(
         let is_last_odd_dash = is_odd && dash_index == dash_count - 1;
         let dash_length = if is_last_odd_dash { step * 0.5 } else { step };
         let end_cap = !is_last_odd_dash || stub_cap;
-        add_cylinder_dvec3_from_dir_with_caps_and_match_dir(
+        add_cylinder_dvec3_from_dir_with_caps_and_match_dir_cached(
             mesh,
             cursor,
             direction,
@@ -2712,12 +3119,13 @@ fn add_fixed_count_dashed_cylinder_with_stub_cap(
                 end_cap,
                 match_dir: false,
             },
+            cache,
         );
         cursor = cursor + direction;
     }
 }
 
-fn add_cylinder_dvec3_from_dir_with_caps_and_match_dir(
+fn add_cylinder_dvec3_from_dir_with_caps_and_match_dir_cached(
     mesh: &mut Mesh,
     start: DVec3,
     dir: DVec3,
@@ -2725,16 +3133,12 @@ fn add_cylinder_dvec3_from_dir_with_caps_and_match_dir(
     radius: f64,
     segments: usize,
     mode: CylinderBuildMode,
+    cache: &mut CylinderPrimitiveCache,
 ) {
     if length <= 0.001 {
         return;
     }
-    let primitive = molstar_get_cylinder_primitive_with_radius64(
-        segments,
-        mode.end_cap,
-        mode.start_cap,
-        radius,
-    );
+    let primitive = cache.get(segments, mode.end_cap, mode.start_cap, radius);
     let mat_dir = dir.set_magnitude(length * 0.5);
     let rotation = MolstarRotationD::from_up_to_mat_dir(mat_dir, mode.match_dir);
     let center = start + mat_dir;
@@ -2779,6 +3183,27 @@ pub(super) fn sample_path(points: &[Vec3], subdivisions: usize) -> Vec<Vec3> {
     }
     out.push(*points.last().unwrap());
     out
+}
+
+pub(super) fn sample_path_point_count(points: &[Vec3], subdivisions: usize) -> usize {
+    if subdivisions == 0 {
+        return 0;
+    }
+    let mut filtered_count = 0usize;
+    let mut previous = None;
+    for &point in points {
+        if previous.is_none_or(|previous: Vec3| previous.distance(point) > 0.000_1) {
+            filtered_count += 1;
+            previous = Some(point);
+        }
+    }
+    if filtered_count < 2 {
+        0
+    } else {
+        (filtered_count - 1)
+            .saturating_mul(subdivisions)
+            .saturating_add(1)
+    }
 }
 
 fn filtered_path_points(points: &[Vec3]) -> Vec<Vec3> {
@@ -3219,8 +3644,10 @@ pub(super) fn add_curve_segment_tube(
     linear_segments: usize,
     radial_segments: usize,
     profile: PolymerProfile,
+    scratch: &mut CurveSegmentScratch,
 ) {
-    let samples = curve_segment_samples(
+    let samples = curve_segment_samples_into(
+        scratch,
         controls,
         widths,
         heights,
@@ -3263,8 +3690,10 @@ pub(super) fn add_curve_segment_ribbon(
     swap_normal_binormal: bool,
     swap_width_height: bool,
     linear_segments: usize,
+    scratch: &mut CurveSegmentScratch,
 ) {
-    let mut samples = curve_segment_samples(
+    let samples = curve_segment_samples_into(
+        scratch,
         controls,
         widths,
         heights,
@@ -3299,8 +3728,10 @@ pub(super) fn add_curve_segment_sheet(
     final_residue: bool,
     swap_normal_binormal: bool,
     linear_segments: usize,
+    scratch: &mut CurveSegmentScratch,
 ) {
-    let samples = curve_segment_samples(
+    let samples = curve_segment_samples_into(
+        scratch,
         controls,
         widths,
         heights,
@@ -3366,7 +3797,7 @@ pub(crate) fn add_profile_tube_for_test(
     );
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct CurveSamples {
     pub(crate) centers: Vec<Vec3>,
     pub(crate) normals: Vec<Vec3>,
@@ -3375,7 +3806,33 @@ pub(crate) struct CurveSamples {
     pub(crate) heights: Vec<f32>,
 }
 
-fn molstar_tube_cos_sin(radial_segments: usize, shifted: bool) -> (Vec<f64>, Vec<f64>) {
+#[derive(Debug)]
+pub(super) struct CurveSegmentScratch {
+    state: CurveSegmentState,
+    samples: CurveSamples,
+}
+
+impl Default for CurveSegmentScratch {
+    fn default() -> Self {
+        Self {
+            state: CurveSegmentState::new(1),
+            samples: CurveSamples::default(),
+        }
+    }
+}
+
+fn molstar_tube_cos_sin(radial_segments: usize, shifted: bool) -> (&'static [f64], &'static [f64]) {
+    assert!(
+        radial_segments <= MAX_TUBE_RADIAL_SEGMENTS,
+        "tube radial segments {radial_segments} exceeds the supported maximum {MAX_TUBE_RADIAL_SEGMENTS}"
+    );
+    let index = radial_segments * 2 + usize::from(shifted);
+    let table = TUBE_TRIG_TABLES[index]
+        .get_or_init(|| build_molstar_tube_cos_sin(radial_segments, shifted));
+    (&table.cos, &table.sin)
+}
+
+fn build_molstar_tube_cos_sin(radial_segments: usize, shifted: bool) -> TubeTrigTable {
     let offset = if shifted { 1.0 } else { 0.0 };
     let mut cos = Vec::with_capacity(radial_segments);
     let mut sin = Vec::with_capacity(radial_segments);
@@ -3384,7 +3841,7 @@ fn molstar_tube_cos_sin(radial_segments: usize, shifted: bool) -> (Vec<f64>, Vec
         cos.push(phi.cos());
         sin.push(phi.sin());
     }
-    (cos, sin)
+    TubeTrigTable { cos, sin }
 }
 
 fn add_profile_tube(
@@ -3582,7 +4039,8 @@ fn add_profile_tube(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn curve_segment_samples(
+fn curve_segment_samples_into<'a>(
+    scratch: &'a mut CurveSegmentScratch,
     controls: &CurveSegmentControls,
     widths: [f32; 3],
     heights: [f32; 3],
@@ -3594,16 +4052,17 @@ fn curve_segment_samples(
     copy_initial_size_window: bool,
     swap_normal_binormal: bool,
     linear_segments: usize,
-) -> CurveSamples {
+) -> &'a mut CurveSamples {
     const OVERHANG_FACTOR: f32 = 2.0;
 
     let linear_segments = linear_segments.max(1);
-    let mut state = CurveSegmentState::new(linear_segments);
-    interpolate_curve_segment(&mut state, controls, tension, shift);
+    let CurveSegmentScratch { state, samples } = scratch;
+    state.prepare(linear_segments);
+    interpolate_curve_segment(state, controls, tension, shift);
     let mut sizes_interpolated = false;
     if copy_initial_size_window {
         interpolate_sizes(
-            &mut state, widths[0], widths[1], widths[2], heights[0], heights[1], heights[2], shift,
+            state, widths[0], widths[1], widths[2], heights[0], heights[1], heights[2], shift,
         );
         sizes_interpolated = true;
     }
@@ -3612,22 +4071,13 @@ fn curve_segment_samples(
     if initial {
         segment_count = ((linear_segments as f64 * shift).round() as usize).max(1);
         let offset = linear_segments - segment_count;
-        let curve_points = state.curve_points.clone();
-        let normal_vectors = state.normal_vectors.clone();
-        let binormal_vectors = state.binormal_vectors.clone();
-        state.curve_points[..=segment_count]
-            .copy_from_slice(&curve_points[offset..=offset + segment_count]);
-        state.normal_vectors[..=segment_count]
-            .copy_from_slice(&normal_vectors[offset..=offset + segment_count]);
-        state.binormal_vectors[..=segment_count]
-            .copy_from_slice(&binormal_vectors[offset..=offset + segment_count]);
+        let source = offset..offset + segment_count + 1;
+        state.curve_points.copy_within(source.clone(), 0);
+        state.normal_vectors.copy_within(source.clone(), 0);
+        state.binormal_vectors.copy_within(source.clone(), 0);
         if copy_initial_size_window {
-            let width_values = state.width_values.clone();
-            let height_values = state.height_values.clone();
-            state.width_values[..=segment_count]
-                .copy_from_slice(&width_values[offset..=offset + segment_count]);
-            state.height_values[..=segment_count]
-                .copy_from_slice(&height_values[offset..=offset + segment_count]);
+            state.width_values.copy_within(source.clone(), 0);
+            state.height_values.copy_within(source, 0);
         }
 
         let next = state.curve_points[1.min(segment_count)];
@@ -3643,17 +4093,21 @@ fn curve_segment_samples(
     }
     if !sizes_interpolated {
         interpolate_sizes(
-            &mut state, widths[0], widths[1], widths[2], heights[0], heights[1], heights[2], shift,
+            state, widths[0], widths[1], widths[2], heights[0], heights[1], heights[2], shift,
         );
     }
 
-    let mut samples = CurveSamples {
-        centers: Vec::with_capacity(segment_count + 1),
-        normals: Vec::with_capacity(segment_count + 1),
-        binormals: Vec::with_capacity(segment_count + 1),
-        widths: Vec::with_capacity(segment_count + 1),
-        heights: Vec::with_capacity(segment_count + 1),
-    };
+    samples.centers.clear();
+    samples.normals.clear();
+    samples.binormals.clear();
+    samples.widths.clear();
+    samples.heights.clear();
+    let sample_count = segment_count + 1;
+    samples.centers.reserve(sample_count);
+    samples.normals.reserve(sample_count);
+    samples.binormals.reserve(sample_count);
+    samples.widths.reserve(sample_count);
+    samples.heights.reserve(sample_count);
 
     for i in 0..=segment_count {
         samples.centers.push(state.curve_points[i]);
@@ -3669,6 +4123,39 @@ fn curve_segment_samples(
     }
 
     samples
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+fn curve_segment_samples(
+    controls: &CurveSegmentControls,
+    widths: [f32; 3],
+    heights: [f32; 3],
+    tension: f64,
+    shift: f64,
+    overhang_width: f32,
+    initial: bool,
+    final_residue: bool,
+    copy_initial_size_window: bool,
+    swap_normal_binormal: bool,
+    linear_segments: usize,
+) -> CurveSamples {
+    let mut scratch = CurveSegmentScratch::default();
+    curve_segment_samples_into(
+        &mut scratch,
+        controls,
+        widths,
+        heights,
+        tension,
+        shift,
+        overhang_width,
+        initial,
+        final_residue,
+        copy_initial_size_window,
+        swap_normal_binormal,
+        linear_segments,
+    )
+    .clone()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3957,6 +4444,17 @@ impl CurveSegmentState {
             height_values: vec![0.0; n],
             linear_segments,
         }
+    }
+
+    fn prepare(&mut self, linear_segments: usize) {
+        let n = linear_segments + 1;
+        self.curve_points.resize(n, Vec3::default());
+        self.tangent_vectors.resize(n, Vec3::default());
+        self.normal_vectors.resize(n, Vec3::default());
+        self.binormal_vectors.resize(n, Vec3::default());
+        self.width_values.resize(n, 0.0);
+        self.height_values.resize(n, 0.0);
+        self.linear_segments = linear_segments;
     }
 }
 
