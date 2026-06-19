@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use crate::json::{json_escape, json_string_array};
 use crate::model::{Mesh, MeshMaterial, Vec3};
 
@@ -65,7 +67,8 @@ pub(crate) fn export_obj(mesh: &Mesh) -> String {
 
 pub(crate) fn export_obj_with_metadata(mesh: &Mesh, metadata: &ExportMetadata) -> String {
     let basename = metadata.obj_basename.as_deref().unwrap_or("molfig");
-    let mut out = format!("mtllib {basename}.mtl\n");
+    let mut out = String::with_capacity(obj_output_capacity(mesh));
+    writeln!(out, "mtllib {basename}.mtl").expect("writing to String cannot fail");
     if metadata.include_operator_metadata {
         if let Some(metadata_json) = export_metadata_json(metadata) {
             out.push_str("# molfig_operator_metadata ");
@@ -130,12 +133,14 @@ fn export_obj_unsectioned(mesh: &Mesh, metadata: &ExportMetadata, out: &mut Stri
 
 fn write_obj_vertex(out: &mut String, v: crate::model::Vec3, offset: ExportVec3) {
     let v = molstar_obj_vertex_transform(v, offset);
-    out.push_str(&format!(
-        "v {} {} {}\n",
-        molstar_float64(v[0], 1000.0),
-        molstar_float64(v[1], 1000.0),
-        molstar_float64(v[2], 1000.0)
-    ));
+    writeln!(
+        out,
+        "v {} {} {}",
+        molstar_rounded_float64(v[0], 1000.0),
+        molstar_rounded_float64(v[1], 1000.0),
+        molstar_rounded_float64(v[2], 1000.0)
+    )
+    .expect("writing to String cannot fail");
 }
 
 fn molstar_obj_vertex_transform(v: crate::model::Vec3, offset: ExportVec3) -> [f64; 3] {
@@ -158,12 +163,14 @@ fn molstar_obj_vertex_transform(v: crate::model::Vec3, offset: ExportVec3) -> [f
 }
 
 fn write_obj_normal(out: &mut String, n: crate::model::Vec3) {
-    out.push_str(&format!(
-        "vn {} {} {}\n",
-        molstar_float(n.x, 100.0),
-        molstar_float(n.y, 100.0),
-        molstar_float(n.z, 100.0)
-    ));
+    writeln!(
+        out,
+        "vn {} {} {}",
+        molstar_rounded_float64(n.x as f64, 100.0),
+        molstar_rounded_float64(n.y as f64, 100.0),
+        molstar_rounded_float64(n.z as f64, 100.0)
+    )
+    .expect("writing to String cannot fail");
 }
 
 fn write_obj_faces(
@@ -179,20 +186,43 @@ fn write_obj_faces(
         let f = &mesh.faces[face_index];
         let group = mesh.face_group(face_index);
         if metadata.include_face_groups && *current_group != Some(group) {
-            out.push_str(&format!("g molfig_group_{group}\n"));
+            writeln!(out, "g molfig_group_{group}").expect("writing to String cannot fail");
             *current_group = Some(group);
         }
         if let Some(material) = mesh.face_material(face_index) {
             if *current_material != Some(material) {
                 out.push_str("usemtl ");
-                out.push_str(&molstar_material_id(material));
+                write_molstar_material_id(out, material);
                 out.push('\n');
                 *current_material = Some(material);
             }
         }
         let [a, b, c] = molstar_obj_face_indices(f);
-        out.push_str(&format!("f {0}//{0} {1}//{1} {2}//{2}\n", a, b, c));
+        writeln!(out, "f {0}//{0} {1}//{1} {2}//{2}", a, b, c)
+            .expect("writing to String cannot fail");
     }
+}
+
+fn obj_output_capacity(mesh: &Mesh) -> usize {
+    let index_digits = decimal_digits(mesh.vertices.len().max(1));
+    64usize
+        .saturating_add(mesh.vertices.len().saturating_mul(48))
+        .saturating_add(mesh.normals.len().saturating_mul(40))
+        .saturating_add(
+            mesh.faces
+                .len()
+                .saturating_mul(16usize.saturating_add(index_digits.saturating_mul(6))),
+        )
+        .saturating_add(mesh.sections.len().saturating_mul(32))
+}
+
+fn decimal_digits(mut value: usize) -> usize {
+    let mut digits = 1;
+    while value >= 10 {
+        value /= 10;
+        digits += 1;
+    }
+    digits
 }
 
 fn molstar_obj_sections(mesh: &Mesh) -> Option<&[crate::model::MeshSection]> {
@@ -222,11 +252,61 @@ fn molstar_obj_sections(mesh: &Mesh) -> Option<&[crate::model::MeshSection]> {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn export_mtl(mesh: &Mesh) -> String {
     export_mtl_from_materials(&mesh_materials_in_first_use_order(mesh))
 }
 
-fn export_mtl_from_materials(materials: &[MeshMaterial]) -> String {
+pub(crate) fn export_maquette_material_map_json(mesh: &Mesh) -> String {
+    let entries = mesh_materials_in_first_use_order(mesh)
+        .iter()
+        .map(|material| {
+            format!(
+                "\"{}\":\"#{:06x}\"",
+                json_escape(&molstar_material_id(*material)),
+                material.color & 0x00ff_ffff
+            )
+        })
+        .collect::<Vec<_>>();
+    format!("{{{}}}", entries.join(","))
+}
+
+pub(crate) fn export_maquette_material_map_json_from_obj(obj: &[u8]) -> Result<String, String> {
+    let text =
+        std::str::from_utf8(obj).map_err(|_| "generated OBJ must be UTF-8 text".to_string())?;
+    let mut materials = Vec::<(&str, u32)>::new();
+    for line in text.lines() {
+        let Some(material_id) = line.strip_prefix("usemtl ") else {
+            continue;
+        };
+        let material_id = material_id.trim();
+        if materials
+            .iter()
+            .any(|(existing_id, _)| *existing_id == material_id)
+        {
+            continue;
+        }
+        let color = maquette_color_from_molstar_material_id(material_id).ok_or_else(|| {
+            format!("generated OBJ contains unsupported material id: {material_id}")
+        })?;
+        materials.push((material_id, color));
+    }
+    let entries = materials
+        .iter()
+        .map(|(material_id, color)| format!("\"{}\":\"#{color:06x}\"", json_escape(material_id)))
+        .collect::<Vec<_>>();
+    Ok(format!("{{{}}}", entries.join(",")))
+}
+
+fn maquette_color_from_molstar_material_id(material_id: &str) -> Option<u32> {
+    let hex = material_id.strip_prefix("0x")?;
+    let color = hex.get(..6)?;
+    (hex.len() > 6)
+        .then(|| u32::from_str_radix(color, 16).ok())
+        .flatten()
+}
+
+pub(crate) fn export_mtl_from_materials(materials: &[MeshMaterial]) -> String {
     let mut out = String::new();
     for material in materials {
         out.push_str("newmtl ");
@@ -267,10 +347,16 @@ pub(crate) fn export_ply(mesh: &Mesh) -> String {
 }
 
 pub(crate) fn export_ply_with_metadata(mesh: &Mesh, metadata: &ExportMetadata) -> String {
-    let mut out = format!(
-        "ply\nformat ascii 1.0\ncomment Exported by molfig\ncomment molfig_group_count {}\n",
-        mesh.effective_group_count(),
-    );
+    let mut out = String::with_capacity(ply_output_capacity(mesh));
+    writeln!(out, "ply").expect("writing to String cannot fail");
+    writeln!(out, "format ascii 1.0").expect("writing to String cannot fail");
+    writeln!(out, "comment Exported by molfig").expect("writing to String cannot fail");
+    writeln!(
+        out,
+        "comment molfig_group_count {}",
+        mesh.effective_group_count()
+    )
+    .expect("writing to String cannot fail");
     if metadata.include_operator_metadata {
         if let Some(metadata_json) = export_metadata_json(metadata) {
             out.push_str("comment molfig_operator_metadata ");
@@ -278,24 +364,42 @@ pub(crate) fn export_ply_with_metadata(mesh: &Mesh, metadata: &ExportMetadata) -
             out.push('\n');
         }
     }
-    out.push_str(&format!(
+    write!(
+        out,
         "comment molfig_face_group_property molfig_group\nelement vertex {}\nproperty float x\nproperty float y\nproperty float z\nelement face {}\nproperty list uchar int vertex_indices\nproperty int molfig_group\nend_header\n",
         mesh.vertices.len(),
         mesh.faces.len()
-    ));
+    )
+    .expect("writing to String cannot fail");
     for v in &mesh.vertices {
-        out.push_str(&format!("{:.5} {:.5} {:.5}\n", v.x, v.y, v.z));
+        writeln!(out, "{:.5} {:.5} {:.5}", v.x, v.y, v.z).expect("writing to String cannot fail");
     }
     for (face_index, f) in mesh.faces.iter().enumerate() {
-        out.push_str(&format!(
-            "3 {} {} {} {}\n",
+        writeln!(
+            out,
+            "3 {} {} {} {}",
             f.a,
             f.b,
             f.c,
             mesh.face_group(face_index)
-        ));
+        )
+        .expect("writing to String cannot fail");
     }
     out
+}
+
+fn ply_output_capacity(mesh: &Mesh) -> usize {
+    let index_digits = decimal_digits(mesh.vertices.len().max(1));
+    let group_digits = decimal_digits(mesh.effective_group_count().max(1));
+    256usize
+        .saturating_add(mesh.vertices.len().saturating_mul(48))
+        .saturating_add(
+            mesh.faces.len().saturating_mul(
+                8usize
+                    .saturating_add(index_digits.saturating_mul(3))
+                    .saturating_add(group_digits),
+            ),
+        )
 }
 
 #[allow(dead_code)]
@@ -317,16 +421,11 @@ pub(crate) fn export_stl_with_metadata(mesh: &Mesh, metadata: &ExportMetadata) -
     out[..header.len()].copy_from_slice(header);
     let draw_count = u32::try_from(draw_count).expect("STL draw count exceeds u32");
     out[80..84].copy_from_slice(&draw_count.to_le_bytes());
-    let vertices = mesh
-        .vertices
-        .iter()
-        .map(|&vertex| molstar_stl_vertex_transform(vertex, metadata.vertex_offset))
-        .collect::<Vec<_>>();
     for (i, face) in mesh.faces.iter().enumerate() {
         let offset = 84 + i * 3 * 50;
-        let a = vertices[face.a];
-        let b = vertices[face.b];
-        let c = vertices[face.c];
+        let a = molstar_stl_vertex_transform(mesh.vertices[face.a], metadata.vertex_offset);
+        let b = molstar_stl_vertex_transform(mesh.vertices[face.b], metadata.vertex_offset);
+        let c = molstar_stl_vertex_transform(mesh.vertices[face.c], metadata.vertex_offset);
         let n = molstar_triangle_normal(a, b, c);
         let values = [n.x, n.y, n.z, a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z];
         for (j, value) in values.iter().enumerate() {
@@ -570,9 +669,16 @@ fn molstar_float(value: f32, precision_multiplier: f64) -> String {
 }
 
 fn molstar_float64(value: f64, precision_multiplier: f64) -> String {
+    molstar_rounded_float64(value, precision_multiplier).to_string()
+}
+
+fn molstar_rounded_float64(value: f64, precision_multiplier: f64) -> f64 {
     let rounded = js_round(value * precision_multiplier) / precision_multiplier;
-    let normalized = if rounded == 0.0 { 0.0 } else { rounded };
-    normalized.to_string()
+    if rounded == 0.0 {
+        0.0
+    } else {
+        rounded
+    }
 }
 
 fn js_round(value: f64) -> f64 {
@@ -584,11 +690,19 @@ fn molstar_obj_face_indices(face: &crate::model::Face) -> [usize; 3] {
 }
 
 fn molstar_material_id(material: MeshMaterial) -> String {
-    format!(
-        "0x{:06x}{}",
-        material.color & 0x00ff_ffff,
-        molstar_alpha(material)
-    )
+    let mut out = String::with_capacity(12);
+    write_molstar_material_id(&mut out, material);
+    out
+}
+
+fn write_molstar_material_id(out: &mut String, material: MeshMaterial) {
+    write!(out, "0x{:06x}", material.color & 0x00ff_ffff).expect("writing to String cannot fail");
+    let alpha_tenths = material.alpha_tenths.min(10);
+    if alpha_tenths == 10 {
+        out.push('1');
+    } else {
+        write!(out, "0.{alpha_tenths}").expect("writing to String cannot fail");
+    }
 }
 
 fn molstar_alpha(material: MeshMaterial) -> String {

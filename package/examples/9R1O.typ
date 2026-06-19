@@ -1,4 +1,4 @@
-#import "../lib.typ" as molfig
+#import "@local/molfig:0.1.1"
 
 #set page(width: auto, height: auto, margin: 0mm)
 
@@ -22,7 +22,6 @@
   config: (
     azimuth: 35,
     elevation: 24,
-    zoom: 1.0,
     background: "",
   ),
 )

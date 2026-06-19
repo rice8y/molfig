@@ -9,3 +9,5 @@ push.sh
 # Local Mol* checkout/build artifacts used only for parity development.
 artifacts/
 wasm-plugin/artifacts/
+
+tests/

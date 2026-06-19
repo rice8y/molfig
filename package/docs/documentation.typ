@@ -6,9 +6,32 @@
 #let product-name = "Molfig"
 #let package-import = "@preview/" + package-id + ":" + package-version
 #let rendered-9r1o-pdf = "../examples/9R1O.pdf"
-#let example-9r1o-code = "#import \"" + package-import + "\" as molfig\n\n#set page(width: auto, height: auto, margin: 0mm)\n\n// Uses structural data from RCSB PDB / wwPDB.\n// PDB ID: 9R1O\n// PDB DOI: https://doi.org/10.2210/pdb9R1O/pdb\n// PDB archive data files are available under CC0 1.0.\n#let pdb = if molfig.v15-or-later() {\n  path(\"9R1O.pdb\")\n} else {\n  read(\"9R1O.pdb\", encoding: none)\n}\n\n#molfig.render(\n  pdb,\n  format: \"pdb\",\n  representation: \"molstar\",\n  assembly: \"1\",\n  mesh-format: \"obj\",\n  quality: \"high\",\n  center: true,\n  output-format: \"png\",\n  config: (\n    azimuth: 35,\n    elevation: 24,\n    zoom: 1.0,\n    background: \"\",\n  ),\n)"
+#let example-9r1o-code = "#import \"" + package-import + "\"\n\n#set page(width: auto, height: auto, margin: 0mm)\n\n// Uses structural data from RCSB PDB / wwPDB.\n// PDB ID: 9R1O\n// PDB DOI: https://doi.org/10.2210/pdb9R1O/pdb\n// PDB archive data files are available under CC0 1.0.\n#let pdb = path(\"9R1O.pdb\")\n\n#molfig.render(\n  pdb,\n  format: \"pdb\",\n  representation: \"molstar\",\n  assembly: \"1\",\n  mesh-format: \"obj\",\n  quality: \"high\",\n  center: true,\n  output-format: \"png\",\n  config: (\n    azimuth: 35,\n    elevation: 24,\n    background: \"\",\n  ),\n)"
 
 #let ic(value) = raw(str(value))
+
+#let code-lines(parts) = text(
+  size: 0.9em,
+  grid(
+    columns: 1,
+    row-gutter: 0pt,
+    ..parts.map(ic),
+  ),
+)
+
+#let compact-ic(value) = text(size: 0.9em, ic(value))
+
+#let color-code(value) = [
+  #box(
+    width: 0.72em,
+    height: 0.72em,
+    fill: rgb(value),
+    stroke: 0.4pt + luma(60%),
+    radius: 1pt,
+  )#h(3pt)#ic(value)
+]
+
+#let element-color(symbol, value) = [#symbol #color-code(value)]
 
 #let code(lang, body, title: none, file: none) = sourcecode(
   title: title,
@@ -149,6 +172,13 @@ The following example renders PDB entry 9R1O. Put #ic("9R1O.typ") and
 
 #code("typ", example-9r1o-code, title: "Complete 9R1O example", file: "9R1O.typ")
 
+#info-alert[
+  The #ic("path(\"9R1O.pdb\")") input in this example requires Typst 0.15.0 or
+  later. On an older Typst version, replace it with
+  #ic("read(\"9R1O.pdb\", encoding: none)") and pass the resulting bytes to
+  #ic("molfig.render").
+]
+
 Compile the example first when you want to refresh the figure embedded below:
 
 #shell("typst compile 9R1O.typ")
@@ -218,7 +248,6 @@ render, render-object, export, and metadata commands unless noted otherwise.
   row3([@cmd:to-ply[-]], [bytes], [You need ASCII PLY output with Molfig metadata comments/properties.]),
   row3([@cmd:info[-]], [dictionary], [You want structure and render planning metadata without rendering.]),
   row3([@cmd:mesh-info[-]], [dictionary], [You want maquette's mesh metadata for the generated OBJ/STL/PLY bytes.]),
-  row3([@cmd:v15-or-later[-]], [bool], [You want one source file that uses #ic("path(...)") on Typst 0.15+ and byte input on older Typst.]),
 ))
 
 == Rendering Commands <sec:rendering-commands>
@@ -252,8 +281,10 @@ render, render-object, export, and metadata commands unless noted otherwise.
   ]
 
   #argument("config", types: ("dictionary",), default: (:), command: "render")[
-    JSON-encoded and passed to maquette unchanged. Use it for camera,
-    background, image, and render settings supported by maquette.
+    JSON-encoded and passed to maquette. For OBJ rendering, Molfig adds the
+    active color theme as a maquette material map; explicit
+    #ic("config.materials") entries override generated colors with the same
+    material id.
   ]
 
   #argument("width", default: "auto", command: "render")[
@@ -278,6 +309,7 @@ render, render-object, export, and metadata commands unless noted otherwise.
     row2([#ic("format")], [The selected mesh format.]),
     row2([#ic("mesh_format")], [The selected mesh format with snake_case naming.]),
     row2([#ic("mesh")], [Generated OBJ/STL/PLY bytes.]),
+    row2([#ic("materials")], [Generated maquette material map for OBJ, or an empty dictionary for STL/PLY.]),
     row2([#ic("info")], [The same dictionary returned by @cmd:info[-] for the same mesh options.]),
     row2([#ic("content")], [The Typst content returned by @cmd:render[-].]),
   ))
@@ -323,16 +355,6 @@ render, render-object, export, and metadata commands unless noted otherwise.
   #ic("get-obj-info"), #ic("get-stl-info"), or #ic("get-ply-info") helper.
 ]
 
-== Compatibility Helper <sec:compatibility-helper>
-
-#command("v15-or-later")[
-  Returns #value(true) when #ic("sys.version >= version(0, 15, 0)"). Use it in
-  source files that should prefer Typst 0.15+ project paths while remaining
-  compilable on Typst 0.14.
-]
-
-#code("typ", "#let pdb = if molfig.v15-or-later() {\n  path(\"entry.pdb\")\n} else {\n  read(\"entry.pdb\", encoding: none)\n}", title: "Version-gated file input")
-
 = Shared Mesh Options <sec:shared-options>
 
 The following options are accepted by @cmd:render[-], @cmd:render-object[-],
@@ -376,7 +398,65 @@ are static mesh formats.
 
 #option-table((
   option-row("representation", ic("\"molstar\""), [Static Mol\*-style default visual set. Also accepts #ic("\"default\"") and #ic("\"auto\"").]),
+  option-row("color-theme", ic("\"chain-id\""), [Assigns Mol\* Chain ID colors to polymer chains and preserves element-symbol colors used by atomic visuals. #ic("\"chain-id\"") is the currently supported theme. Color is serialized through OBJ material references and the companion MTL output. STL and the current PLY output do not carry these colors, so themed document rendering requires #ic("mesh-format: \"obj\"").]),
 ))
+
+=== Chain ID Color Rules <sec:chain-id-colors>
+
+The #ic("\"chain-id\"") theme follows these rules:
+
+- For atomic models, the author chain id (#ic("auth_asym_id")) is used when it
+  is present; otherwise the label chain id (#ic("label_asym_id")) is used. PDB
+  input normally has the same value for both. Coarse IHM spheres and Gaussians
+  use their asym id.
+- Unique chain ids are collected in model order. Atomic chains are collected
+  first, followed by previously unseen coarse-sphere and coarse-Gaussian chain
+  ids. Assembly copies retain the source chain id and therefore retain its
+  color.
+- Colors are assigned from the following 25-color Mol\* many-distinct palette.
+  If a structure contains more than 25 chain ids, the palette repeats from the
+  first color.
+
+#table2([Palette positions], [Colors], (
+  row2([1--5], [#color-code("#1b9e77"), #color-code("#d95f02"), #color-code("#7570b3"), #color-code("#e7298a"), #color-code("#66a61e")]),
+  row2([6--10], [#color-code("#e6ab02"), #color-code("#a6761d"), #color-code("#666666"), #color-code("#e41a1c"), #color-code("#377eb8")]),
+  row2([11--15], [#color-code("#4daf4a"), #color-code("#984ea3"), #color-code("#ff7f00"), #color-code("#ffff33"), #color-code("#a65628")]),
+  row2([16--20], [#color-code("#f781bf"), #color-code("#999999"), #color-code("#66c2a5"), #color-code("#fc8d62"), #color-code("#8da0cb")]),
+  row2([21--25], [#color-code("#e78ac3"), #color-code("#a6d854"), #color-code("#ffd92f"), #color-code("#e5c494"), #color-code("#b3b3b3")]),
+))
+
+Chain-associated geometry, including cartoon, ribbon, backbone, nucleotide,
+carbohydrate, gap, and coarse visuals, uses the assigned chain color unless the
+visual has an explicit atomic material. Atomic visuals apply a
+chain-and-element rule:
+
+- Carbon uses its chain color for ordinary atoms, polymers, ligands, and
+  branched components.
+- Water, ion, and lipid components use element-symbol colors for every atom,
+  including carbon.
+- Non-carbon atoms use their element-symbol color. The symbol is read from
+  #ic("type_symbol") when available, otherwise from the parsed element field.
+  Unknown symbols fall back to white.
+- Bond geometry inherits the material of its source atom. Component visuals
+  that emit two directed half-bonds consequently color each half from its
+  adjacent atom.
+
+Element-symbol colors include Mol\*'s default lightness adjustment. The final
+RGB values written to OBJ materials are:
+
+#table2([Elements], [Final colors], (
+  row2([Hydrogen isotopes], [#element-color("H", "#ffffff"), #element-color("D", "#ffffca"), #element-color("T", "#ffffaa")]),
+  row2([Common organic elements], [#element-color("C", "#999999"), #element-color("N", "#4259ff"), #element-color("O", "#ff2618"), #element-color("P", "#ff8a14"), #element-color("S", "#ffff3e"), #element-color("Se", "#ffab17")]),
+  row2([Halogens], [#element-color("F", "#9aea5a"), #element-color("Cl", "#37fb2e"), #element-color("Br", "#b13431"), #element-color("I", "#9e179e")]),
+  row2([Alkali and alkaline-earth metals], [#element-color("Na", "#b566fd"), #element-color("Mg", "#95ff1f"), #element-color("K", "#994ade"), #element-color("Ca", "#4eff1e")]),
+  row2([Transition metals], [#element-color("Mn", "#a683d1"), #element-color("Fe", "#eb703c"), #element-color("Co", "#fb9aaa"), #element-color("Ni", "#5cda5a"), #element-color("Cu", "#d3893c"), #element-color("Zn", "#8689ba")]),
+  row2([Other or unknown], [#color-code("#ffffff")]),
+))
+
+The companion MTL records opacity #ic("0.3") for branched components,
+#ic("0.6") for water and lipids, and #ic("1.0") otherwise. Molfig's automatic
+maquette material map currently forwards RGB colors only; it does not forward
+these MTL opacity values.
 
 #table4([Value], [Best for], [Main geometry], [Notes], (
   row4([#ic("\"molstar\"")], [General figures], [Polymer traces, element spheres, bonds, carbohydrates, nucleotides, gaps], [Closest default for static Molfig output.]),
@@ -429,9 +509,15 @@ slowly.
 
 @cmd:render[-] calls one of maquette's mesh renderers based on
 #arg[mesh-format]: #ic("render-obj"), #ic("render-stl"), or #ic("render-ply").
-The #arg[config] dictionary is JSON-encoded and passed through unchanged.
+The #arg[config] dictionary is JSON-encoded and passed through. For OBJ,
+Molfig derives maquette's #ic("materials") dictionary from the exported
+material ids so #ic("color-theme: \"chain-id\"") is visible in the document.
+User-supplied material entries are merged last and therefore take precedence.
+STL has no material channel, and Molfig's current PLY schema contains no vertex
+or face color properties. Consequently, maquette renders STL and PLY without
+the selected color theme.
 
-#code("typ", "#let cif = read(\"structure.cif\", encoding: none)\n\n#molfig.render(\n  cif,\n  format: \"cif\",\n  representation: \"ball-and-stick\",\n  mesh-format: \"ply\",\n  config: (\n    azimuth: 45,\n    elevation: 20,\n    zoom: 1.15,\n    background: \"\",\n  ),\n  width: 75mm,\n)", title: "Camera and background passthrough")
+#code("typ", "#let cif = read(\"structure.cif\", encoding: none)\n\n#molfig.render(\n  cif,\n  format: \"cif\",\n  representation: \"ball-and-stick\",\n  mesh-format: \"ply\",\n  config: (\n    azimuth: 45,\n    elevation: 20,\n    background: \"\",\n  ),\n  width: 75mm,\n)", title: "Camera and background passthrough")
 
 Molfig does not validate maquette-specific keys. Unknown keys are passed to
 maquette, so maquette remains the source of truth for camera and renderer
@@ -486,19 +572,26 @@ when an assembly is selected. STL has no equivalent text channel, so assembly
 operator metadata should be inspected through @cmd:info[-] or
 @cmd:render-object[-].
 
-#table3([Path], [Example], [Meaning], (
-  row3([#ic("structure.unit_count")], [#ic("meta.structure.unit_count")], [Number of units after structure construction.]),
-  row3([#ic("structure.symmetry_group_count")], [#ic("meta.structure.symmetry_group_count")], [Mol\*-style symmetry grouping count.]),
-  row3([#ic("structure.coordinate_system")], [#ic("meta.structure.coordinate_system")], [Selected coordinate operator summary.]),
-  row3([#ic("structure.boundary")], [#ic("meta.structure.boundary.sphere_radius")], [Boundary sphere and box used by structure-level geometry.]),
-  row3([#ic("structure.lookup3d")], [#ic("meta.structure.lookup3d.unit_count")], [Lookup3D summary for constructed units.]),
-))
+#table(
+  columns: (25%, 35%, 40%),
+  inset: 3pt,
+  stroke: luma(82%),
+  fill: (_, y) => if y == 0 { luma(94%) } else { none },
+  [*Path*], [*Example*], [*Meaning*],
+  ..(
+    row3([#compact-ic("structure.unit_count")], [#compact-ic("meta.structure.unit_count")], [Number of units after structure construction.]),
+    row3([#code-lines(("structure.", "symmetry_group_count"))], [#code-lines(("meta.structure.", "symmetry_group_count"))], [Mol\*-style symmetry grouping count.]),
+    row3([#code-lines(("structure.", "coordinate_system"))], [#code-lines(("meta.structure.", "coordinate_system"))], [Selected coordinate operator summary.]),
+    row3([#compact-ic("structure.boundary")], [#code-lines(("meta.structure.boundary.", "sphere_radius"))], [Boundary sphere and box used by structure-level geometry.]),
+    row3([#compact-ic("structure.lookup3d")], [#code-lines(("meta.structure.lookup3d.", "unit_count"))], [Lookup3D summary for constructed units.]),
+  ).flatten(),
+)
 
 = Practical Workflows <sec:workflows>
 
 == A Publication Figure <sec:publication-figure>
 
-#code("typ", "#import \"" + package-import + "\" as molfig\n\n#let pdb = read(\"9R1O.pdb\", encoding: none)\n\n#figure(\n  molfig.render(\n    pdb,\n    format: \"pdb\",\n    representation: \"molstar\",\n    assembly: \"1\",\n    mesh-format: \"obj\",\n    quality: \"high\",\n    center: true,\n    config: (\n      azimuth: 35,\n      elevation: 24,\n      background: \"\",\n    ),\n    width: 90mm,\n  ),\n  caption: [9R1O rendered with #product-name.],\n)", title: "Pinned 9R1O figure")
+#code("typ", "#import \"" + package-import + "\"\n\n#let pdb = read(\"9R1O.pdb\", encoding: none)\n\n#figure(\n  molfig.render(\n    pdb,\n    format: \"pdb\",\n    representation: \"molstar\",\n    assembly: \"1\",\n    mesh-format: \"obj\",\n    quality: \"high\",\n    center: true,\n    config: (\n      azimuth: 35,\n      elevation: 24,\n      background: \"\",\n    ),\n    width: 90mm,\n  ),\n  caption: [9R1O rendered with #product-name.],\n)", title: "Pinned 9R1O figure")
 
 == A Lightweight Draft Figure <sec:draft-figure>
 

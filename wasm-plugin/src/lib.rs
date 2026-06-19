@@ -13,7 +13,8 @@ mod parser;
 mod typst_plugin;
 
 pub use api::{
-    convert_to_mtl, convert_to_obj, convert_to_ply, convert_to_stl, molecule_info,
+    convert_to_mtl, convert_to_obj, convert_to_obj_bundle, convert_to_ply,
+    convert_to_render_object_bundle, convert_to_stl, maquette_material_map, molecule_info,
     stl_export_facet_context, stl_export_facet_context_timed, stl_facet_semantic_context,
     stl_facet_semantic_context_with_vertex_offset,
     stl_facet_semantic_context_with_vertex_offset_timed,

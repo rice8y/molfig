@@ -1,7 +1,8 @@
 use super::{
-    export_mtl, export_mtl_from_materials, export_obj, export_obj_with_metadata,
-    export_stl_with_metadata, molstar_float, molstar_float64, molstar_material_id,
-    molstar_obj_vertex_transform, molstar_triangle_normal, ExportMetadata, ExportVec3,
+    export_maquette_material_map_json, export_maquette_material_map_json_from_obj, export_mtl,
+    export_mtl_from_materials, export_obj, export_obj_with_metadata, export_stl_with_metadata,
+    molstar_float, molstar_float64, molstar_material_id, molstar_obj_vertex_transform,
+    molstar_triangle_normal, ExportMetadata, ExportVec3,
 };
 use crate::model::{Face, Mesh, MeshMaterial, MeshSection, Vec3};
 
@@ -209,6 +210,43 @@ fn export_obj_emits_molstar_material_switches_on_face_color_changes() {
     assert_eq!(switches, vec!["usemtl 0x1b9e771", "usemtl 0xff26180.6"]);
     assert!(obj.contains("\nusemtl 0x1b9e771\nf 1//1 2//2 3//3\n"));
     assert!(obj.contains("\nf 1//1 3//3 4//4\nusemtl 0xff26180.6\n"));
+}
+
+#[test]
+fn direct_maquette_material_map_matches_obj_parse_contract() {
+    let mesh = Mesh {
+        vertices: vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(1.0, 1.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        ],
+        normals: vec![Vec3::new(0.0, 0.0, 1.0); 4],
+        faces: vec![
+            Face { a: 0, b: 1, c: 2 },
+            Face { a: 0, b: 2, c: 3 },
+            Face { a: 1, b: 2, c: 3 },
+        ],
+        vertex_groups: vec![0, 0, 0, 0],
+        face_groups: vec![0, 0, 0],
+        face_materials: vec![
+            MeshMaterial::opaque(0x1b9e77),
+            MeshMaterial::opaque(0x1b9e77),
+            MeshMaterial::with_alpha_tenths(0xff2618, 6),
+        ],
+        sections: Vec::new(),
+        group_count: 1,
+    };
+
+    let obj = export_obj(&mesh);
+    let parsed = export_maquette_material_map_json_from_obj(obj.as_bytes()).unwrap();
+    let direct = export_maquette_material_map_json(&mesh);
+
+    assert_eq!(direct, parsed);
+    assert_eq!(
+        direct,
+        "{\"0x1b9e771\":\"#1b9e77\",\"0xff26180.6\":\"#ff2618\"}"
+    );
 }
 
 fn stl_f32(stl: &[u8], offset: usize) -> f32 {

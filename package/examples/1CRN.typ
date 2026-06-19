@@ -6,7 +6,7 @@
 // Primary citation: Teeter, M.M. (1984) Proc Natl Acad Sci U S A 81: 6014-6018.
 // Article DOI: https://doi.org/10.1073/pnas.81.19.6014
 
-#import "../lib.typ" as molfig
+#import "@local/molfig:0.1.1"
 #set page(width: auto, height: auto, margin: 3mm)
 
 #let data = read("data/1crn.bcif", encoding: none)

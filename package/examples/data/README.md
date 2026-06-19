@@ -17,6 +17,8 @@ RCSB PDB also encourages attribution to the original structure-data authors wher
 | --- | --- | --- | --- | --- |
 | `1crn.bcif` | 1CRN | BinaryCIF | https://doi.org/10.2210/pdb1CRN/pdb | Hendrickson, W.A.; Teeter, M.M. Primary citation: Teeter, M.M. (1984) Proc Natl Acad Sci U S A 81:6014-6018. Article DOI: https://doi.org/10.1073/pnas.81.19.6014 |
 | `1FYY.cif` | 1FYY | mmCIF | https://doi.org/10.2210/pdb1FYY/pdb | Volk, D.E.; Rice, J.S.; Luxon, B.A.; Yeh, H.J.C.; Liang, C.; Xie, G.; Sayer, J.M.; Jerina, D.M.; Gorenstein, D.G. Primary citation: Biochemistry 39:14040-14053 (2000). Article DOI: https://doi.org/10.1021/bi001669l |
+| `9M1U.pdb` | 9M1U | PDB | https://doi.org/10.2210/pdb9M1U/pdb | Liu, H.; Zhang, X.; Xu, H.E. Primary citation: Zhang, X. et al. (2026), EMBO J. Article DOI: https://doi.org/10.1038/s44318-026-00823-y |
+| `9q12.pdb` | 9Q12 | PDB | https://doi.org/10.2210/pdb9Q12/pdb | Wang, Y.; Liu, B.; He, Y.; Feigon, J. Literature status in the included PDB file: to be published. |
 | `9R1O.pdb` | 9R1O | PDB | https://doi.org/10.2210/pdb9R1O/pdb | Petrenas, R.; Ozga, K.; Chubb, J.J.; Woolfson, D.N. Literature status in the included PDB file: to be published. |
 | `9Z4O.pdb` | 9Z4O | PDB | https://doi.org/10.2210/pdb9Z4O/pdb | Ge, Y.; de Almeida Magalhaes, T.; Wu, H.; Yadav, G.P.; Wang, Z.; Salic, A.; Jiang, J.; Huang, P. Literature status in the included PDB file: to be published. |
 

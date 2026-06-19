@@ -62,6 +62,40 @@
 #assert(str(obj).contains("\nv "))
 #assert(str(obj).contains("\nf "))
 
+#let colored-object = molfig.render-object(
+  water-pdb,
+  format: "pdb",
+  representation: "spacefill",
+  color-theme: "chain-id",
+  mesh-format: "obj",
+  sphere-detail: 1,
+  width: 24mm,
+  height: 24mm,
+  config: (
+    background: "",
+    materials: (
+      "0xff0d0d6": "#123456",
+    ),
+  ),
+)
+
+#assert(colored-object.materials.len() > 0)
+#assert(colored-object.materials.values().all(color => color.starts-with("#")))
+#assert.eq(colored-object.info, molfig.info(
+  water-pdb,
+  format: "pdb",
+  representation: "spacefill",
+  color-theme: "chain-id",
+  sphere-detail: 1,
+))
+#assert.eq(colored-object.mesh, molfig.to-obj(
+  water-pdb,
+  format: "pdb",
+  representation: "spacefill",
+  color-theme: "chain-id",
+  sphere-detail: 1,
+))
+
 #let stl = molfig.to-stl(water-pdb, format: "pdb", sphere-detail: 1, round-cap: true)
 #let ply = molfig.to-ply(water-cif, format: "cif", sphere-detail: 1, sheet-arrow-factor: 0.5)
 
