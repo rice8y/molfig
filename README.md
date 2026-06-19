@@ -4,6 +4,8 @@
 
 It accepts PDB, mmCIF, and BinaryCIF input, converts structures through a CPU-side [Mol*](https://molstar.org/)-style Model/Structure/Unit layer, exports static OBJ/STL/PLY mesh bytes, and delegates final document rendering to [`maquette`](https://typst.app/universe/package/maquette).
 
+![Gallery of molecular structures rendered with Molfig](package/examples/gallary.png)
+
 ## Quickstart
 
 ```typst
@@ -29,7 +31,6 @@ It accepts PDB, mmCIF, and BinaryCIF input, converts structures through a CPU-si
   config: (
     azimuth: 35,
     elevation: 24,
-    zoom: 1.0,
     background: "",
   ),
 )
@@ -49,6 +50,10 @@ Structural data source: RCSB PDB / wwPDB, PDB ID `9R1O`, DOI [`10.2210/pdb9R1O/p
 
 Use `format: "mmcif"` or `format: "bcif"` for text mmCIF and BinaryCIF inputs.
 For reproducible documents, prefer explicit `format`, `representation`, `assembly`, `alt-loc`, `mesh-format`, and geometry quality options instead of relying on auto-detection.
+
+## Examples
+
+The [`package/examples`](package/examples) directory contains complete example sources, rendered PDFs, and their accompanying structural data files. The example data files are kept under [`package/examples/data`](package/examples/data), together with attribution metadata.
 
 ## Features
 
