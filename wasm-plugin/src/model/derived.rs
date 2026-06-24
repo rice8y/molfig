@@ -232,8 +232,10 @@ impl AtomicDerivedData {
 
 #[derive(Clone, Debug, Default)]
 pub struct ResidueDerivedData {
+    pub component_type: Vec<String>,
     pub molecule_type: Vec<MoleculeType>,
     pub polymer_type: Vec<PolymerType>,
+    pub is_non_standard: Vec<bool>,
     pub trace_element_index: Vec<Option<usize>>,
     pub direction_from_element_index: Vec<Option<usize>>,
     pub direction_to_element_index: Vec<Option<usize>>,
@@ -245,7 +247,9 @@ impl ResidueDerivedData {
         chemical_components: &[ChemicalComponent],
     ) -> Self {
         let mut molecule_type = Vec::with_capacity(hierarchy.residues.len());
+        let mut component_type = Vec::with_capacity(hierarchy.residues.len());
         let mut polymer_type = Vec::with_capacity(hierarchy.residues.len());
+        let is_non_standard = vec![false; hierarchy.residues.len()];
         let mut trace_element_index = Vec::with_capacity(hierarchy.residues.len());
         let mut direction_from_element_index = Vec::with_capacity(hierarchy.residues.len());
         let mut direction_to_element_index = Vec::with_capacity(hierarchy.residues.len());
@@ -254,6 +258,7 @@ impl ResidueDerivedData {
             let comp_type = chemical_component_type(chemical_components, &residue.comp_id);
             let mol_type = residue_molecule_type(residue, &comp_type);
             let poly_type = residue_polymer_type(&comp_type, mol_type);
+            component_type.push(comp_type);
             molecule_type.push(mol_type);
             polymer_type.push(poly_type);
             trace_element_index.push(residue_trace_atom(hierarchy, residue, poly_type, mol_type));
@@ -263,8 +268,10 @@ impl ResidueDerivedData {
         }
 
         ResidueDerivedData {
+            component_type,
             molecule_type,
             polymer_type,
+            is_non_standard,
             trace_element_index,
             direction_from_element_index,
             direction_to_element_index,
@@ -469,13 +476,110 @@ fn residue_atom_by_element(
     })
 }
 
-fn chemical_component_type(components: &[ChemicalComponent], comp_id: &str) -> String {
+pub(super) fn chemical_component_type(components: &[ChemicalComponent], comp_id: &str) -> String {
     components
         .iter()
         .rev()
         .find(|component| component.id == comp_id)
         .map(|component| component.type_name.to_ascii_lowercase())
         .unwrap_or_else(|| default_component_type(comp_id))
+}
+
+pub(super) fn entity_subtype_from_component(comp_id: &str, comp_type: &str) -> String {
+    let comp_id = comp_id.to_ascii_uppercase();
+    let comp_type = comp_type.to_ascii_lowercase();
+    if matches!(
+        comp_type.as_str(),
+        "l-peptide linking"
+            | "l-peptide nh3 amino terminus"
+            | "l-peptide cooh carboxy terminus"
+            | "l-gamma-peptide, c-delta linking"
+            | "l-beta-peptide, c-gamma linking"
+    ) {
+        "polypeptide(L)".to_string()
+    } else if matches!(
+        comp_type.as_str(),
+        "d-peptide linking"
+            | "d-peptide nh3 amino terminus"
+            | "d-peptide cooh carboxy terminus"
+            | "d-gamma-peptide, c-delta linking"
+            | "d-beta-peptide, c-gamma linking"
+    ) {
+        "polypeptide(D)".to_string()
+    } else if is_rna_component_type(&comp_type) {
+        "polyribonucleotide".to_string()
+    } else if is_dna_component_type(&comp_type) {
+        "polydeoxyribonucleotide".to_string()
+    } else if is_saccharide_component_type(&comp_type) || is_saccharide_residue(&comp_id) {
+        "oligosaccharide".to_string()
+    } else if is_pna_residue(&comp_id) {
+        "peptide nucleic acid".to_string()
+    } else if is_protein_residue(&comp_id) {
+        "polypeptide(L)".to_string()
+    } else if is_rna_residue(&comp_id) {
+        "polyribonucleotide".to_string()
+    } else if is_dna_residue(&comp_id) {
+        "polydeoxyribonucleotide".to_string()
+    } else if comp_type == "ion" || is_ion_residue(&comp_id) {
+        "ion".to_string()
+    } else if comp_type == "lipid" || is_lipid_residue(&comp_id) {
+        "lipid".to_string()
+    } else if matches!(comp_type.as_str(), "peptide linking" | "peptide-like") {
+        "peptide-like".to_string()
+    } else {
+        "other".to_string()
+    }
+}
+
+pub(crate) fn is_polymer_name(comp_id: &str) -> bool {
+    let comp_id = comp_id.to_ascii_uppercase();
+    is_protein_residue(&comp_id)
+        || is_rna_residue(&comp_id)
+        || is_dna_residue(&comp_id)
+        || is_pna_residue(&comp_id)
+}
+
+pub(crate) fn entity_type_from_component(comp_id: &str) -> &'static str {
+    let comp_id = comp_id.to_ascii_uppercase();
+    if is_water_residue(&comp_id) {
+        "water"
+    } else if is_polymer_name(&comp_id) {
+        "polymer"
+    } else if is_saccharide_residue(&comp_id) {
+        "branched"
+    } else {
+        "non-polymer"
+    }
+}
+
+pub(crate) fn is_common_protein_cap(comp_id: &str) -> bool {
+    matches!(
+        comp_id.to_ascii_uppercase().as_str(),
+        "NME" | "ACE" | "NH2" | "FOR" | "FMT"
+    )
+}
+
+pub(crate) fn is_non_polymer_residue_component_type(comp_type: &str) -> bool {
+    let comp_type = comp_type.to_ascii_lowercase();
+    comp_type.contains("non-polymer")
+        || comp_type.contains("amino terminus")
+        || comp_type.contains("carboxy terminus")
+        || comp_type.contains("peptide-like")
+}
+
+pub(crate) fn is_saccharide_component_type_name(comp_type: &str) -> bool {
+    is_saccharide_component_type(&comp_type.to_ascii_lowercase())
+}
+
+pub(super) fn component_is_non_standard(components: &[ChemicalComponent], comp_id: &str) -> bool {
+    components
+        .iter()
+        .rev()
+        .find(|component| component.id == comp_id)
+        .map_or_else(
+            || !is_polymer_name(comp_id),
+            |component| component.mon_nstd_flag.starts_with('n'),
+        )
 }
 
 fn default_component_type(comp_id: &str) -> String {

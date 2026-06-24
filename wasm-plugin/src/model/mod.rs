@@ -670,6 +670,7 @@ pub struct Entity {
 pub struct EntityIndexMap {
     pub ids: Vec<String>,
     pub subtype: Vec<String>,
+    pub prd_id: Vec<String>,
     pub id_to_index: BTreeMap<String, usize>,
 }
 
@@ -681,17 +682,72 @@ impl EntityIndexMap {
     ) -> Self {
         let mut ids = Vec::with_capacity(entities.len());
         let mut subtype = Vec::with_capacity(entities.len());
+        let mut prd_id = Vec::with_capacity(entities.len());
         let mut id_to_index = BTreeMap::new();
         for (index, entity) in entities.iter().enumerate() {
             ids.push(entity.id.clone());
             id_to_index.insert(entity.id.clone(), index);
             subtype.push(entity_subtype(entity, entity_polymers, entity_branches));
+            prd_id.push(String::new());
         }
         EntityIndexMap {
             ids,
             subtype,
+            prd_id,
             id_to_index,
         }
+    }
+
+    pub fn from_mmcif(
+        entities: &[Entity],
+        entity_polymers: &[EntityPoly],
+        entity_branches: &[PdbxEntityBranch],
+        atoms: &[Atom],
+        chemical_components: &[ChemicalComponent],
+        struct_asym: &[StructAsym],
+        pdbx_molecule: &[PdbxMolecule],
+    ) -> Self {
+        let mut index = Self::from_entities(entities, entity_polymers, entity_branches);
+        let explicitly_typed = entity_polymers
+            .iter()
+            .filter(|entry| !entry.polymer_type.is_empty())
+            .map(|entry| entry.entity_id.as_str())
+            .chain(entity_branches.iter().map(|entry| entry.entity_id.as_str()))
+            .collect::<BTreeSet<_>>();
+        let mut assigned = explicitly_typed;
+        for atom in atoms {
+            if atom.entity_id.is_empty() || assigned.contains(atom.entity_id.as_str()) {
+                continue;
+            }
+            let Some(entity_index) = index.get_entity_index(&atom.entity_id) else {
+                continue;
+            };
+            let comp_type = derived::chemical_component_type(chemical_components, &atom.residue);
+            index.subtype[entity_index] =
+                derived::entity_subtype_from_component(&atom.residue, &comp_type);
+            assigned.insert(atom.entity_id.as_str());
+        }
+
+        let mut entity_by_asym = struct_asym
+            .iter()
+            .map(|entry| (entry.id.clone(), entry.entity_id.clone()))
+            .collect::<BTreeMap<_, _>>();
+        for atom in atoms {
+            if !atom.chain.is_empty() && !atom.entity_id.is_empty() {
+                entity_by_asym
+                    .entry(atom.chain.clone())
+                    .or_insert_with(|| atom.entity_id.clone());
+            }
+        }
+        for entry in pdbx_molecule {
+            let Some(entity_id) = entity_by_asym.get(&entry.asym_id) else {
+                continue;
+            };
+            if let Some(entity_index) = index.get_entity_index(entity_id) {
+                index.prd_id[entity_index] = entry.prd_id.clone();
+            }
+        }
+        index
     }
 
     pub fn get_entity_index(&self, id: &str) -> Option<usize> {
@@ -715,7 +771,7 @@ fn entity_subtype(
                 .map(|branch| branch.type_name.clone())
         })
         .filter(|subtype| !subtype.is_empty())
-        .unwrap_or_else(|| entity.type_name.clone())
+        .unwrap_or_else(|| "other".to_string())
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -1065,6 +1121,12 @@ pub struct StructAsym {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PdbxMolecule {
+    pub asym_id: String,
+    pub prd_id: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Entry {
     pub id: String,
 }
@@ -1131,14 +1193,34 @@ pub struct Molecule {
     pub ihm_model_group_links: Vec<IhmModelGroupLink>,
     pub ihm_cross_link_restraints: Vec<IhmCrossLinkRestraint>,
     pub struct_asym: Vec<StructAsym>,
+    pub pdbx_molecule: Vec<PdbxMolecule>,
     pub chemical_components: Vec<ChemicalComponent>,
     pub chemical_component_atoms: Vec<ChemicalComponentAtom>,
     pub chemical_component_bonds: Vec<ChemicalComponentBond>,
     pub chemical_component_angles: Vec<ChemicalComponentAngle>,
+    pub quality_assessment: QualityAssessmentData,
+    pub partial_charges: PartialChargeData,
     pub rings: Vec<Ring>,
     pub resonance: Resonance,
     pub(crate) derived_aromatic_bonds: BTreeSet<usize>,
     pub(crate) derived_resonance_bonds: BTreeSet<usize>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct QualityAssessmentData {
+    pub has_plddt_metric: bool,
+    pub has_qmean_metric: bool,
+    pub plddt: Vec<Option<f32>>,
+    pub qmean: Vec<Option<f32>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PartialChargeData {
+    pub is_applicable: bool,
+    pub atom: Vec<Option<f32>>,
+    pub residue: Vec<Option<f32>>,
+    pub max_absolute_atom_charge: f32,
+    pub max_absolute_residue_charge: f32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1360,6 +1442,21 @@ impl Molecule {
         molecule.selected_assembly = None;
         GeometryExpansion {
             molecule: Cow::Owned(molecule),
+            assembly_operators,
+        }
+    }
+
+    pub(crate) fn unexpanded_for_geometry_with_operator_snapshot(
+        &self,
+        capture_operators: bool,
+    ) -> GeometryExpansion<'_> {
+        let assembly_operators = if capture_operators && self.selected_assembly.is_some() {
+            unique_assembly_unit_operators(&self.atomic_structure().units)
+        } else {
+            Vec::new()
+        };
+        GeometryExpansion {
+            molecule: Cow::Borrowed(self),
             assembly_operators,
         }
     }
@@ -2272,6 +2369,7 @@ impl AtomicModel {
             &hierarchy,
             None,
         );
+        assign_residue_non_standard_flags(&mut hierarchy, &sequence, &molecule.chemical_components);
         let secondary_structure =
             SecondaryStructure::from_hierarchy(&hierarchy, &molecule.helices, &molecule.sheets);
         let (element_to_anisotrop, anisotropic_displacement) =
@@ -2318,6 +2416,41 @@ impl AtomicModel {
             custom_properties,
             static_property_data,
             dynamic_property_data: ModelPropertyData::default(),
+        }
+    }
+}
+
+fn assign_residue_non_standard_flags(
+    hierarchy: &mut AtomicHierarchy,
+    sequence: &StructureSequence,
+    chemical_components: &[ChemicalComponent],
+) {
+    for (residue_index, residue) in hierarchy.residues.iter().enumerate() {
+        let Some(chain) = hierarchy.chains.get(residue.chain_index) else {
+            continue;
+        };
+        let entity_key = hierarchy.index.entity_from_chain(residue.chain_index);
+        let sequence_entry = entity_key
+            .and_then(|key| sequence.by_entity_key.get(&key))
+            .and_then(|index| sequence.sequences.get(*index));
+        let seq_id = residue.label_seq_id.parse::<i32>().unwrap_or(0);
+        let non_standard = sequence_entry
+            .and_then(|entry| entry.micro_het.get(&seq_id))
+            .map_or_else(
+                || derived::component_is_non_standard(chemical_components, &residue.comp_id),
+                |variants| {
+                    variants.iter().any(|comp_id| {
+                        derived::component_is_non_standard(chemical_components, comp_id)
+                    })
+                },
+            );
+        if let Some(value) = hierarchy
+            .derived
+            .residue
+            .is_non_standard
+            .get_mut(residue_index)
+        {
+            *value = !chain.entity_id.is_empty() && non_standard;
         }
     }
 }
@@ -2584,6 +2717,8 @@ fn residue_source_index(atom_source_index: &[usize], residues: &[AtomicResidue])
 pub struct AtomicIndex {
     pub chain_entity_index: Vec<Option<usize>>,
     pub chain_entity_type: Vec<String>,
+    pub chain_entity_subtype: Vec<String>,
+    pub chain_entity_prd_id: Vec<String>,
     pub label_asym_to_entity_index: BTreeMap<String, usize>,
     pub label_asym_to_chain_index: BTreeMap<String, usize>,
     pub entity_label_asym_to_chain_index: BTreeMap<String, usize>,
@@ -2600,6 +2735,8 @@ impl AtomicIndex {
     ) -> Self {
         let mut chain_entity_index = Vec::with_capacity(hierarchy.chains.len());
         let mut chain_entity_type = Vec::with_capacity(hierarchy.chains.len());
+        let mut chain_entity_subtype = Vec::with_capacity(hierarchy.chains.len());
+        let mut chain_entity_prd_id = Vec::with_capacity(hierarchy.chains.len());
         let mut label_asym_to_entity_index = BTreeMap::new();
         let mut label_asym_to_chain_index = BTreeMap::new();
         let mut entity_label_asym_to_chain_index = BTreeMap::new();
@@ -2613,6 +2750,18 @@ impl AtomicIndex {
                 entity_key
                     .and_then(|index| entities.get(index))
                     .map(|entity| entity.type_name.clone())
+                    .unwrap_or_default(),
+            );
+            chain_entity_subtype.push(
+                entity_key
+                    .and_then(|index| entity_index.subtype.get(index))
+                    .cloned()
+                    .unwrap_or_default(),
+            );
+            chain_entity_prd_id.push(
+                entity_key
+                    .and_then(|index| entity_index.prd_id.get(index))
+                    .cloned()
                     .unwrap_or_default(),
             );
             label_asym_to_chain_index
@@ -2651,6 +2800,8 @@ impl AtomicIndex {
         AtomicIndex {
             chain_entity_index,
             chain_entity_type,
+            chain_entity_subtype,
+            chain_entity_prd_id,
             label_asym_to_entity_index,
             label_asym_to_chain_index,
             entity_label_asym_to_chain_index,
@@ -2668,6 +2819,18 @@ impl AtomicIndex {
         self.chain_entity_type
             .get(chain_index)
             .map(|entity_type| entity_type.as_str())
+    }
+
+    pub fn entity_subtype_from_chain(&self, chain_index: usize) -> Option<&str> {
+        self.chain_entity_subtype
+            .get(chain_index)
+            .map(String::as_str)
+    }
+
+    pub fn entity_prd_id_from_chain(&self, chain_index: usize) -> Option<&str> {
+        self.chain_entity_prd_id
+            .get(chain_index)
+            .map(String::as_str)
     }
 
     pub fn entity_by_label_asym_id(&self, label_asym_id: &str) -> Option<usize> {
@@ -2800,6 +2963,10 @@ fn residue_index_key(chain_index: usize, seq_id: &str, insertion_code: &str) -> 
 }
 
 mod derived;
+pub(crate) use derived::{
+    entity_type_from_component, is_common_protein_cap, is_non_polymer_residue_component_type,
+    is_polymer_name, is_saccharide_component_type_name,
+};
 
 use derived::{are_backbone_connected, chain_residue_indices, is_polymer_residue, residue_seq_id};
 pub use derived::{
@@ -4001,7 +4168,7 @@ impl BoundaryHelper {
             self.count += 1;
         }
         if self.count > 0 {
-            self.center = self.center / self.count as f64;
+            self.center = self.center * (1.0 / self.count as f64);
         }
     }
 
@@ -4081,14 +4248,11 @@ impl Vec3d {
         self.x * other.x + self.y * other.y + self.z * other.z
     }
 
-    fn length(self) -> f64 {
-        self.dot(self).sqrt()
-    }
-
     fn normalized(self) -> Vec3d {
-        let length = self.length();
-        if length > 0.0 {
-            self / length
+        let mut inverse_length = self.dot(self);
+        if inverse_length > 0.0 {
+            inverse_length = 1.0 / inverse_length.sqrt();
+            self * inverse_length
         } else {
             self
         }

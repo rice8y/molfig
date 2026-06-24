@@ -381,11 +381,14 @@ fn carbohydrate_symbol_geometry(
 ) -> CarbohydrateSymbolGeometry {
     let positions = ring_positions(structure, molecule, unit, ring);
     let center = average_position(&positions);
-    let normal = ring_normal(&positions);
+    let normal = snap_near_axis(ring_normal(&positions));
     let anomeric_position = anomeric_carbon_unit_index(molecule, unit, ring)
         .and_then(|unit_index| unit_position(structure, molecule, unit, unit_index))
         .unwrap_or_else(|| positions.first().copied().unwrap_or(center));
-    let direction = orthogonalize(normal, (center - anomeric_position).normalized());
+    let direction = snap_near_axis(orthogonalize(
+        normal,
+        (center - anomeric_position).normalized(),
+    ));
 
     CarbohydrateSymbolGeometry {
         center,
@@ -423,11 +426,29 @@ fn average_position(positions: &[Vec3]) -> Vec3 {
     if positions.is_empty() {
         return Vec3::default();
     }
-    positions
-        .iter()
-        .copied()
-        .fold(Vec3::default(), |sum, position| sum + position)
-        / positions.len() as f32
+    let [x, y, z] = positions.iter().fold([0.0f64; 3], |mut sum, position| {
+        sum[0] += position.x as f64;
+        sum[1] += position.y as f64;
+        sum[2] += position.z as f64;
+        sum
+    });
+    let count = positions.len() as f64;
+    Vec3::new((x / count) as f32, (y / count) as f32, (z / count) as f32)
+}
+
+fn snap_near_axis(value: Vec3) -> Vec3 {
+    let snap = |component: f32| {
+        if component.abs() < 1e-6 {
+            0.0
+        } else if (component - 1.0).abs() < 1e-6 {
+            1.0
+        } else if (component + 1.0).abs() < 1e-6 {
+            -1.0
+        } else {
+            component
+        }
+    };
+    Vec3::new(snap(value.x), snap(value.y), snap(value.z))
 }
 
 fn ring_normal(positions: &[Vec3]) -> Vec3 {
@@ -618,7 +639,7 @@ fn sugar_ring_indices_for_residue(
             let ring_elements = ring_unit_indices(molecule, unit, ring_index)?;
             ring_elements
                 .iter()
-                .all(|&index| unit.residue_index_by_element.get(index) == Some(&residue_index))
+                .all(|&index| residue_index_for_unit_index(unit, index) == Some(residue_index))
                 .then_some(ring_index)
         })
         .collect()
@@ -713,15 +734,16 @@ fn ring_element_indices_for_unit_index(
     let Some(atom) = molecule.atoms.get(source_atom) else {
         return Vec::new();
     };
-    let residue_index = unit
-        .residue_index_by_element
-        .get(index)
-        .copied()
-        .unwrap_or(0);
+    let residue_index = residue_index_for_unit_index(unit, index).unwrap_or(0);
     elements_with_ring_map
         .get(&(residue_index, unit.id, atom.alt_id.clone()))
         .cloned()
         .unwrap_or_default()
+}
+
+fn residue_index_for_unit_index(unit: &StructureUnit, unit_index: usize) -> Option<usize> {
+    let element = unit.elements.get(unit_index).copied()?;
+    unit.residue_index_by_element.get(element).copied()
 }
 
 fn are_vertex_sets_connected(
