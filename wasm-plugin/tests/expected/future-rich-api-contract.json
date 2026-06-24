@@ -47,9 +47,23 @@
         "sheets": [{ "chain": "A", "start": "3", "end": "3" }]
       },
       "representations": {
+        "default": {
+          "preset": "viewer-configured-or-auto"
+        },
+        "auto": {
+          "preset": "auto"
+        },
         "cartoon": {
           "meshFormats": ["obj", "ply"],
           "requiresSecondaryStructure": true
+        },
+        "polymer-cartoon": {
+          "meshFormats": ["obj", "ply"],
+          "requiresSecondaryStructure": true
+        },
+        "spacefill": {
+          "preset": "illustrative",
+          "colorTheme": "illustrative/entity-id"
         },
         "ribbon": {
           "meshFormats": ["obj", "ply"],

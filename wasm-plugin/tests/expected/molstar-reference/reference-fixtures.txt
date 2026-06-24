@@ -6,3 +6,8 @@
 # The optional `formats=` field lets future fixtures narrow exporter targets without
 # changing the existing contract file schema.
 tests/expected/molstar-reference/9r1o-molstar-assembly-1.reference.contract
+contract=tests/expected/molstar-reference/water-viewer-spacefill.reference.contract formats=obj,stl
+contract=tests/expected/molstar-reference/mixed-viewer-cartoon-components.reference.contract formats=obj,stl
+contract=tests/expected/molstar-reference/viewer-default-annotations.reference.contract formats=obj
+contract=tests/expected/molstar-reference/viewer-surface.reference.contract formats=obj,stl
+contract=tests/expected/molstar-reference/viewer-surface-materials.reference.contract formats=obj

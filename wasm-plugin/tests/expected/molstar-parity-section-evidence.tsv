@@ -14,11 +14,11 @@ Bonds	chem-comp-struct-conn-index-pair-bonds|ring-resonance	22
 Rings And Resonance	ring-resonance|chem-comp-struct-conn-index-pair-bonds|nucleotide-direction-visuals	11
 Carbohydrates And Branched Entities	carbohydrate-branched-visuals|chem-comp-struct-conn-index-pair-bonds	12
 Secondary Structure	secondary-structure|polymer-trace-cyclic-ranges|cartoon-ribbon-mesh	11
-Representation Object Layer	cartoon-ribbon-mesh|nucleotide-direction-visuals|carbohydrate-branched-visuals|ball-and-stick-component-visuals|polymer-trace-cyclic-ranges	22
+Representation Object Layer	cartoon-ribbon-mesh|nucleotide-direction-visuals|carbohydrate-branched-visuals|viewer-auto-gaussian-surface|viewer-molecular-surface|ball-and-stick-component-visuals|viewer-spacefill-preset|viewer-default-annotations|polymer-trace-cyclic-ranges|viewer-cartoon-component-queries|viewer-cartoon-browser-export	37
 Mesh Builder Exactness	cartoon-ribbon-mesh|nucleotide-direction-visuals|carbohydrate-branched-visuals|ball-and-stick-component-visuals|obj-export-parity|stl-export-parity-diagnostics	22
 Cartoon And Ribbon Geometry	cartoon-ribbon-mesh|polymer-trace-cyclic-ranges|obj-export-parity|stl-export-parity-diagnostics	23
 Nucleotide Geometry	nucleotide-direction-visuals|cartoon-ribbon-mesh	11
-Surface And Volume Representations	ball-and-stick-component-visuals|lookup3d-boundary-principal-axes|typst-public-api-smoke	7
+Surface And Volume Representations	viewer-auto-gaussian-surface|viewer-molecular-surface|viewer-surface-smoothing|structure-molecular-surface|lookup3d-boundary-principal-axes|typst-public-api-smoke	9
 Exporter Exactness	obj-export-parity|stl-export-parity-diagnostics|diff-cli-and-export-diagnostics|reference-converter-tooling	49
 Molfig Static PLY Contract	ply-export-contract|typst-public-api-smoke	6
 Typst API And Maquette Bridge	typst-public-api-smoke|parser-input-paths|coarse-ihm-model-units|chem-comp-struct-conn-index-pair-bonds|ring-resonance|obj-export-parity	14

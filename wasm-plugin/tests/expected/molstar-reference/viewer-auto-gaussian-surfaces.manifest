@@ -1,0 +1,2 @@
+contract=tests/expected/molstar-reference/viewer-auto-gaussian-gigantic.reference.contract formats=obj,stl,report
+contract=tests/expected/molstar-reference/viewer-auto-gaussian-huge.reference.contract formats=obj,stl,report

@@ -1,0 +1,6 @@
+# Real Chrome/WebGL Mol* Viewer Cartoon symmetry-theme dispatch contract.
+fixture=../package/examples/data/1crn.bcif
+options={"format":"bcif","structure-preset":"crystal-contacts","representation":"cartoon","theme":{"globalName":"chain-id","globalColorParams":{},"carbonColor":"chain-id","symmetryColor":"operator-name","symmetryColorParams":{}}}
+input_format=bcif
+molstar_reference_commit=1b8117d3f10f7c978aabb5a0d3d47370635aefe4
+browser_report_reference=tests/expected/molstar-reference/symmetry-viewer-cartoon-themes.browser-report.json

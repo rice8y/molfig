@@ -1,0 +1,20 @@
+# Real Chrome/WebGL Mol* Viewer Cartoon configured-theme dispatch contract.
+fixture=tests/fixtures/cif/mixed-viewer-cartoon-components.cif
+options={"format":"cif","representation":"cartoon","assembly":"asymmetric-unit","theme":{"globalName":"element-symbol","globalColorParams":{},"carbonColor":"chain-id","symmetryColor":"operator-name","symmetryColorParams":{}},"sphere-detail":1,"linear-segments":14,"radial-segments":28,"quality":"custom","export-primitives-quality":"low","obj-basename":"configured-viewer-cartoon-themes","operator-metadata":false,"obj-groups":false}
+input_format=cif
+molstar_reference_commit=1b8117d3f10f7c978aabb5a0d3d47370635aefe4
+browser_report_reference=tests/expected/molstar-reference/configured-viewer-cartoon-themes.browser-report.json
+exact_diff_required=true
+obj_reference=tests/expected/molstar-reference/configured-viewer-cartoon-themes.obj
+obj_export_basename=configured-viewer-cartoon-themes
+obj_mtllib=configured-viewer-cartoon-themes.mtl
+obj_byte_len=216925
+obj_fnv1a64=9bd34efe126f330b
+obj_vertex_count=2678
+obj_normal_count=2678
+obj_face_count=3460
+obj_bounds_min=-5.9690,-6.3110,-1.6410
+obj_bounds_max=6.0410,6.6290,1.1800
+mtl_byte_len=838
+mtl_fnv1a64=7a0ae9c41c162b0e
+mtl_material_count=9

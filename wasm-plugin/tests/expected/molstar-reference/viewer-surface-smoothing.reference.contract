@@ -1,0 +1,20 @@
+# Real Chrome/WebGL Mol* molecular Surface color-smoothing contract.
+fixture=tests/fixtures/cif/atomic-protein-no-altloc.cif
+options={"format":"cif","representation":"surface","assembly":"asymmetric-unit","theme":{"globalName":"element-symbol"},"molecular-surface-params":{"quality":"custom","resolution":0.5,"probeRadius":1.4,"probePositions":36},"quality":"custom","resolution":0.5,"probe-radius":1.4,"probe-positions":36,"export-primitives-quality":"low","obj-basename":"viewer-surface-smoothing","operator-metadata":false,"obj-groups":false}
+input_format=cif
+molstar_reference_commit=1b8117d3f10f7c978aabb5a0d3d47370635aefe4
+browser_report_reference=tests/expected/molstar-reference/viewer-surface-smoothing.browser-report.json
+exact_diff_required=true
+obj_reference=tests/expected/molstar-reference/viewer-surface-smoothing.obj
+obj_export_basename=viewer-surface-smoothing
+obj_mtllib=viewer-surface-smoothing.mtl
+obj_byte_len=73393
+obj_fnv1a64=8d4afb5d3dd9a5b5
+obj_vertex_count=606
+obj_normal_count=606
+obj_face_count=1208
+obj_bounds_min=-4.152,-2.935,-1.685
+obj_bounds_max=4.155,2.928,1.685
+mtl_byte_len=39552
+mtl_fnv1a64=2eeefebdbdaaa6ba
+mtl_material_count=427

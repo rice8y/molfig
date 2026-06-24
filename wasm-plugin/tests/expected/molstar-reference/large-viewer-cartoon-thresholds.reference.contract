@@ -1,0 +1,9 @@
+# Real Chrome/WebGL Mol* Viewer Cartoon threshold-routing contract. The large
+# input is generated under target/ so the public repository only carries its
+# deterministic generator and compact browser report.
+fixture=target/generated-fixtures/large-viewer-cartoon-thresholds.cif
+fixture_generator=scripts/generate-viewer-cartoon-threshold-fixture.mjs
+options={"format":"cif","representation":"cartoon","assembly":"asymmetric-unit"}
+input_format=cif
+molstar_reference_commit=1b8117d3f10f7c978aabb5a0d3d47370635aefe4
+browser_report_reference=tests/expected/molstar-reference/large-viewer-cartoon-thresholds.browser-report.json

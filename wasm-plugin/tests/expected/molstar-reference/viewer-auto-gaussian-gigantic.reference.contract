@@ -1,0 +1,27 @@
+# Real Chrome/WebGL Mol* ViewerAuto Gigantic coarse-surface routing contract.
+# A low test-only residue threshold forces the production ViewerAuto branch on
+# a compact atomic CIF; the resulting Gaussian surface is rebuilt on the CPU.
+fixture=tests/fixtures/cif/atomic-protein-no-altloc.cif
+options={"format":"cif","representation":"default","assembly":"asymmetric-unit","viewer-size-thresholds":{"largeResidueCount":1,"highSymmetryUnitCount":1},"gaussian-surface-params":{"quality":"custom","resolution":1,"smoothness":1,"radiusOffset":2,"traceOnly":true,"tryUseGpu":false,"visuals":["structure-gaussian-surface-mesh"]},"obj-basename":"viewer-auto-gaussian-gigantic","operator-metadata":false,"obj-groups":false}
+input_format=cif
+molstar_reference_commit=1b8117d3f10f7c978aabb5a0d3d47370635aefe4
+browser_expectation={"structure":{"unitCount":1,"elementCount":7,"polymerResidueCount":2,"sizeClass":"Gigantic"},"renderObjectCount":1,"totalDrawCount":2700,"visibleDrawCount":2700,"hiddenDrawCount":0,"exportableDrawCount":2700,"uploads":{"obj":{"byteLength":42605},"mtl":{"byteLength":92},"stl":{"byteLength":135084}},"renderObjects":[{"tag":"polymer","representation":"gaussian-surface","geometry":"mesh","visible":true,"drawCount":2700,"vertexCount":452,"groupCount":7,"instanceCount":1,"stlTriangleCount":2700,"visuals":["structure-gaussian-surface-mesh"],"surfaceParams":{"quality":"custom","resolution":1,"smoothness":1,"radiusOffset":2,"traceOnly":true,"tryUseGpu":false,"visuals":["structure-gaussian-surface-mesh"]}}]}
+browser_report_reference=tests/expected/molstar-reference/viewer-auto-gaussian-gigantic.browser-report.json
+exact_diff_required=true
+obj_reference=tests/expected/molstar-reference/viewer-auto-gaussian-gigantic.obj
+obj_export_basename=viewer-auto-gaussian-gigantic
+obj_mtllib=viewer-auto-gaussian-gigantic.mtl
+stl_reference=tests/expected/molstar-reference/viewer-auto-gaussian-gigantic.stl
+obj_byte_len=42605
+obj_fnv1a64=d9941cfdf6f27153
+obj_vertex_count=452
+obj_normal_count=452
+obj_face_count=900
+obj_bounds_min=-5.024,-5.057,-4.482
+obj_bounds_max=5.26,5.214,4.497
+mtl_byte_len=92
+mtl_fnv1a64=15e8c103adb9a995
+mtl_material_count=1
+stl_byte_len=135084
+stl_fnv1a64=9269228837a7deab
+stl_facet_count=2700

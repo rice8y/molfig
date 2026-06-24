@@ -177,7 +177,7 @@
         }
       },
       "futureOptions": {
-        "representations": ["cartoon", "molstar"],
+        "representations": ["cartoon", "polymer-cartoon"],
         "visuals": ["backbone", "nucleotide-ring"]
       }
     },
@@ -199,7 +199,7 @@
         }
       },
       "futureOptions": {
-        "representations": ["cartoon", "molstar"],
+        "representations": ["cartoon", "polymer-cartoon"],
         "visuals": ["nucleotide-ring", "nucleotide-block"],
         "renderObject": {
           "requiredKeys": ["geometry_type", "visual", "valueCell"]
@@ -265,7 +265,7 @@
       },
       "futureOptions": {
         "formats": ["bcif", "binarycif"],
-        "representations": ["cartoon", "ribbon"],
+        "representations": ["cartoon", "polymer-cartoon", "ribbon"],
         "altLoc": ["A", "B", "highest-occupancy", "all"],
         "assembly": ["asymmetric-unit", "1"],
         "renderObject": {
@@ -335,7 +335,7 @@
         }
       },
       "futureOptions": {
-        "representations": ["cartoon", "ribbon"],
+        "representations": ["cartoon", "polymer-cartoon", "ribbon"],
         "altLoc": ["A", "B", "highest-occupancy", "all"],
         "assembly": ["asymmetric-unit", "1"],
         "renderObject": {

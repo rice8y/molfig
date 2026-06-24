@@ -34,6 +34,78 @@
         "header": "Exported from Mol* 5.9.0",
         "nonzero_attribute_count": 0
       }
+    },
+    {
+      "name": "water-viewer-spacefill",
+      "contract": "tests/expected/molstar-reference/water-viewer-spacefill.reference.contract",
+      "fixture": "tests/fixtures/cif/water.cif",
+      "exports": {
+        "obj": "tests/expected/molstar-reference/water-viewer-spacefill.obj",
+        "mtl": "tests/expected/molstar-reference/water-spacefill.mtl",
+        "stl": "tests/expected/molstar-reference/water-viewer-spacefill.stl"
+      },
+      "obj": {
+        "export_basename": "water-spacefill",
+        "mtllib": "water-spacefill.mtl",
+        "materials": ["0xff0d0d1"],
+        "material_switch_count": 1
+      },
+      "mtl": {
+        "byte_len": 89,
+        "fnv1a64": "64b584b658918a9f",
+        "material_count": 1,
+        "materials": ["0xff0d0d1"]
+      },
+      "stl": {
+        "header": "Exported from Mol* 5.9.0",
+        "nonzero_attribute_count": 0
+      }
+    },
+    {
+      "name": "mixed-viewer-cartoon-components",
+      "contract": "tests/expected/molstar-reference/mixed-viewer-cartoon-components.reference.contract",
+      "fixture": "tests/fixtures/cif/mixed-viewer-cartoon-components.cif",
+      "exports": {
+        "obj": "tests/expected/molstar-reference/mixed-viewer-cartoon-components.obj",
+        "mtl": "tests/expected/molstar-reference/mixed-viewer-cartoon-components.mtl",
+        "stl": "tests/expected/molstar-reference/mixed-viewer-cartoon-components.stl"
+      },
+      "obj": {
+        "export_basename": "mixed-viewer-cartoon-components",
+        "mtllib": "mixed-viewer-cartoon-components.mtl",
+        "materials": [
+          "0xe7298a0.3",
+          "0xff26180.3",
+          "0x0090bc1",
+          "0x1b9e771",
+          "0xd95f021",
+          "0x7570b31",
+          "0xff26180.6",
+          "0x8689ba1",
+          "0x9999990.6"
+        ],
+        "material_switch_count": 11
+      },
+      "mtl": {
+        "byte_len": 834,
+        "fnv1a64": "6f2813cc1bd76d72",
+        "material_count": 9,
+        "materials": [
+          "0xe7298a0.3",
+          "0xff26180.3",
+          "0x0090bc1",
+          "0x1b9e771",
+          "0xd95f021",
+          "0x7570b31",
+          "0xff26180.6",
+          "0x8689ba1",
+          "0x9999990.6"
+        ]
+      },
+      "stl": {
+        "header": "Exported from Mol* 5.9.0",
+        "nonzero_attribute_count": 0
+      }
     }
   ]
 }

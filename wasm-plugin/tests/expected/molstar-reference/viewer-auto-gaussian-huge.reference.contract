@@ -1,0 +1,27 @@
+# Real Chrome/WebGL Mol* ViewerAuto Huge coarse-surface routing contract.
+# The fixture's author assembly has two equivalent units, so lowering the
+# symmetry threshold forces Huge while retaining a very small input file.
+fixture=tests/fixtures/cif/assembly-altloc-helix.cif
+options={"format":"cif","representation":"default","assembly":"1","alt-loc":"all","viewer-size-thresholds":{"largeResidueCount":1,"highSymmetryUnitCount":1},"gaussian-surface-params":{"quality":"custom","resolution":1,"smoothness":1,"radiusOffset":0,"traceOnly":false,"tryUseGpu":false,"visuals":["gaussian-surface-mesh"]},"obj-basename":"viewer-auto-gaussian-huge","operator-metadata":false,"obj-groups":false}
+input_format=cif
+molstar_reference_commit=1b8117d3f10f7c978aabb5a0d3d47370635aefe4
+browser_expectation={"structure":{"unitCount":2,"elementCount":28,"polymerResidueCount":6,"sizeClass":"Huge"},"renderObjectCount":1,"totalDrawCount":1848,"visibleDrawCount":1848,"hiddenDrawCount":0,"exportableDrawCount":1848,"uploads":{"obj":{"byteLength":59185},"mtl":{"byteLength":92},"stl":{"byteLength":184884}},"renderObjects":[{"tag":"polymer","representation":"gaussian-surface","geometry":"mesh","visible":true,"drawCount":1848,"vertexCount":310,"groupCount":14,"instanceCount":2,"stlTriangleCount":3696,"visuals":["gaussian-surface-mesh"],"surfaceParams":{"quality":"custom","resolution":1,"smoothness":1,"radiusOffset":0,"traceOnly":false,"tryUseGpu":false,"visuals":["gaussian-surface-mesh"]}}]}
+browser_report_reference=tests/expected/molstar-reference/viewer-auto-gaussian-huge.browser-report.json
+exact_diff_required=true
+obj_reference=tests/expected/molstar-reference/viewer-auto-gaussian-huge.obj
+obj_export_basename=viewer-auto-gaussian-huge
+obj_mtllib=viewer-auto-gaussian-huge.mtl
+stl_reference=tests/expected/molstar-reference/viewer-auto-gaussian-huge.stl
+obj_byte_len=59185
+obj_fnv1a64=112fbe684ecaa05b
+obj_vertex_count=620
+obj_normal_count=620
+obj_face_count=1232
+obj_bounds_min=-7.711,-4.139,-2.934
+obj_bounds_max=7.711,4.158,3.107
+mtl_byte_len=92
+mtl_fnv1a64=15e8c103adb9a995
+mtl_material_count=1
+stl_byte_len=184884
+stl_fnv1a64=53e3a64cbc888356
+stl_facet_count=3696

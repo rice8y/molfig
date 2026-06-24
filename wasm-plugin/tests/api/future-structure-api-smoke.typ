@@ -9,7 +9,7 @@
 
 #let base = molfig.info(cif, format: "cif", alt-loc: "A", assembly: "asymmetric-unit")
 #let biological = molfig.info(cif, format: "cif", alt-loc: "A", assembly: "1")
-#let binary = molfig.info(bcif, format: "bcif", alt-loc: "A", assembly: "1")
+#let binary = molfig.info(bcif, format: "bcif", representation: "cartoon", alt-loc: "A", assembly: "1")
 
 #assert.eq(base.atom_count, 13)
 #assert.eq(base.alt_locs, ("A", "B"))

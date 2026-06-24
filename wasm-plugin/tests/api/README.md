@@ -8,6 +8,7 @@ typst compile --root . wasm-plugin/tests/api/module-split-contract-smoke.typ /tm
 typst compile --root . wasm-plugin/tests/api/maquette-config-passthrough-smoke.typ /tmp/molfig-maquette-config-passthrough-smoke.pdf
 typst compile --root . wasm-plugin/tests/api/future-structure-api-smoke.typ /tmp/molfig-future-structure-api-smoke.pdf
 typst compile --root . wasm-plugin/tests/api/future-rich-api-smoke.typ /tmp/molfig-future-rich-api-smoke.pdf
+typst compile --root . wasm-plugin/tests/api/9r1o-reference-smoke.typ /tmp/molfig-9r1o-reference-smoke.pdf
 ```
 
 The smoke tests cover:
@@ -20,7 +21,10 @@ The smoke tests cover:
 - stable render-object shape for module-split work;
 - assembly selection;
 - alternate-location selection;
-- `spacefill`, `ball-and-stick`, `cartoon`, and `ribbon` representations;
+- Viewer `default`, `auto`, `cartoon`, and illustrative `spacefill` presets,
+  plus `polymer-cartoon`, `ball-and-stick`, `ribbon`, and `backbone` representations;
+- ViewerAuto pLDDT annotation dispatch from text CIF and BinaryCIF, plus an
+  explicitly selected QMEAN color theme;
 - Mol*-style `selected_visuals` and `realized_visuals` representation
   metadata;
 - cartoon tuning options: `helix-profile`, `round-cap`, and
@@ -28,6 +32,8 @@ The smoke tests cover:
 - semantic render-object metadata for `dashed-tube` and `sheet` geometry;
 - `render(...)` and `render-object(...)` maquette integration;
 - maquette config passthrough for mesh metadata and render-object content.
+- self-contained 9R1O PDB to OBJ generation and maquette rendering without a
+  checked-in reference OBJ.
 
 Negative smoke tests are intentionally expected to fail compilation:
 
