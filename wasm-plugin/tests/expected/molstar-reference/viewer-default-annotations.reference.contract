@@ -1,0 +1,20 @@
+# Mol* Viewer default annotation-preset dispatch contract.
+fixture=tests/fixtures/cif/viewer-default-annotations.cif
+options={"format":"cif","representation":"default","assembly":"asymmetric-unit","sphere-detail":1,"quality":"custom","export-primitives-quality":"low","obj-basename":"viewer-default-annotations","operator-metadata":false,"obj-groups":false}
+input_format=cif
+molstar_reference_commit=1b8117d3f10f7c978aabb5a0d3d47370635aefe4
+browser_report_reference=tests/expected/molstar-reference/viewer-default-annotations.browser-report.json
+exact_diff_required=true
+obj_reference=tests/expected/molstar-reference/viewer-default-annotations.obj
+obj_export_basename=viewer-default-annotations
+obj_mtllib=viewer-default-annotations.mtl
+obj_byte_len=14117
+obj_fnv1a64=a63debec6342ea3b
+obj_vertex_count=168
+obj_normal_count=168
+obj_face_count=320
+obj_bounds_min=-8.6300,-3.4000,-3.4000
+obj_bounds_max=10.1700,3.4000,3.4000
+mtl_byte_len=359
+mtl_fnv1a64=d698992db462ddce
+mtl_material_count=4

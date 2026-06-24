@@ -385,6 +385,7 @@ fn export_context_geometry(molecule: &Molecule) -> Cow<'_, Molecule> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn prefix_export_facet_context_json(
     context: &str,
     flat_context: &str,
@@ -395,7 +396,7 @@ fn prefix_export_facet_context_json(
     center_source: &str,
     visible_sphere_report: Option<&str>,
 ) -> String {
-    let sparse_slot_has_face = context.contains("\"found\":true") && stl_facet % 3 == 0;
+    let sparse_slot_has_face = context.contains("\"found\":true") && stl_facet.is_multiple_of(3);
     let box_json = export_box
         .map(|context| context.json_fields())
         .unwrap_or_else(|| {

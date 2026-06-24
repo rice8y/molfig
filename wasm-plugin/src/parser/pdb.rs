@@ -1,7 +1,7 @@
 use crate::chemistry::{infer_element_from_name, normalize_element};
 use crate::model::{
     Assembly, AssemblyGenerator, Atom, AtomSiteAnisotrop, AtomSiteColumnPresence, Bond,
-    BondMetadata, EntityIndexMap, Molecule, SecondaryRange, SourceData, Transform, Vec3,
+    BondMetadata, Entity, EntityIndexMap, Molecule, SecondaryRange, SourceData, Transform, Vec3,
 };
 
 use super::normalize_type_symbol_molstar;
@@ -113,6 +113,8 @@ pub(crate) fn parse_pdb(text: &str) -> Result<Molecule, String> {
     if atoms.is_empty() {
         return Err("no ATOM/HETATM records found in PDB input".to_string());
     }
+    let entities = assign_pdb_entities(text, &mut atoms);
+    let entity_index = EntityIndexMap::from_entities(&entities, &[], &[]);
     Ok(Molecule {
         source_data: SourceData::pdb(pdb_id(text)),
         atom_site_columns: AtomSiteColumnPresence {
@@ -134,8 +136,8 @@ pub(crate) fn parse_pdb(text: &str) -> Result<Molecule, String> {
         selected_assembly: None,
         helices,
         sheets,
-        entities: Vec::new(),
-        entity_index: EntityIndexMap::default(),
+        entities,
+        entity_index,
         entity_polymers: Vec::new(),
         entity_poly_seq: Vec::new(),
         pdbx_entity_branch: Vec::new(),
@@ -148,10 +150,13 @@ pub(crate) fn parse_pdb(text: &str) -> Result<Molecule, String> {
         ihm_model_group_links: Vec::new(),
         ihm_cross_link_restraints: Vec::new(),
         struct_asym: Vec::new(),
+        pdbx_molecule: Vec::new(),
         chemical_components: Vec::new(),
         chemical_component_atoms: Vec::new(),
         chemical_component_bonds: Vec::new(),
         chemical_component_angles: Vec::new(),
+        quality_assessment: Default::default(),
+        partial_charges: Default::default(),
         rings: Vec::new(),
         resonance: Default::default(),
         derived_aromatic_bonds: Default::default(),
@@ -183,6 +188,135 @@ fn pdb_id(text: &str) -> String {
         .map(|line| line[62..66].trim().to_string())
         .filter(|id| !id.is_empty())
         .unwrap_or_default()
+}
+
+fn assign_pdb_entities(text: &str, atoms: &mut [Atom]) -> Vec<Entity> {
+    let compounds = pdb_compound_chains(text);
+    let hetero_names = pdb_hetero_names(text);
+    let mut entities = Vec::<Entity>::new();
+    let mut polymer_entities = Vec::<(String, String)>::new();
+    let mut non_polymer_entities = Vec::<(String, String)>::new();
+    let mut water_entity = None::<String>;
+
+    for (chain, description) in compounds {
+        let description = if description.is_empty() {
+            format!("Polymer {}", entities.len() + 1)
+        } else {
+            description
+        };
+        let id = next_pdb_entity(&mut entities, "polymer", description);
+        polymer_entities.push((chain, id));
+    }
+
+    for atom in atoms {
+        let entity_type = crate::model::entity_type_from_component(&atom.residue);
+        let id = if entity_type == "polymer" {
+            if let Some((_, id)) = polymer_entities
+                .iter()
+                .find(|(chain, _)| chain == &atom.auth_chain)
+            {
+                id.clone()
+            } else {
+                let id = next_pdb_entity(
+                    &mut entities,
+                    "polymer",
+                    format!("Polymer {}", polymer_entities.len() + 1),
+                );
+                polymer_entities.push((atom.auth_chain.clone(), id.clone()));
+                id
+            }
+        } else if entity_type == "water" {
+            if let Some(id) = &water_entity {
+                id.clone()
+            } else {
+                let id = next_pdb_entity(&mut entities, "water", "Water".to_string());
+                water_entity = Some(id.clone());
+                id
+            }
+        } else if let Some((_, id)) = non_polymer_entities
+            .iter()
+            .find(|(component, _)| component == &atom.residue)
+        {
+            id.clone()
+        } else {
+            let description = hetero_names
+                .iter()
+                .find(|(component, _)| component == &atom.residue)
+                .map(|(_, description)| description.clone())
+                .unwrap_or_else(|| atom.residue.clone());
+            let id = next_pdb_entity(&mut entities, entity_type, description);
+            non_polymer_entities.push((atom.residue.clone(), id.clone()));
+            id
+        };
+        atom.entity_id = id;
+    }
+
+    entities
+}
+
+fn next_pdb_entity(entities: &mut Vec<Entity>, type_name: &str, description: String) -> String {
+    let id = (entities.len() + 1).to_string();
+    entities.push(Entity {
+        id: id.clone(),
+        type_name: type_name.to_string(),
+        description,
+    });
+    id
+}
+
+fn pdb_compound_chains(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut current_field = "";
+    let mut description = String::new();
+    for line in text.lines().filter(|line| line.starts_with("COMPND")) {
+        let payload = field(line, 10, 80).trim();
+        let (field_name, value) = payload
+            .split_once(':')
+            .map(|(name, value)| (name.trim(), value.trim()))
+            .unwrap_or((current_field, payload));
+        current_field = field_name;
+        let value = value.trim_end_matches(';').trim();
+        match current_field {
+            "MOL_ID" => description.clear(),
+            "MOLECULE" => {
+                if !description.is_empty() && !value.is_empty() {
+                    description.push(' ');
+                }
+                description.push_str(value);
+            }
+            "CHAIN" => {
+                out.extend(
+                    value
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|chain| !chain.is_empty())
+                        .map(|chain| (chain.to_string(), description.clone())),
+                );
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+fn pdb_hetero_names(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::<(String, String)>::new();
+    for line in text.lines().filter(|line| line.starts_with("HETNAM")) {
+        let component = field(line, 11, 14).trim();
+        let description = field(line, 15, 80).trim();
+        if component.is_empty() {
+            continue;
+        }
+        if let Some((_, existing)) = out.iter_mut().find(|(id, _)| id == component) {
+            if !existing.is_empty() && !description.is_empty() {
+                existing.push(' ');
+            }
+            existing.push_str(description);
+        } else {
+            out.push((component.to_string(), description.to_string()));
+        }
+    }
+    out
 }
 
 fn parse_pdb_secondary(text: &str) -> (Vec<SecondaryRange>, Vec<SecondaryRange>) {
@@ -357,7 +491,10 @@ fn parse_pdb_assemblies(text: &str) -> Vec<Assembly> {
 }
 
 fn field(line: &str, start: usize, end: usize) -> &str {
-    line.get(start..end).unwrap_or("")
+    if start >= line.len() {
+        return "";
+    }
+    line.get(start..end.min(line.len())).unwrap_or("")
 }
 
 fn parse_f32(value: &str) -> Result<f32, String> {

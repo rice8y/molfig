@@ -6,7 +6,13 @@
 #let product-name = "Molfig"
 #let package-import = "@preview/" + package-id + ":" + package-version
 #let rendered-9r1o-pdf = "../examples/9R1O.pdf"
-#let example-9r1o-code = "#import \"" + package-import + "\"\n\n#set page(width: auto, height: auto, margin: 0mm)\n\n// Uses structural data from RCSB PDB / wwPDB.\n// PDB ID: 9R1O\n// PDB DOI: https://doi.org/10.2210/pdb9R1O/pdb\n// PDB archive data files are available under CC0 1.0.\n#let pdb = path(\"9R1O.pdb\")\n\n#molfig.render(\n  pdb,\n  format: \"pdb\",\n  representation: \"molstar\",\n  assembly: \"1\",\n  mesh-format: \"obj\",\n  quality: \"high\",\n  center: true,\n  output-format: \"png\",\n  config: (\n    azimuth: 35,\n    elevation: 24,\n    background: \"\",\n  ),\n)"
+#let rendered-representations-pdf = "../examples/representations.pdf"
+#let rendered-render-object-pdf = "../examples/render-object.pdf"
+#let rendered-theme-pdf = "../examples/theme.pdf"
+#let rendered-exports-pdf = "../examples/exports.pdf"
+#let rendered-metadata-pdf = "../examples/metadata.pdf"
+#let rendered-draft-pdf = "../examples/9M1U.pdf"
+#let example-9r1o-code = "#import \"" + package-import + "\"\n\n#set page(width: auto, height: auto, margin: 0mm)\n\n// Uses structural data from RCSB PDB / wwPDB.\n// PDB ID: 9R1O\n// PDB DOI: https://doi.org/10.2210/pdb9R1O/pdb\n// PDB archive data files are available under CC0 1.0.\n#let pdb = path(\"9R1O.pdb\")\n\n#molfig.render(\n  pdb,\n  format: \"pdb\",\n  representation: \"cartoon\",\n  assembly: \"1\",\n  mesh-format: \"obj\",\n  quality: \"high\",\n  center: true,\n  output-format: \"svg\",\n  config: (\n    azimuth: 35,\n    elevation: 24,\n    background: \"\",\n  ),\n)"
 
 #let ic(value) = raw(str(value))
 
@@ -80,6 +86,32 @@
 
 #let pipeline-table(rows) = table3([Stage], [Control], [Role], rows)
 
+#let example-result(
+  pdf,
+  caption,
+  pdb-id,
+  doi,
+  width: 100%,
+  source-note: none,
+) = [
+  #figure(
+    block(
+      width: width,
+      inset: 4pt,
+      stroke: luma(82%),
+      radius: 2pt,
+      image(pdf, width: 100%),
+    ),
+    caption: caption,
+  )
+
+  #info-alert[
+    Structural data source: RCSB PDB / wwPDB, PDB ID #ic(pdb-id),
+    #link(doi)[#doi]. PDB archive data files are available under CC0 1.0.
+    #if source-note != none { source-note }
+  ]
+]
+
 #show: mantys(
   ..manifest,
   title: [#product-name],
@@ -147,11 +179,11 @@ geometry, and OBJ/STL export behavior; see
    maquette, not an interactive viewer snapshot.
 
 #warning-alert[
-  #product-name is not a Mol\* WebGL renderer. It intentionally excludes
-  interactive WebGL surface and volume visuals such as molecular surface,
-  gaussian surface, gaussian volume, and density maps. Its public contract is
-  structure parsing, static mesh generation, OBJ/STL/PLY export, and maquette
-  rendering.
+  #product-name generates static meshes and is not a Mol\* WebGL renderer.
+  #ic("representation: \"surface\"") computes the Mol\* molecular-surface
+  field and marching-cubes mesh on the CPU. Gaussian volume and density-map
+  visuals remain outside the static export contract; ViewerAuto's Huge and
+  Gigantic Gaussian surfaces are likewise generated on the CPU.
 ]
 
 == Rendering Pipeline <sec:pipeline>
@@ -179,28 +211,13 @@ The following example renders PDB entry 9R1O. Put #ic("9R1O.typ") and
   #ic("molfig.render").
 ]
 
-Compile the example first when you want to refresh the figure embedded below:
-
-#shell("typst compile 9R1O.typ")
-
-#figure(
-  block(
-    width: 100%,
-    inset: 4pt,
-    stroke: luma(82%),
-    radius: 2pt,
-    image(rendered-9r1o-pdf, width: 100%),
-  ),
-  caption: [
-    9R1O rendered by #product-name from PDB entry 9R1O.
-  ],
-) <fig:9r1o-example>
-
-#info-alert[
-  Structural data source: RCSB PDB / wwPDB, PDB ID #ic("9R1O"),
-  DOI #ic("10.2210/pdb9R1O/pdb"). PDB archive data files are distributed under
-  CC0 1.0.
-]
+#example-result(
+  rendered-9r1o-pdf,
+  [RCSB PDB entry 9R1O rendered by #product-name with the complete Quickstart settings.],
+  "9R1O",
+  "https://doi.org/10.2210/pdb9R1O/pdb",
+  source-note: [Deposition authors: Petrenas, Ozga, Chubb, and Woolfson.],
+)
 
 == Reading Structure Files <sec:reading-files>
 
@@ -209,14 +226,29 @@ file-backed structure data. The path is resolved by Typst relative to the caller
 file, and #product-name reads it internally with #ic("encoding: none"). This keeps
 package calls concise while preserving the caller-side project boundary.
 
-#code("typ", "#let pdb = path(\"entry.pdb\")\n#let cif = path(\"entry.cif\")\n#let bcif = path(\"entry.bcif\")", title: "Typst 0.15+ path inputs")
+#table3([Format], [Typst 0.15+ path], [Real structure used in this manual], (
+  row3([PDB], [#ic("path(\"9R1O.pdb\")")], [RCSB PDB entry 9R1O.]),
+  row3([mmCIF], [#ic("path(\"1FYY.cif\")")], [RCSB PDB entry 1FYY.]),
+  row3([BinaryCIF], [#ic("path(\"1CRN.bcif\")")], [RCSB PDB entry 1CRN.]),
+))
 
 For documents that must also compile on Typst 0.14, read the file in the caller
 document and pass the resulting bytes. Always use #ic("encoding: none") for
 external structure files; it preserves BinaryCIF bytes and avoids Unicode
 decoding loss for fixed-width PDB columns.
 
-#code("typ", "#let pdb = read(\"entry.pdb\", encoding: none)\n#let cif = read(\"entry.cif\", encoding: none)\n#let bcif = read(\"entry.bcif\", encoding: none)", title: "Typst 0.14-compatible byte inputs")
+For the same files, use #ic("read(\"9R1O.pdb\", encoding: none)"),
+#ic("read(\"1FYY.cif\", encoding: none)"), or
+#ic("read(\"1CRN.bcif\", encoding: none)"). Complete, rendered examples for
+all three archive formats appear below.
+
+#info-alert[
+  These files are RCSB PDB / wwPDB entries 9R1O, 1FYY, and 1CRN. Their PDB
+  DOIs are #link("https://doi.org/10.2210/pdb9R1O/pdb")[9R1O],
+  #link("https://doi.org/10.2210/pdb1FYY/pdb")[1FYY], and
+  #link("https://doi.org/10.2210/pdb1CRN/pdb")[1CRN]. PDB archive data files
+  are available under CC0 1.0.
+]
 
 Passing a Typst string is accepted for small inline examples. A string is treated
 as inline molecular text, not as a file path.
@@ -224,8 +256,8 @@ as inline molecular text, not as a file path.
 == Choosing The First Options <sec:first-options>
 
 #table3([Question], [Recommended setting], [Why], (
-  row3([I want the closest default molecular figure.], [#ic("representation: \"molstar\"")], [Uses the package's Mol\*-style static visual set.]),
-  row3([I want a protein cartoon.], [#ic("representation: \"cartoon\"")], [Uses polymer trace, secondary structure, nucleotide, and gap visuals.]),
+  row3([I want the Mol\* Viewer Cartoon style.], [#ic("representation: \"cartoon\"")], [Uses the Viewer Quick Styles Cartoon preset: polymer cartoon plus atomic detail for ligands and other non-polymer components.]),
+  row3([I want only the polymer cartoon.], [#ic("representation: \"polymer-cartoon\"")], [Uses the Mol\* Cartoon provider defaults: polymer trace, nucleotide ring, and polymer gap visuals.]),
   row3([I need readable geometry diffs.], [#ic("mesh-format: \"obj\"")], [OBJ is text and preserves face groups.]),
   row3([I need compact triangle bytes.], [#ic("mesh-format: \"stl\"")], [STL is binary and simple for downstream mesh tools.]),
   row3([I want text mesh plus group metadata.], [#ic("mesh-format: \"ply\"")], [PLY is ASCII and carries package-owned group comments/properties.]),
@@ -257,7 +289,7 @@ render, render-object, export, and metadata commands unless noted otherwise.
   arg("data"),
   arg("format", _value: values.value.with("auto")),
   arg("mesh-format", _value: values.value.with("obj")),
-  arg("representation", _value: values.value.with("molstar")),
+  arg("representation", _value: values.value.with("default")),
   arg("config", _value: values.value.with((:))),
   arg("width", _value: values.value.with("auto")),
   arg("height", _value: values.value.with("auto")),
@@ -296,8 +328,11 @@ render, render-object, export, and metadata commands unless noted otherwise.
   ]
 
   #argument("output-format", choices: ("png", "svg"), default: "png", command: "render")[
-    Output format forwarded to maquette. PNG is the safest default for complex
-    meshes.
+    Output format forwarded to maquette. PNG uses maquette's Z-buffer raster
+    output and is recommended for high-poly meshes, large assemblies, and
+    spacefill representations. SVG preserves vector geometry, but is intended
+    for small to moderately sized meshes because each visible mesh face
+    contributes SVG content that Typst must parse.
   ]
 ]
 
@@ -315,7 +350,18 @@ render, render-object, export, and metadata commands unless noted otherwise.
   ))
 ]
 
-#code("typ", "#let object = molfig.render-object(\n  data,\n  format: \"mmcif\",\n  representation: \"cartoon\",\n  mesh-format: \"ply\",\n  assembly: \"1\",\n  config: (azimuth: 30, elevation: 18, background: \"\"),\n  width: 54mm,\n)\n\n#object.content\n\n#metadata((\n  mesh-format: object.mesh_format,\n  atom-count: object.info.atom_count,\n))", title: "Render and inspect in one call")
+#code("typ", "#import \"" + package-import + "\"\n\n// Structural data: RCSB PDB / wwPDB entry 1FYY.\n// https://doi.org/10.2210/pdb1FYY/pdb (CC0 1.0)\n#let object = molfig.render-object(\n  read(\"1FYY.cif\", encoding: none),\n  format: \"cif\",\n  representation: \"cartoon\",\n  mesh-format: \"obj\",\n  assembly: \"1\",\n  config: (azimuth: 30, elevation: 18, background: \"\"),\n  width: 92mm,\n  height: 64mm,\n  output-format: \"svg\",\n)\n\n#object.content\n#align(center)[\n  Atoms: #object.info.atom_count \\\n  Mesh format: #object.mesh_format\n]", title: "Render and inspect RCSB PDB entry 1FYY", file: "render-object.typ")
+
+#example-result(
+  rendered-render-object-pdf,
+  [The complete #ic("render-object") example for 1FYY, including values read from its returned metadata.],
+  "1FYY",
+  "https://doi.org/10.2210/pdb1FYY/pdb",
+  width: 74%,
+  source-note: [Primary citation: Volk et al., #emph[Biochemistry] 39,
+    14040--14053 (2000),
+    #link("https://doi.org/10.1021/bi001669l")[doi:10.1021/bi001669l].],
+)
 
 == Export Commands <sec:export-commands>
 
@@ -340,7 +386,18 @@ render, render-object, export, and metadata commands unless noted otherwise.
   pinned Mol\* geo-export extension does not provide PLY output.
 ]
 
-#code("typ", "#let data = read(\"structure.bcif\", encoding: none)\n\n#let obj = molfig.to-obj(data, format: \"bcif\", representation: \"molstar\")\n#let mtl = molfig.to-mtl(data, format: \"bcif\", representation: \"molstar\")\n#let stl = molfig.to-stl(data, format: \"bcif\", representation: \"molstar\")\n#let ply = molfig.to-ply(data, format: \"bcif\", representation: \"molstar\")", title: "Direct mesh export")
+#code("typ", "#import \"" + package-import + "\"\n\n// Structural data: RCSB PDB / wwPDB entry 1CRN.\n// https://doi.org/10.2210/pdb1CRN/pdb (CC0 1.0)\n#let data = read(\"1CRN.bcif\", encoding: none)\n#let obj = molfig.to-obj(data, format: \"bcif\", representation: \"cartoon\")\n#let mtl = molfig.to-mtl(data, format: \"bcif\", representation: \"cartoon\")\n#let stl = molfig.to-stl(data, format: \"bcif\", representation: \"cartoon\")\n#let ply = molfig.to-ply(data, format: \"bcif\", representation: \"cartoon\")\n\n#table(\n  columns: (1fr, 1fr),\n  table.header([*Export*], [*Generated bytes*]),\n  [OBJ], [#obj.len()],\n  [MTL], [#mtl.len()],\n  [STL], [#stl.len()],\n  [PLY], [#ply.len()],\n)", title: "Export RCSB PDB entry 1CRN to every mesh format", file: "exports.typ")
+
+#example-result(
+  rendered-exports-pdf,
+  [Byte lengths produced by the complete 1CRN export example.],
+  "1CRN",
+  "https://doi.org/10.2210/pdb1CRN/pdb",
+  width: 64%,
+  source-note: [Primary citation: Teeter, #emph[Proceedings of the National
+    Academy of Sciences] 81, 6014--6018 (1984),
+    #link("https://doi.org/10.1073/pnas.81.19.6014")[doi:10.1073/pnas.81.19.6014].],
+)
 
 == Metadata Commands <sec:metadata-commands>
 
@@ -397,13 +454,99 @@ are static mesh formats.
 == Representation Selection <sec:representation-options>
 
 #option-table((
-  option-row("representation", ic("\"molstar\""), [Static Mol\*-style default visual set. Also accepts #ic("\"default\"") and #ic("\"auto\"").]),
-  option-row("color-theme", ic("\"chain-id\""), [Assigns Mol\* Chain ID colors to polymer chains and preserves element-symbol colors used by atomic visuals. #ic("\"chain-id\"") is the currently supported theme. Color is serialized through OBJ material references and the companion MTL output. STL and the current PLY output do not carry these colors, so themed document rendering requires #ic("mesh-format: \"obj\"").]),
+  option-row("representation", ic("\"default\""), [Uses the Mol\* Viewer configured default preset, falling back to its automatic size-dependent selection. Use #ic("\"cartoon\"") to pin Viewer Quick Styles Cartoon or #ic("\"polymer-cartoon\"") for the standalone Cartoon provider.]),
+  option-row("color-theme", ic("\"chain-id\""), [Selects #ic("\"chain-id\""), #ic("\"element-symbol\""), #ic("\"entity-id\""), #ic("\"operator-name\""), #ic("\"plddt-confidence\""), #ic("\"qmean-score\""), or #ic("\"sb-ncbr-partial-charges\""). Color is serialized through OBJ material references and the companion MTL output. STL and the current PLY output do not carry these colors, so themed document rendering requires #ic("mesh-format: \"obj\"").]),
+  option-row("theme", ic("(:)"), [Applies Mol\* Viewer preset overrides. Supported keys are #ic("globalName"), #ic("carbonColor"), and #ic("symmetryColor"). An empty dictionary preserves the preset's normal component-specific themes.]),
 ))
+
+The representation names follow Mol\* Viewer Quick Styles rather than only the
+low-level representation registry. In the Viewer, Cartoon applies the
+#ic("polymer-and-ligand") preset; it is not limited to the standalone Cartoon
+provider. Spacefill is available as #ic("\"spacefill\""). Surface corresponds
+to Mol\*'s #ic("molecular-surface") preset and is selected with
+#ic("representation: \"surface\""). It uses the #ic("all") component,
+#ic("entity-id") colors with the water override, a physical size theme,
+#ic("probeRadius: 1.4"), #ic("probePositions: 36"), and the Mol\* CPU
+marching-cubes path.
+
+#info-alert[
+  #ic("\"default\"") and #ic("\"auto\"") preserve their distinct public
+  names and follow Mol\* size routing for Small, Medium, and Large structures.
+  #ic("\"default\"") first applies the Viewer annotation priority described
+  below, while #ic("\"auto\"") requests size routing directly. Huge and
+  Gigantic structures use Mol\*'s CPU Gaussian-surface branches, including
+  trace-only and structure-level routing where prescribed by ViewerAuto.
+]
+
+=== Cartoon, Spacefill, And Surface <sec:representation-comparison>
+
+The same structure and camera make the geometry difference explicit. Cartoon
+emphasizes polymer topology and secondary structure; Spacefill exposes atomic
+packing with van der Waals spheres; Surface shows the continuous
+solvent-excluded molecular envelope computed by the CPU molecular-surface path.
+
+#code("typ", "#import \"" + package-import + "\"\n\n// Structural data: RCSB PDB / wwPDB entry 1CRN.\n// https://doi.org/10.2210/pdb1CRN/pdb (CC0 1.0)\n#let data = read(\"1CRN.bcif\", encoding: none)\n#let view(rep) = molfig.render(\n  data, format: \"bcif\", representation: rep,\n  mesh-format: \"obj\", quality: \"high\", center: true,\n  output-format: \"svg\",\n  config: (azimuth: 35, elevation: 24, background: \"\"),\n  width: 55mm, height: 50mm,\n)\n#let panel(label, rep) = [\n  #align(center, strong(label))\n  #block(\n    width: 55mm, height: 50mm, clip: true,\n    align(center + horizon, scale(\n      x: 165%, y: 165%, origin: center + horizon, view(rep),\n    )),\n  )\n]\n#grid(\n  columns: (1fr, 1fr, 1fr), column-gutter: 2mm,\n  panel([Cartoon], \"cartoon\"),\n  panel([Spacefill], \"spacefill\"),\n  panel([Surface], \"surface\"),\n)", title: "Compare three representations of RCSB PDB entry 1CRN", file: "representations.typ")
+
+#example-result(
+  rendered-representations-pdf,
+  [RCSB PDB entry 1CRN rendered with identical camera and quality settings as Cartoon, Spacefill, and Surface.],
+  "1CRN",
+  "https://doi.org/10.2210/pdb1CRN/pdb",
+  source-note: [Primary citation: Teeter, #emph[Proceedings of the National
+    Academy of Sciences] 81, 6014--6018 (1984),
+    #link("https://doi.org/10.1073/pnas.81.19.6014")[doi:10.1073/pnas.81.19.6014].],
+)
+
+=== Viewer Theme Overrides <sec:viewer-theme-overrides>
+
+Mol\* Viewer presets accept a #ic("theme") dictionary through their common
+representation parameters. #ic("globalName") replaces the provider theme for each component,
+#ic("carbonColor") controls carbon atoms in ball-and-stick ligand,
+non-standard, and branched components, and #ic("symmetryColor") replaces the
+polymer theme only for non-assembly crystallographic symmetry units. Water,
+ion, and lipid components keep element-symbol carbon coloring as in the Viewer
+preset.
+
+#code("typ", "#import \"" + package-import + "\"\n\n// Structural data: RCSB PDB / wwPDB entry 1CRN.\n// https://doi.org/10.2210/pdb1CRN/pdb (CC0 1.0)\n#molfig.render(\n  read(\"1CRN.bcif\", encoding: none),\n  format: \"bcif\",\n  representation: \"cartoon\",\n  theme: (\n    globalName: \"element-symbol\",\n    carbonColor: \"chain-id\",\n    symmetryColor: \"operator-name\",\n  ),\n  mesh-format: \"obj\",\n  quality: \"high\",\n  center: true,\n  output-format: \"svg\",\n  config: (azimuth: 35, elevation: 24, background: \"\"),\n  width: 92mm,\n  height: 68mm,\n)", title: "Apply Mol* Viewer theme overrides to RCSB PDB entry 1CRN", file: "theme.typ")
+
+#example-result(
+  rendered-theme-pdf,
+  [RCSB PDB entry 1CRN with the Viewer theme override example applied.],
+  "1CRN",
+  "https://doi.org/10.2210/pdb1CRN/pdb",
+  width: 66%,
+  source-note: [Primary citation: Teeter (1984),
+    #link("https://doi.org/10.1073/pnas.81.19.6014")[doi:10.1073/pnas.81.19.6014].],
+)
+
+=== Annotation Color Rules <sec:annotation-colors>
+
+With #ic("representation: \"default\""), Molfig follows the ViewerAuto preset
+and selects the first applicable embedded annotation in this order:
+#ic("plddt-confidence"), #ic("qmean-score"), then
+#ic("sb-ncbr-partial-charges"). These names may also be selected explicitly
+with #arg[color-theme]. #ic("representation: \"auto\"") skips annotation
+selection and performs only structure-size routing.
+
+#table3([Theme], [Value rule], [Colors], (
+  row3([#ic("plddt-confidence")], [#ic("score <= 50"), #ic("<= 70"), #ic("<= 90"), then #ic("> 90")], [#color-code("#ff7d45"), #color-code("#ffdb13"), #color-code("#65cbf3"), #color-code("#0053d6")]),
+  row3([#ic("qmean-score")], [Values through #ic("0.5") use orange; #ic("0.5..1.0") interpolates to blue.], [#color-code("#ff5000") to #color-code("#025afd")]),
+  row3([#ic("sb-ncbr-partial-charges")], [Residue charge: negative through zero to positive.], [#color-code("#ff0000") through #color-code("#ffffff") to #color-code("#0000ff")]),
+))
+
+Missing pLDDT values fall back to #ic("B_iso_or_equiv"). Unavailable or
+negative quality scores use #color-code("#aaaaaa"). Missing partial-charge
+locations use #color-code("#66ff00"), matching the Mol\* provider. Annotation
+colors require OBJ when rendered through maquette because STL and the current
+PLY schema have no material color channel.
 
 === Chain ID Color Rules <sec:chain-id-colors>
 
 The #ic("\"chain-id\"") theme follows these rules:
+
+The Viewer #ic("\"spacefill\"") preset intentionally overrides this option
+with Mol\* illustrative entity-id coloring. It lightens carbon colors in CIE
+Lab and forces water entities to #color-code("#ff0d0d").
 
 - For atomic models, the author chain id (#ic("auth_asym_id")) is used when it
   is present; otherwise the label chain id (#ic("label_asym_id")) is used. PDB
@@ -459,10 +602,13 @@ maquette material map currently forwards RGB colors only; it does not forward
 these MTL opacity values.
 
 #table4([Value], [Best for], [Main geometry], [Notes], (
-  row4([#ic("\"molstar\"")], [General figures], [Polymer traces, element spheres, bonds, carbohydrates, nucleotides, gaps], [Closest default for static Molfig output.]),
-  row4([#ic("\"spacefill\"")], [Atomic packing], [Atom spheres], [Uses atom radii and #arg[radius-scale].]),
+  row4([#ic("\"default\"")], [Viewer-compatible automatic figures], [ViewerAuto annotation theme, then size-selected geometry], [Uses pLDDT, QMEAN, or SB-NCBR partial charges when applicable, with Gaussian surfaces for Huge/Gigantic structures.]),
+  row4([#ic("\"auto\"")], [Explicit automatic selection], [Atomic detail, polymer Cartoon, or a Gaussian surface according to structure size], [Huge/Gigantic routing follows the ViewerAuto size thresholds.]),
+  row4([#ic("\"cartoon\"")], [General figures], [Polymer Cartoon plus atomic detail for non-polymers and carbohydrate visuals], [Pins the Mol\* Viewer Quick Styles Cartoon preset.]),
+  row4([#ic("\"polymer-cartoon\"")], [Polymer-only figures], [Polymer trace, nucleotide ring, and polymer gap visuals], [Standalone Mol\* Cartoon provider defaults.]),
+  row4([#ic("\"spacefill\"")], [Atomic packing], [Atom spheres], [Viewer Quick Styles Spacefill with illustrative entity-id colors and water override.]),
+  row4([#ic("\"surface\"")], [Solvent-accessible shape], [CPU molecular-surface field and marching-cubes mesh], [Viewer Quick Styles Surface with entity-id colors and red water override.]),
   row4([#ic("\"ball-and-stick\"")], [Ligands and small molecules], [Atom spheres plus bond cylinders], [Good for local chemistry and explicit bond inspection.]),
-  row4([#ic("\"cartoon\"")], [Proteins and nucleic acids], [Polymer trace tubes/sheets/ribbons, nucleotide visuals, gaps], [Uses secondary structure and polymer trace metadata.]),
   row4([#ic("\"ribbon\"")], [Backbone shape], [Ribbon-oriented polymer geometry], [Good for broad fold visibility.]),
   row4([#ic("\"backbone\"")], [Trace-only views], [Backbone cylinders and spheres], [Lower-detail alternative for polymer paths.]),
 ))
@@ -517,7 +663,9 @@ STL has no material channel, and Molfig's current PLY schema contains no vertex
 or face color properties. Consequently, maquette renders STL and PLY without
 the selected color theme.
 
-#code("typ", "#let cif = read(\"structure.cif\", encoding: none)\n\n#molfig.render(\n  cif,\n  format: \"cif\",\n  representation: \"ball-and-stick\",\n  mesh-format: \"ply\",\n  config: (\n    azimuth: 45,\n    elevation: 20,\n    background: \"\",\n  ),\n  width: 75mm,\n)", title: "Camera and background passthrough")
+The complete 1FYY #ic("render-object") example above demonstrates camera,
+background, dimensions, and raster-output passthrough, and its rendered result
+shows the exact content returned in #ic("object.content").
 
 Molfig does not validate maquette-specific keys. Unknown keys are passed to
 maquette, so maquette remains the source of truth for camera and renderer
@@ -553,16 +701,25 @@ Mol\*-parity layer grows, but the current major groups are:
   row3([#ic("structure")], [dictionary], [Model/Structure/Unit counts, boundary, conformation, segments, ranges, and lookup3d summary.]),
   row3([#ic("secondary_structure")], [dictionary], [Helix and sheet ranges.]),
   row3([#ic("representation")], [dictionary], [Selected and realized visual names.]),
-  row3([#ic("render_objects")], [array], [Semantic render-object spans with geometry type, visual, chain, residue range, group id, and value-cell style counts.]),
+  row3([#ic("render_objects")], [array], [Semantic render-object spans with geometry type, visual, chain, residue range, group id, component, representation tag/order, provider color-theme metadata, and value-cell style counts.]),
   row3([#ic("bond_metadata")], [dictionary], [Counts by bond source and flags such as struct_conn, index_pair, chem_comp, aromatic, and resonance.]),
   row3([#ic("bounds")], [dictionary], [Expanded coordinate bounds before export centering.]),
 ))
 
-#code("typ", "#let pdb = read(\"9R1O.pdb\", encoding: none)\n#let meta = molfig.info(pdb, format: \"pdb\", assembly: \"1\")\n\nAtoms: #meta.atom_count\nBonds: #meta.bond_count\nAssembly: #meta.assembly.id", title: "Basic 9R1O metadata query")
+#code("typ", "#import \"" + package-import + "\"\n\n// Structural data: RCSB PDB / wwPDB entry 9R1O.\n// https://doi.org/10.2210/pdb9R1O/pdb (CC0 1.0)\n#let meta = molfig.info(\n  read(\"9R1O.pdb\", encoding: none),\n  format: \"pdb\",\n  representation: \"cartoon\",\n  assembly: \"1\",\n  alt-loc: \"highest-occupancy\",\n)\n\n#table(\n  columns: (1fr, 1fr),\n  table.header([*Property*], [*Value*]),\n  [Atoms], [#meta.atom_count],\n  [Bonds], [#meta.bond_count],\n  [Assembly], [#meta.assembly.id],\n  [Units], [#meta.structure.unit_count],\n  [Realized visuals], [#meta.representation.realized_visuals.join(\", \")],\n)", title: "Inspect the Model/Structure/Unit result for RCSB PDB entry 9R1O", file: "metadata.typ")
 
-Render-object metadata is useful when validating what Molfig actually built:
+#example-result(
+  rendered-metadata-pdf,
+  [Selected structure and representation metadata produced from PDB entry 9R1O.],
+  "9R1O",
+  "https://doi.org/10.2210/pdb9R1O/pdb",
+  width: 68%,
+  source-note: [Deposition authors: Petrenas, Ozga, Chubb, and Woolfson.],
+)
 
-#code("typ", "#let meta = molfig.info(\n  data,\n  format: \"mmcif\",\n  representation: \"cartoon\",\n  assembly: \"1\",\n  alt-loc: \"highest-occupancy\",\n)\n\n#assert(meta.render_objects.any(object => object.secondary_type == \"helix\"))\n#assert(meta.representation.realized_visuals.contains(\"polymer-trace\"))", title: "Representation assertions")
+The #ic("render_objects") array can be used for stronger assertions, for
+example checking that at least one object has #ic("secondary_type == \"helix\"")
+or that #ic("realized_visuals") contains #ic("polymer-trace").
 
 == Assembly And Unit Metadata <sec:assembly-metadata>
 
@@ -591,34 +748,49 @@ operator metadata should be inspected through @cmd:info[-] or
 
 == A Publication Figure <sec:publication-figure>
 
-#code("typ", "#import \"" + package-import + "\"\n\n#let pdb = read(\"9R1O.pdb\", encoding: none)\n\n#figure(\n  molfig.render(\n    pdb,\n    format: \"pdb\",\n    representation: \"molstar\",\n    assembly: \"1\",\n    mesh-format: \"obj\",\n    quality: \"high\",\n    center: true,\n    config: (\n      azimuth: 35,\n      elevation: 24,\n      background: \"\",\n    ),\n    width: 90mm,\n  ),\n  caption: [9R1O rendered with #product-name.],\n)", title: "Pinned 9R1O figure")
+The complete 9R1O Quickstart is the publication-oriented example: it pins the
+PDB entry, biological assembly, representation, tessellation quality, camera,
+centering, mesh format, and raster output. Its code, rendered PDF, and source
+attribution are shown together in the Quickstart section.
 
 == A Lightweight Draft Figure <sec:draft-figure>
 
-#code("typ", "#molfig.render(\n  read(\"data/large-assembly.bcif\", encoding: none),\n  format: \"bcif\",\n  representation: \"molstar\",\n  assembly: \"1\",\n  quality: \"auto\",\n  mesh-format: \"stl\",\n  config: (background: \"\"),\n  width: 60mm,\n)", title: "Large assembly draft")
+#code("typ", "#import \"" + package-import + "\"\n\n// Structural data: RCSB PDB / wwPDB entry 9M1U.\n// https://doi.org/10.2210/pdb9M1U/pdb (CC0 1.0)\n#molfig.render(\n  read(\"9M1U.pdb\", encoding: none),\n  format: \"pdb\",\n  representation: \"cartoon\",\n  assembly: \"1\",\n  quality: \"auto\",\n  mesh-format: \"obj\",\n  output-format: \"png\",\n  config: (elevation: 45, background: \"\"),\n)", title: "Draft a large real assembly from RCSB PDB entry 9M1U", file: "9M1U.typ")
+
+#example-result(
+  rendered-draft-pdf,
+  [RCSB PDB entry 9M1U rendered as a Cartoon with automatic quality and PNG output.],
+  "9M1U",
+  "https://doi.org/10.2210/pdb9M1U/pdb",
+  width: 68%,
+  source-note: [Structure authors: Liu, Zhang, and Xu. Primary citation:
+    Zhang et al. (2026), #emph[The EMBO Journal],
+    #link("https://doi.org/10.1038/s44318-026-00823-y")[doi:10.1038/s44318-026-00823-y].],
+)
 
 == Export For External Tools <sec:external-export>
 
-#code("typ", "#let data = read(\"data/ligand.cif\", encoding: none)\n#let mesh = molfig.to-obj(\n  data,\n  format: \"cif\",\n  representation: \"ball-and-stick\",\n  assembly: \"asymmetric-unit\",\n  center: false,\n)\n#let material = molfig.to-mtl(data, format: \"cif\", representation: \"ball-and-stick\")", title: "OBJ and MTL bytes")
-
-Typst does not write arbitrary files from a package call. Use these byte values
-inside Typst document logic, or expose them through a workflow that is allowed
-to write artifacts outside Typst.
+The complete 1CRN export example in the Export Commands section generates OBJ,
+MTL, STL, and PLY bytes from a real BinaryCIF entry and typesets their measured
+sizes. Typst does not write arbitrary files from a package call; use those byte
+values inside document logic or expose them through a workflow that may write
+artifacts outside Typst.
 
 = Troubleshooting <sec:troubleshooting>
 
 #table3([Symptom], [Likely cause], [Action], (
-  row3([Plugin says Molfig expects bytes.], [The input was not bytes, inline string data, or a Typst 0.15+ path value.], [Pass #ic("path(\"entry.pdb\")") on Typst 0.15+, or pass #ic("read(\"entry.pdb\", encoding: none)") for Typst 0.14-compatible documents.]),
+  row3([Plugin says Molfig expects bytes.], [The input was not bytes, inline string data, or a Typst 0.15+ path value.], [For example, pass #ic("path(\"9R1O.pdb\")") on Typst 0.15+, or #ic("read(\"9R1O.pdb\", encoding: none)") for Typst 0.14-compatible documents.]),
   row3([BinaryCIF reports a missing encoding.], [The file is not valid BinaryCIF MessagePack or a column lacks required BinaryCIF encoding metadata.], [Check the source file and use #ic("format: \"cif\"") only for text CIF/mmCIF.]),
   row3([The figure is sparse or missing chains.], [Assembly or altLoc selection filtered the structure.], [Inspect #ic("molfig.info(...).assemblies") and #ic("alt_locs_info"), then set #arg[assembly] and #arg[alt-loc] explicitly.]),
   row3([A large assembly compiles slowly.], [High tessellation or too much assembly geometry.], [Use #ic("quality: \"auto\""), lower #arg[radial-segments] and #arg[linear-segments], or choose a lighter representation.]),
+  row3([SVG parsing fails with #ic("\"nodes limit reached\"").], [A high-poly mesh, commonly a large spacefill representation, expands to more SVG nodes than Typst accepts.], [Use #ic("output-format: \"png\""). If vector output is required, reduce #arg[quality], #arg[sphere-detail], #arg[linear-segments], or #arg[radial-segments].]),
   row3([Bonds are missing.], [The file lacks explicit bonds and inference is disabled.], [Leave #arg[infer-bonds] as #value(true), or inspect #ic("bond_metadata") to see available bond sources.]),
   row3([Rendered view differs from external OBJ inspection.], [Different camera, centering, or mesh format.], [Pin #arg[center], #arg[mesh-format], maquette #arg[config], and representation quality options.]),
 ))
 
-For reproducible documents, avoid implicit choices:
-
-#code("typ", "#let pdb = read(\"9R1O.pdb\", encoding: none)\n\n#molfig.render(\n  pdb,\n  format: \"pdb\",\n  representation: \"molstar\",\n  assembly: \"1\",\n  mesh-format: \"obj\",\n  quality: \"custom\",\n  sphere-detail: 2,\n  linear-segments: 8,\n  radial-segments: 16,\n  center: true,\n  config: (azimuth: 35, elevation: 24, background: \"\"),\n)", title: "Reproducible 9R1O option block")
+For reproducible documents, follow the 9R1O Quickstart pattern: use a stable
+archive identifier, explicit input and mesh formats, a pinned representation,
+assembly, quality, centering policy, output format, and camera.
 
 = License And Notices <sec:license-notices>
 

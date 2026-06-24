@@ -1,12 +1,14 @@
 use crate::chemistry::{infer_bonds, infer_element_from_name, normalize_element};
 use crate::model::{
-    Assembly, AssemblyGenerator, Atom, AtomSiteAnisotrop, AtomSiteColumnPresence, Bond, BondFlags,
-    BondMetadata, BondSource, ChemicalComponent, ChemicalComponentAngle, ChemicalComponentAtom,
-    ChemicalComponentBond, CoarseGaussian, CoarseSphere, Entity, EntityIndexMap, EntityPoly,
-    EntityPolySeq, Entry, Experiment, GlobalModelTransform, IhmCrossLinkRestraint, IhmModelGroup,
-    IhmModelGroupLink, IhmModelList, IndexPairBonds, Molecule, PdbxBranchScheme, PdbxEntityBranch,
-    PdbxEntityBranchLink, PdbxNonpolyScheme, PdbxPolySeqScheme, SecondaryRange, SourceCategory,
-    SourceData, StructAsym, StructConnMetadata, Transform, Vec3,
+    entity_type_from_component, Assembly, AssemblyGenerator, Atom, AtomSiteAnisotrop,
+    AtomSiteColumnPresence, Bond, BondFlags, BondMetadata, BondSource, ChemicalComponent,
+    ChemicalComponentAngle, ChemicalComponentAtom, ChemicalComponentBond, CoarseGaussian,
+    CoarseSphere, Entity, EntityIndexMap, EntityPoly, EntityPolySeq, Entry, Experiment,
+    GlobalModelTransform, IhmCrossLinkRestraint, IhmModelGroup, IhmModelGroupLink, IhmModelList,
+    IndexPairBonds, Molecule, PartialChargeData, PdbxBranchScheme, PdbxEntityBranch,
+    PdbxEntityBranchLink, PdbxMolecule, PdbxNonpolyScheme, PdbxPolySeqScheme,
+    QualityAssessmentData, SecondaryRange, SourceCategory, SourceData, StructAsym,
+    StructConnMetadata, Transform, Vec3,
 };
 use crate::options::{InputFormat, MeshOptions};
 
@@ -175,6 +177,7 @@ fn parse_cif_tables(tables: &[CifTable], source_data: SourceData) -> Result<Mole
     let ihm_model_group_links = parse_cif_ihm_model_group_links(tables);
     let ihm_cross_link_restraints = parse_cif_ihm_cross_link_restraints(tables);
     let struct_asym = parse_cif_struct_asym(tables);
+    let pdbx_molecule = parse_cif_pdbx_molecule(tables);
 
     for table in tables {
         if table.name != "atom_site" {
@@ -318,8 +321,15 @@ fn parse_cif_tables(tables: &[CifTable], source_data: SourceData) -> Result<Mole
     let coarse_spheres = parse_ihm_sphere_obj_site(tables);
     let coarse_gaussians = parse_ihm_gaussian_obj_site(tables);
     entities = complete_cif_entities(entities, &atoms, &coarse_spheres, &coarse_gaussians)?;
-    let entity_index =
-        EntityIndexMap::from_entities(&entities, &entity_polymers, &pdbx_entity_branch);
+    let entity_index = EntityIndexMap::from_mmcif(
+        &entities,
+        &entity_polymers,
+        &pdbx_entity_branch,
+        &atoms,
+        &chemical_components,
+        &struct_asym,
+        &pdbx_molecule,
+    );
 
     if atoms.is_empty() && coarse_spheres.is_empty() && coarse_gaussians.is_empty() {
         return Err("no _atom_site loop found in mmCIF input".to_string());
@@ -353,6 +363,8 @@ fn parse_cif_tables(tables: &[CifTable], source_data: SourceData) -> Result<Mole
         true,
     );
     let global_model_transform = parse_global_model_transform(tables);
+    let quality_assessment = parse_cif_quality_assessment(tables, &atoms);
+    let partial_charges = parse_cif_partial_charges(tables, &atoms);
 
     let (helices, struct_conf_sheets) = secondary_ranges_from_struct_conf(tables);
     let mut sheets = struct_conf_sheets;
@@ -389,15 +401,168 @@ fn parse_cif_tables(tables: &[CifTable], source_data: SourceData) -> Result<Mole
         ihm_model_group_links,
         ihm_cross_link_restraints,
         struct_asym,
+        pdbx_molecule,
         chemical_components,
         chemical_component_atoms,
         chemical_component_bonds,
         chemical_component_angles,
+        quality_assessment,
+        partial_charges,
         rings: Vec::new(),
         resonance: Default::default(),
         derived_aromatic_bonds: Default::default(),
         derived_resonance_bonds: Default::default(),
     })
+}
+
+fn parse_cif_quality_assessment(tables: &[CifTable], atoms: &[Atom]) -> QualityAssessmentData {
+    let Some(metric) = tables.iter().find(|table| table.name == "ma_qa_metric") else {
+        return QualityAssessmentData::default();
+    };
+    let Some(local) = tables
+        .iter()
+        .find(|table| table.name == "ma_qa_metric_local")
+    else {
+        return QualityAssessmentData::default();
+    };
+    let (Some(metric_id), Some(metric_mode), Some(metric_name), Some(_ordinal_id)) = (
+        metric.header_index("_ma_qa_metric.id"),
+        metric.header_index("_ma_qa_metric.mode"),
+        metric.header_index("_ma_qa_metric.name"),
+        local.header_index("_ma_qa_metric_local.ordinal_id"),
+    ) else {
+        return QualityAssessmentData::default();
+    };
+
+    let mut plddt_metric = None;
+    let mut qmean_metric = None;
+    for row in metric.row_indices() {
+        if !metric
+            .clean_at(row, metric_mode)
+            .eq_ignore_ascii_case("local")
+        {
+            continue;
+        }
+        let name = metric.clean_at(row, metric_name).to_ascii_lowercase();
+        let id = metric.i32_at(row, metric_id);
+        if plddt_metric.is_none() && name.contains("plddt") {
+            plddt_metric = id;
+        }
+        if qmean_metric.is_none() && name.contains("qmean") {
+            qmean_metric = id;
+        }
+    }
+
+    let mut data = QualityAssessmentData {
+        has_plddt_metric: plddt_metric.is_some(),
+        has_qmean_metric: qmean_metric.is_some(),
+        plddt: vec![None; atoms.len()],
+        qmean: vec![None; atoms.len()],
+    };
+    let (Some(model_id), Some(asym_id), Some(seq_id), Some(local_metric_id), Some(metric_value)) = (
+        local.header_index("_ma_qa_metric_local.model_id"),
+        local.header_index("_ma_qa_metric_local.label_asym_id"),
+        local.header_index("_ma_qa_metric_local.label_seq_id"),
+        local.header_index("_ma_qa_metric_local.metric_id"),
+        local.header_index("_ma_qa_metric_local.metric_value"),
+    ) else {
+        return data;
+    };
+
+    for row in local.row_indices() {
+        let Some(metric_id) = local.i32_at(row, local_metric_id) else {
+            continue;
+        };
+        let target = if Some(metric_id) == plddt_metric {
+            &mut data.plddt
+        } else if Some(metric_id) == qmean_metric {
+            &mut data.qmean
+        } else {
+            continue;
+        };
+        let Some(value) = local.float_at(row, metric_value) else {
+            continue;
+        };
+        let model = local.i32_at(row, model_id).unwrap_or(1);
+        let chain = local.clean_at(row, asym_id);
+        let sequence = local.clean_at(row, seq_id);
+        for (atom_index, atom) in atoms.iter().enumerate() {
+            if atom.model_num == model && atom.chain == chain && atom.residue_seq == sequence {
+                target[atom_index] = Some(value);
+            }
+        }
+    }
+    data
+}
+
+fn parse_cif_partial_charges(tables: &[CifTable], atoms: &[Atom]) -> PartialChargeData {
+    let has_atom_site = tables.iter().any(|table| table.name == "atom_site");
+    let meta = tables
+        .iter()
+        .find(|table| table.name == "sb_ncbr_partial_atomic_charges_meta");
+    let charges = tables
+        .iter()
+        .find(|table| table.name == "sb_ncbr_partial_atomic_charges");
+    let is_applicable = has_atom_site && meta.is_some() && charges.is_some();
+    let mut data = PartialChargeData {
+        is_applicable,
+        atom: vec![None; atoms.len()],
+        residue: vec![None; atoms.len()],
+        ..PartialChargeData::default()
+    };
+    let Some(charges) = charges else {
+        return data;
+    };
+    let (Some(type_id), Some(atom_id), Some(charge)) = (
+        charges.header_index("_sb_ncbr_partial_atomic_charges.type_id"),
+        charges.header_index("_sb_ncbr_partial_atomic_charges.atom_id"),
+        charges.header_index("_sb_ncbr_partial_atomic_charges.charge"),
+    ) else {
+        return data;
+    };
+
+    let mut by_atom_id = std::collections::BTreeMap::<usize, f32>::new();
+    for row in charges.row_indices() {
+        if charges.i32_at(row, type_id) != Some(1) {
+            continue;
+        }
+        let (Some(id), Some(value)) = (
+            charges.usize_at(row, atom_id),
+            charges.float_at(row, charge),
+        ) else {
+            continue;
+        };
+        by_atom_id.insert(id, value);
+        data.max_absolute_atom_charge = data.max_absolute_atom_charge.max(value.abs());
+    }
+    if by_atom_id.is_empty() {
+        return data;
+    }
+
+    let mut residue_sums = std::collections::BTreeMap::<(i32, String, String, String), f32>::new();
+    for atom in atoms {
+        let key = (
+            atom.model_num,
+            atom.chain.clone(),
+            atom.residue_seq.clone(),
+            atom.insertion_code.clone(),
+        );
+        *residue_sums.entry(key).or_default() += by_atom_id.get(&atom.id).copied().unwrap_or(0.0);
+    }
+    for (atom_index, atom) in atoms.iter().enumerate() {
+        data.atom[atom_index] = by_atom_id.get(&atom.id).copied();
+        let key = (
+            atom.model_num,
+            atom.chain.clone(),
+            atom.residue_seq.clone(),
+            atom.insertion_code.clone(),
+        );
+        data.residue[atom_index] = residue_sums.get(&key).copied();
+    }
+    data.max_absolute_residue_charge = residue_sums
+        .values()
+        .fold(0.0f32, |max, value| max.max(value.abs()));
+    data
 }
 
 fn cif_data_block_name(tokens: &[String]) -> String {
@@ -446,11 +611,19 @@ fn complete_cif_entities(
     }
 
     if entities.is_empty() {
-        entities.extend(referenced.iter().map(|id| Entity {
-            id: id.clone(),
-            type_name: "unknown".to_string(),
-            description: String::new(),
-        }));
+        for id in &referenced {
+            let type_name = atoms
+                .iter()
+                .find(|atom| atom.entity_id == *id)
+                .map(|atom| entity_type_from_component(&atom.residue))
+                .unwrap_or("polymer")
+                .to_string();
+            entities.push(Entity {
+                id: id.clone(),
+                type_name,
+                description: String::new(),
+            });
+        }
         return Ok(entities);
     }
 
@@ -1242,6 +1415,26 @@ fn parse_cif_struct_asym(tables: &[CifTable]) -> Vec<StructAsym> {
                     .map(|col| table.clean_at(row, col))
                     .unwrap_or_default(),
             })
+        })
+        .collect()
+}
+
+fn parse_cif_pdbx_molecule(tables: &[CifTable]) -> Vec<PdbxMolecule> {
+    let Some(table) = tables.iter().find(|table| table.name == "pdbx_molecule") else {
+        return Vec::new();
+    };
+    let (Some(asym_id_col), Some(prd_id_col)) = (
+        table.header_index("_pdbx_molecule.asym_id"),
+        table.header_index("_pdbx_molecule.prd_id"),
+    ) else {
+        return Vec::new();
+    };
+    table
+        .row_indices()
+        .filter_map(|row| {
+            let asym_id = table.clean_at(row, asym_id_col);
+            let prd_id = table.clean_at(row, prd_id_col);
+            (!asym_id.is_empty() && !prd_id.is_empty()).then_some(PdbxMolecule { asym_id, prd_id })
         })
         .collect()
 }

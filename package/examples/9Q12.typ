@@ -12,7 +12,7 @@
 #molfig.render(
     data, 
     format: "pdb", 
-    representation: "molstar", 
+    representation: "cartoon",
     mesh-format: "obj", 
     quality: "high", 
     output-format: "svg",

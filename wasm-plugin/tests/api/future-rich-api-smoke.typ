@@ -1,5 +1,5 @@
 // Smoke test for the richer public Typst API: BinaryCIF, assembly selection,
-// altLoc policy, cartoon/ribbon representations, and render-object output.
+// altLoc policy, polymer-cartoon/ribbon representations, and render-object output.
 
 #import "../../../package/lib.typ" as molfig
 
@@ -14,6 +14,7 @@
 #let rich-info = molfig.info(
   rich-cif,
   format: "mmcif",
+  representation: "cartoon",
   assembly: "1",
   alt-loc: "highest-occupancy",
 )
@@ -27,10 +28,10 @@
 #assert(rich-info.render_objects.any(object => object.polymer_trace.sec_struc_first))
 #assert(rich-info.render_objects.any(object => object.geometry_type == "sheet" and object.secondary_type == "sheet"))
 
-#let cartoon = molfig.to-ply(
+#let polymer-cartoon = molfig.to-ply(
   rich-cif,
   format: "mmcif",
-  representation: "cartoon",
+  representation: "polymer-cartoon",
   assembly: "1",
   alt-loc: "highest-occupancy",
   sphere-detail: 1,
@@ -51,13 +52,13 @@
   sphere-detail: 1,
 )
 
-#assert(str(cartoon).starts-with("ply\n"))
+#assert(str(polymer-cartoon).starts-with("ply\n"))
 #assert(str(ribbon).contains("\nv "))
 
 #let object = molfig.render-object(
   rich-cif,
   format: "mmcif",
-  representation: "cartoon",
+  representation: "polymer-cartoon",
   mesh-format: "ply",
   assembly: "1",
   alt-loc: "highest-occupancy",
@@ -82,7 +83,7 @@
 #assert.eq(object.mesh, molfig.to-ply(
   rich-cif,
   format: "mmcif",
-  representation: "cartoon",
+  representation: "polymer-cartoon",
   assembly: "1",
   alt-loc: "highest-occupancy",
   helix-profile: "rounded",
@@ -97,7 +98,7 @@
 #assert(object.info.render_objects.any(item => item.value_cell.u_group_count >= 1))
 #assert(object.info.render_objects.any(item => item.valueCell.uGroupCount >= 1))
 #assert(object.info.render_objects.any(item => item.valueCell.drawCount > 0))
-#assert.eq(object.info.representation.name, "cartoon")
+#assert.eq(object.info.representation.name, "polymer-cartoon")
 #assert.eq(object.info.representation.selected_visuals, ("polymer-trace",))
 #assert.eq(object.info.representation.realized_visuals, ("polymer-trace",))
 #assert(object.info.representation.selected_visuals.any(visual => visual == "polymer-trace"))

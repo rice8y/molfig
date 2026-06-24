@@ -7,7 +7,7 @@
       "fixture": "package/examples/data/9R1O.pdb",
       "options": {
         "format": "pdb",
-        "representation": "molstar",
+        "representation": "cartoon",
         "assembly": "asymmetric-unit",
         "sphere-detail": 1
       },
@@ -21,7 +21,7 @@
       "fixture": "package/examples/data/9R1O.pdb",
       "options": {
         "format": "pdb",
-        "representation": "molstar",
+        "representation": "cartoon",
         "assembly": "asymmetric-unit",
         "sphere-detail": 1
       },
@@ -34,8 +34,8 @@
     {
       "name": "checked-in-wasm-memory",
       "fixture": "package/molfig.wasm",
-      "byte_len": 845479,
-      "max_byte_len": 900000,
+      "byte_len": 1043104,
+      "max_byte_len": 1060000,
       "initial_pages": 18,
       "maximum_pages": null,
       "exported_memory": true

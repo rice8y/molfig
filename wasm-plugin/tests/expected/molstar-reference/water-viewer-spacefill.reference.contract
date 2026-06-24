@@ -1,0 +1,28 @@
+# Mol* Viewer Quick Styles Spacefill reference for the small water fixture.
+# The real Chrome/WebGL harness applies the illustrative preset and exports
+# spheres with primitive quality low, matching molfig quality=custom/detail=1.
+fixture=tests/fixtures/cif/water.cif
+options={"format":"cif","representation":"spacefill","assembly":"asymmetric-unit","sphere-detail":1,"quality":"custom","export-primitives-quality":"low","obj-basename":"water-spacefill","operator-metadata":false,"obj-groups":false}
+input_format=cif
+molstar_reference_commit=1b8117d3f10f7c978aabb5a0d3d47370635aefe4
+obj_reference=tests/expected/molstar-reference/water-viewer-spacefill.obj
+obj_export_basename=water-spacefill
+obj_mtllib=water-spacefill.mtl
+obj_byte_len=10600
+obj_fnv1a64=81456ee1808d60c9
+obj_vertex_count=126
+obj_normal_count=126
+obj_face_count=240
+obj_bounds_min=-1.6900,-1.6860,-1.4830
+obj_bounds_max=1.8870,1.8610,1.5570
+mtl_byte_len=89
+mtl_fnv1a64=64b584b658918a9f
+mtl_material_count=1
+stl_reference=tests/expected/molstar-reference/water-viewer-spacefill.stl
+stl_byte_len=36084
+stl_fnv1a64=4a6f1fe987bf4da7
+stl_facet_count=720
+stl_header=Exported from Mol* 5.9.0
+stl_nonzero_attribute_count=0
+stl_bounds_min=-1.69007957,-1.68614948,-1.48335695
+stl_bounds_max=1.88692033,1.86085045,1.55664301

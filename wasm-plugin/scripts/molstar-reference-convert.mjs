@@ -14,12 +14,18 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const workspaceDir = path.resolve(rootDir, '..');
 const molstarReferenceCommit = '1b8117d3f10f7c978aabb5a0d3d47370635aefe4';
 const defaultManifest = 'tests/expected/molstar-reference/reference-fixtures.txt';
 const defaultArtifactManifest = 'tests/expected/reference-artifacts.json';
 const defaultMolstarDir = 'artifacts/molstar';
 const defaultOutDir = 'tests/expected/molstar-reference';
 const defaultFormats = ['json', 'obj', 'stl'];
+const viewerDefaultPreset = 'preset-structure-representation-viewer-auto';
+// Mol* Viewer Quick Styles maps Cartoon to the Polymer & Ligand preset.
+const viewerCartoonPreset = 'polymer-and-ligand';
+const polymerCartoonPreset = 'polymer-cartoon';
+const viewerSpacefillPreset = 'illustrative';
 
 function printHelp() {
   console.log(`Usage: node scripts/molstar-reference-convert.mjs [options]
@@ -196,7 +202,10 @@ function requireValue(argv, index, flag) {
 }
 
 function resolveRepoPath(value) {
-  return path.resolve(rootDir, value);
+  const cratePath = path.resolve(rootDir, value);
+  if (existsSync(cratePath)) return cratePath;
+  const workspacePath = path.resolve(workspaceDir, value);
+  return existsSync(workspacePath) ? workspacePath : cratePath;
 }
 
 function resolveInputPath(value) {
@@ -386,6 +395,7 @@ function inspectMolstar(args) {
   const requiredFiles = [
     'mol-plugin/headless-plugin-context.js',
     'mol-plugin/spec.js',
+    'mol-plugin/config.js',
     'mol-plugin-state/actions/file.js',
     'mol-plugin-state/transforms/data.js',
     'mol-plugin-state/transforms/model.js',
@@ -409,6 +419,7 @@ function inspectMolstar(args) {
   const sourceFiles = [
     'mol-plugin/headless-plugin-context.ts',
     'mol-plugin/spec.ts',
+    'mol-plugin/config.ts',
     'mol-plugin-state/actions/file.ts',
     'mol-plugin-state/transforms/data.ts',
     'mol-plugin-state/transforms/model.ts',
@@ -701,6 +712,20 @@ function validateExistingReferences(args, plan, artifactManifest) {
     const artifactMetadata = validateArtifactManifestEntry(args, item, artifactManifest);
     if (artifactMetadata) matchedArtifactContracts.add(artifactMetadata.contract);
     const stats = {};
+    const requiredReferences = [];
+    if (item.formats.includes('obj') || item.formats.includes('json')) {
+      requiredReferences.push(contractValue(item, 'obj_reference'));
+    }
+    if (item.formats.includes('stl') || item.formats.includes('json')) {
+      requiredReferences.push(contractValue(item, 'stl_reference'));
+    }
+    const missingReferences = [...new Set(requiredReferences)]
+      .filter(reference => !existsSync(resolveRepoPath(reference)));
+    if (missingReferences.length > 0) {
+      console.log(`- SKIP ${item.stem}: private reference artifacts are absent (${missingReferences.join(', ')})`);
+      checked++;
+      continue;
+    }
 
     if (item.formats.includes('obj') || item.formats.includes('json')) {
       stats.obj = validateObjReference(item, artifactMetadata);
@@ -927,7 +952,7 @@ function validateJsonReference(item, stats) {
   assertEqual(parsed.molstar_reference_commit, molstarReferenceCommit, `${item.contractPath}: JSON molstar_reference_commit`);
   assertEqual(parsed.fixture, item.fixture, `${item.contractPath}: JSON fixture`);
   assertEqual(parsed.options?.format, item.inputFormat, `${item.contractPath}: JSON options.format`);
-  assertEqual(parsed.options?.representation, String(item.options.representation ?? 'molstar'), `${item.contractPath}: JSON options.representation`);
+  assertEqual(parsed.options?.representation, String(item.options.representation ?? 'cartoon'), `${item.contractPath}: JSON options.representation`);
   assertEqual(parsed.options?.assembly, String(item.options.assembly ?? '1'), `${item.contractPath}: JSON options.assembly`);
   assertEqual(parsed.options?.['sphere-detail'], Number(item.options['sphere-detail'] ?? item.options.sphere_detail ?? 1), `${item.contractPath}: JSON options.sphere-detail`);
   assertEqual(parsed.source?.obj, item.objReference, `${item.contractPath}: JSON source.obj`);
@@ -1054,10 +1079,12 @@ function loadMolstar(args, inspection) {
     externalModules: { gl, pngjs, 'jpeg-js': jpegjs },
     ...fromCommonjs('mol-plugin/headless-plugin-context.js'),
     ...fromCommonjs('mol-plugin/spec.js'),
+    ...fromCommonjs('mol-plugin/config.js'),
     ...fromCommonjs('mol-plugin-state/actions/file.js'),
     ...fromCommonjs('mol-plugin-state/transforms/data.js'),
     ...fromCommonjs('mol-plugin-state/transforms/model.js'),
     ...fromCommonjs('mol-plugin-state/transforms/representation.js'),
+    ...fromCommonjs('apps/viewer/presets.js'),
     ...fromCommonjs('extensions/geo-export/obj-exporter.js'),
     ...fromCommonjs('extensions/geo-export/stl-exporter.js'),
     structureVisualCommon: fromCommonjs('mol-repr/structure/visual/util/common.js'),
@@ -1309,6 +1336,7 @@ async function runConversion(args, plan, molstar) {
 
     try {
       await plugin.init();
+      plugin.builders.structure.representation.registerPreset(molstar.ViewerAutoPreset);
       configureSceneRuntime(plugin, molstar, item.options);
       await buildScene(plugin, molstar, item);
       const renderObjects = plugin.canvas3d?.getRenderObjects() ?? [];
@@ -1371,12 +1399,21 @@ function configureExporter(exporter, options) {
 }
 
 function configureSceneRuntime(plugin, molstar, options) {
+  configureDefaultRepresentationPreset(plugin, molstar, options);
   if (optionBoolean(options, 'force-cylinder-impostors', 'force_cylinder_impostors')) {
     assertCylinderImpostorRuntimeSupport(plugin);
     forceCylinderImpostorSupport(molstar);
   } else {
     restoreCylinderImpostorSupport(molstar);
   }
+}
+
+function configureDefaultRepresentationPreset(plugin, molstar, options) {
+  const preset = representationPresetFor(options);
+  const config = molstar.PluginConfig?.Structure;
+  if (!preset || !config) return;
+  plugin.config.set(config.DefaultRepresentationPreset, preset);
+  plugin.config.set(config.DefaultRepresentationPresetParams, representationPresetParams(options));
 }
 
 function assertCylinderImpostorRuntimeSupport(plugin) {
@@ -1452,7 +1489,7 @@ async function buildScene(plugin, molstar, item) {
     .apply(molstar.ModelFromTrajectory, { modelIndex: Number(item.options['model-index'] ?? 0) })
     .apply(molstar.StructureFromModel, { type: structureType(item.options.assembly) });
 
-  const preset = item.options['representation-preset'] ?? item.options.representation_preset;
+  const preset = representationPresetFor(item.options);
   if (preset !== undefined) {
     const structureRef = structure.ref;
     await update.commit();
@@ -1582,26 +1619,60 @@ function hierarchyPresetParams(options) {
   };
   const modelIndex = options['model-index'] ?? options.model_index;
   if (modelIndex !== undefined) params.model = { modelIndex: Number(modelIndex) };
-  const representationPreset = options['representation-preset'] ?? options.representation_preset;
+  const representationPreset = representationPresetFor(options);
   if (representationPreset !== undefined) params.representationPreset = String(representationPreset);
   const representationParams = representationPresetParams(options);
   if (Object.keys(representationParams).length > 0) params.representationPresetParams = representationParams;
   return params;
 }
 
+function normalizeRepresentation(value) {
+  return String(value ?? 'default').trim().toLowerCase().replace(/_/g, '-');
+}
+
+function representationPresetFor(options) {
+  const explicit = options['representation-preset'] ?? options.representation_preset;
+  if (explicit !== undefined) return String(explicit);
+
+  switch (normalizeRepresentation(options.representation)) {
+    case 'default':
+      return viewerDefaultPreset;
+    case 'auto':
+      return 'auto';
+    case 'cartoon':
+      return viewerCartoonPreset;
+    case 'polymer-cartoon':
+      return polymerCartoonPreset;
+    case 'spacefill':
+      return viewerSpacefillPreset;
+    default:
+      return undefined;
+  }
+}
+
+function validateRepresentationRouting() {
+  assertEqual(representationPresetFor({}), viewerDefaultPreset, 'omitted representation preset routing');
+  assertEqual(representationPresetFor({ representation: 'default' }), viewerDefaultPreset, 'default preset routing');
+  assertEqual(representationPresetFor({ representation: 'auto' }), 'auto', 'auto preset routing');
+  assertEqual(representationPresetFor({ representation: 'cartoon' }), viewerCartoonPreset, 'cartoon preset routing');
+  assertEqual(representationPresetFor({ representation: 'polymer-cartoon' }), polymerCartoonPreset, 'polymer-cartoon preset routing');
+  assertEqual(representationPresetFor({ representation: 'polymer_cartoon' }), polymerCartoonPreset, 'polymer_cartoon compatibility preset routing');
+  assertEqual(representationPresetFor({ representation: 'spacefill' }), viewerSpacefillPreset, 'spacefill preset routing');
+  assertEqual(
+    representationPresetFor({ representation: 'cartoon', 'representation-preset': 'empty' }),
+    'empty',
+    'explicit representation preset precedence',
+  );
+}
+
 function applyRepresentations(structure, molstar, options) {
-  const representation = String(options.representation ?? 'molstar');
+  const representation = normalizeRepresentation(options.representation);
   if (representation === 'spacefill') {
     addRepresentation(structure, molstar, 'all', 'spacefill', 'element-symbol', options);
   } else if (representation === 'ball-and-stick') {
     addRepresentation(structure, molstar, 'all', 'ball-and-stick', 'element-symbol', options);
   } else {
     addRepresentation(structure, molstar, 'polymer', 'cartoon', 'sequence-id', options);
-    if (representation === 'molstar') {
-      addRepresentation(structure, molstar, 'ligand', 'ball-and-stick', 'element-symbol', options);
-      addRepresentation(structure, molstar, 'branched', 'ball-and-stick', 'element-symbol', options);
-      addRepresentation(structure, molstar, 'ion', 'spacefill', 'element-symbol', options);
-    }
   }
 }
 
@@ -1727,7 +1798,7 @@ function referenceSummaryJson(item, stats) {
   "fixture": ${JSON.stringify(item.fixture)},
   "options": {
     "format": ${JSON.stringify(item.inputFormat)},
-    "representation": ${JSON.stringify(String(item.options.representation ?? 'molstar'))},
+    "representation": ${JSON.stringify(String(item.options.representation ?? 'cartoon'))},
     "assembly": ${JSON.stringify(String(item.options.assembly ?? '1'))},
     "sphere-detail": ${Number(item.options['sphere-detail'] ?? item.options.sphere_detail ?? 1)}
   },
@@ -1995,6 +2066,7 @@ async function main() {
     return;
   }
 
+  validateRepresentationRouting();
   const plan = loadPlan(args);
   const artifactManifest = loadArtifactManifest(args);
   const inspection = inspectMolstar(args);

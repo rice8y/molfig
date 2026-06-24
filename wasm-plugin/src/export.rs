@@ -544,6 +544,7 @@ fn molstar_triangle_normal(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_export_stl_face_context_json(
     mesh: &Mesh,
     face: &crate::model::Face,

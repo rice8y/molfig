@@ -5,24 +5,24 @@
 # resolve omitted quality as auto, which selects the high preset for this
 # fixture instead of treating the explicit sphere-detail knob as custom quality.
 fixture=package/examples/data/9R1O.pdb
-options={"format":"pdb","representation":"molstar","assembly":"asymmetric-unit","sphere-detail":1}
+options={"format":"pdb","representation":"cartoon","assembly":"asymmetric-unit","sphere-detail":1}
 format=ascii-ply
 vertex_count=99954
 face_count=166128
 group_count=391
-byte_len=6565523
-fnv1a64=603d37a9d40248e1
-bounds_min=-29.1142,-19.8507,-29.4881
-bounds_max=26.8738,19.6338,30.3192
+byte_len=6565772
+fnv1a64=7e3006715cd118e0
+bounds_min=-29.0439,-19.9300,-29.4249
+bounds_max=26.9441,19.5545,30.3824
 sample_start_vertex_index=0
-sample_start_vertex=11.5213,-9.9602,-20.9110
+sample_start_vertex=11.5917,-10.0395,-20.8478
 sample_quarter_vertex_index=24988
-sample_quarter_vertex=21.5264,-0.9589,4.6937
+sample_quarter_vertex=21.5967,-1.0382,4.7569
 sample_middle_vertex_index=49977
-sample_middle_vertex=-20.9918,12.8525,-18.3328
+sample_middle_vertex=-20.9215,12.7733,-18.2696
 sample_three_quarter_vertex_index=74965
-sample_three_quarter_vertex=-17.1124,-0.8444,-1.9378
+sample_three_quarter_vertex=-17.0420,-0.9237,-1.8746
 sample_end_vertex_index=99953
-sample_end_vertex=12.4340,-7.2120,17.8959
-vertex_samples={"label":"start","index":0,"vertex":[11.5213,-9.9602,-20.911]},{"label":"quarter","index":24988,"vertex":[21.5264,-0.9589,4.6937]},{"label":"middle","index":49977,"vertex":[-20.9918,12.8525,-18.3328]},{"label":"three_quarter","index":74965,"vertex":[-17.1124,-0.8444,-1.9378]},{"label":"end","index":99953,"vertex":[12.434,-7.212,17.8959]}
+sample_end_vertex=12.5044,-7.2913,17.9591
+vertex_samples={"label":"start","index":0,"vertex":[11.5917,-10.0395,-20.8478]},{"label":"quarter","index":24988,"vertex":[21.5967,-1.0382,4.7569]},{"label":"middle","index":49977,"vertex":[-20.9215,12.7733,-18.2696]},{"label":"three_quarter","index":74965,"vertex":[-17.042,-0.9237,-1.8746]},{"label":"end","index":99953,"vertex":[12.5044,-7.2913,17.9591]}
 face_samples={"label":"start","index":0,"indices":[1,21,0],"group":0},{"label":"quarter","index":41532,"indices":[23054,23073,23053],"group":105},{"label":"middle","index":83064,"indices":[46094,46114,46093],"group":211},{"label":"three_quarter","index":124595,"indices":[69131,69130,69110],"group":317},{"label":"end","index":166127,"indices":[99952,99953,99916],"group":23}

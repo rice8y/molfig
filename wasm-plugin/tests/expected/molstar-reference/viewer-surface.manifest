@@ -1,0 +1,4 @@
+contract=tests/expected/molstar-reference/viewer-surface.reference.contract formats=obj,stl,report
+contract=tests/expected/molstar-reference/viewer-surface-materials.reference.contract formats=obj,report
+contract=tests/expected/molstar-reference/viewer-surface-smoothing.reference.contract formats=obj,report
+contract=tests/expected/molstar-reference/structure-molecular-surface.reference.contract formats=obj,stl,report

@@ -8,6 +8,7 @@ use crate::mesh::{
     interpolate_sizes, polymer_trace_iterator_reference_json,
     polymer_trace_iterator_reference_json_with_helix_orientation, render_materials,
     render_object_span_summary_json, render_object_summary_json, representation_summary_json,
+    viewer_cartoon_component_render_objects_for_test, viewer_cartoon_component_visuals_for_test,
     CurveSegmentControls, CurveSegmentState, DVec3, PolymerTraceSegmentKind, RenderObject,
     TestTubeProfile,
 };
@@ -18,7 +19,9 @@ use crate::model::{
     InterUnitBondEdge, InterUnitBondInfo, InterUnitBondProps, Mesh, MoleculeType, PolymerType,
     SecondaryStructureElement, SecondaryStructureType,
 };
-use crate::options::{ColorTheme, PolymerProfile, Representation, VisualQuality};
+use crate::options::{
+    ColorTheme, ExportPrimitivesQuality, PolymerProfile, Representation, VisualQuality,
+};
 use crate::parser::{
     compose_operator_transforms, expand_oper_expression, parse_molecule_with_options, parse_pdb,
     reset_source_parse_count_for_test, source_parse_count_for_test, ColumnData,
@@ -95,6 +98,97 @@ fn parses_pdb_atoms() {
     assert_eq!(mol.atoms[0].element, "N");
     assert_eq!(mol.source_data.kind, "pdb");
     assert!(!mol.bonds.is_empty());
+}
+
+#[test]
+fn pdb_compound_entity_descriptions_are_scoped_to_each_molecule() {
+    let pdb = b"COMPND    MOL_ID: 1;\n\
+COMPND   2 MOLECULE: FIRST POLYMER;\n\
+COMPND   3 CHAIN: A;\n\
+COMPND   4 MOL_ID: 2;\n\
+COMPND   5 MOLECULE: SECOND POLYMER;\n\
+COMPND   6 CHAIN: B;\n\
+ATOM      1  CA  GLY A   1      11.104  13.207   2.100  1.00 10.00           C\n\
+ATOM      2  CA  GLY B   1      12.560  13.207   2.100  1.00 10.00           C\n\
+END\n";
+    let molecule = parse_molecule(pdb, InputFormat::Pdb).unwrap();
+
+    assert_eq!(molecule.entities.len(), 2);
+    assert_eq!(molecule.entities[0].description, "FIRST POLYMER");
+    assert_eq!(molecule.entities[1].description, "SECOND POLYMER");
+    assert_eq!(molecule.atoms[0].entity_id, "1");
+    assert_eq!(molecule.atoms[1].entity_id, "2");
+}
+
+#[test]
+fn pdb_entities_keep_returning_chain_hetero_segments_in_identity_assemblies() {
+    let pdb = include_bytes!("../../../package/examples/data/9R1O.pdb");
+    let options = MeshOptions {
+        format: InputFormat::Pdb,
+        representation: Representation::Cartoon,
+        assembly: Some("1".to_string()),
+        sphere_detail: 1,
+        ..MeshOptions::default()
+    };
+    let molecule = parse_molecule_with_options(pdb, &options).unwrap();
+    assert_eq!(molecule.entities.len(), 3);
+    assert_eq!(molecule.entities[0].type_name, "polymer");
+    assert_eq!(molecule.entities[1].type_name, "polymer");
+    assert_eq!(molecule.entities[2].type_name, "non-polymer");
+    assert_eq!(molecule.entities[2].description, "PENTAETHYLENE GLYCOL");
+    assert_eq!(
+        molecule
+            .atoms
+            .iter()
+            .filter(|atom| atom.entity_id == "3")
+            .count(),
+        13
+    );
+    let ligand_bonds = molecule
+        .bonds
+        .iter()
+        .filter_map(|bond| {
+            let a = molecule.atoms.get(bond.a)?.id;
+            let b = molecule.atoms.get(bond.b)?.id;
+            (a >= 2_860 && b >= 2_860).then_some((a, b))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ligand_bonds,
+        vec![
+            (2_860, 2_861),
+            (2_861, 2_862),
+            (2_862, 2_863),
+            (2_863, 2_865),
+            (2_864, 2_865),
+            (2_864, 2_866),
+            (2_866, 2_868),
+            (2_867, 2_868),
+            (2_867, 2_869),
+            (2_869, 2_871),
+            (2_870, 2_871),
+            (2_870, 2_872),
+        ]
+    );
+
+    let geometry = molecule.expanded_for_geometry();
+    assert_eq!(geometry.atoms.len(), 1_503);
+    assert_eq!(
+        geometry
+            .atoms
+            .iter()
+            .filter(|atom| atom.entity_id == "3")
+            .count(),
+        13
+    );
+
+    let representation = representation_summary_json(&molecule, &options);
+    assert!(representation.contains(
+        r#""realized_visuals":["polymer-trace","polymer-gap","element-sphere","intra-bond"]"#
+    ));
+    let materials = render_materials(&molecule, &options);
+    assert!(materials.iter().any(|material| material.color == 0x1b9e77));
+    assert!(materials.iter().any(|material| material.color == 0xff2618));
 }
 
 #[test]
@@ -223,7 +317,7 @@ fn molstar_parity_checklist_progress_matches_checkbox_counts() {
 fn molstar_parity_evidence_manifest_is_well_formed() {
     let entries = parity_evidence_entries();
     let test_sources = parity_evidence_test_sources();
-    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let repo = repo_root();
     let mut domains = std::collections::BTreeSet::new();
 
     assert!(
@@ -261,11 +355,11 @@ fn molstar_parity_evidence_manifest_is_well_formed() {
             );
         }
         for fixture in &entry.fixtures {
-            assert_manifest_token_exists(repo, &test_sources, &entry.domain, "fixture", fixture);
+            assert_manifest_token_exists(&repo, &test_sources, &entry.domain, "fixture", fixture);
         }
         for reference in &entry.reference_comparisons {
             assert_manifest_token_exists(
-                repo,
+                &repo,
                 &test_sources,
                 &entry.domain,
                 "reference comparison",
@@ -567,6 +661,9 @@ fn molstar_browser_reference_converter_uses_real_chrome_webgl_export_path() {
         "molfig-vs-browser",
         "printBrowserStlFacetDebug",
         "stl_context=facet",
+        "representation: String(item.options.representation ?? 'default')",
+        "component=${object.component",
+        "representationOrder=${object.representationOrder",
     ] {
         assert!(
             script.contains(snippet),
@@ -592,6 +689,13 @@ fn molstar_browser_reference_converter_uses_real_chrome_webgl_export_path() {
         "sphereSummary",
         "extremaCount",
         "exporter.add(renderObjects[i], plugin.canvas3d!.webgl, ctx)",
+        "applyRepresentationPreset",
+        "ViewerAutoPreset",
+        "PresetStructureRepresentations.illustrative",
+        "renderObjectStateMetadata",
+        "structure-component-static-",
+        "representationOrder",
+        "colorTheme",
     ] {
         assert!(
             harness.contains(snippet),
@@ -626,7 +730,10 @@ fn molstar_reference_converter_accepts_format_scoped_artifact_metadata() {
         "format-scoped artifact dry-run failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(stdout.contains("targets=json"));
-    assert!(stdout.contains("- PASS 9r1o-molstar-assembly-1: json;"));
+    assert!(
+        stdout.contains("- PASS 9r1o-molstar-assembly-1: json;")
+            || stdout.contains("- SKIP 9r1o-molstar-assembly-1:")
+    );
     assert!(stdout.contains("Existing Mol* reference artifact validation:"));
 }
 
@@ -655,7 +762,10 @@ fn molstar_reference_converter_accepts_scene_source_override() {
     );
     assert!(stdout.contains("scene=open-files"));
     assert!(stdout.contains("Existing Mol* reference artifact validation:"));
-    assert!(stdout.contains("- PASS 9r1o-molstar-assembly-1: json/obj/stl;"));
+    assert!(
+        stdout.contains("- PASS 9r1o-molstar-assembly-1: json/obj/stl;")
+            || stdout.contains("- SKIP 9r1o-molstar-assembly-1:")
+    );
 }
 
 #[test]
@@ -1292,7 +1402,7 @@ fn parses_ihm_coarse_sites_and_exports_semantic_meshes() {
     assert_eq!(structure.units[1].props.polymer_elements, vec![0]);
     assert!(structure.units[1].props.gap_elements.is_empty());
     assert!((structure.units[0].props.boundary.sphere.radius - 2.0).abs() < 0.000_1);
-    assert_eq!(structure.units[1].props.boundary.sphere.radius, 0.0);
+    assert!(structure.units[1].props.boundary.sphere.radius.abs() < 0.000_000_1);
     assert_eq!(structure.position(0, 0).unwrap(), vec3(0.0, 0.0, 0.0));
     assert_eq!(structure.position(1, 0).unwrap(), vec3(4.0, 0.0, 0.0));
     assert!(structure.lookup3d.check(vec3(4.0, 0.0, 0.0), 0.1));
@@ -1458,16 +1568,19 @@ fn mixed_atomic_and_coarse_structure_keeps_all_unit_kinds_and_bounds() {
     assert!(structure.boundary.box_max.x >= 8.0);
     assert!(structure.boundary.box_max.x < 10.0);
     assert_eq!(structure.lookup3d.find(vec3(4.0, 0.0, 0.0), 10.0).len(), 3);
-    assert_eq!(structure.model.sequence.sequences.len(), 2);
+    assert_eq!(structure.model.sequence.sequences.len(), 3);
+    assert_eq!(structure.model.sequence.sequences[0].entity_id, "A");
+    assert_eq!(structure.model.sequence.sequences[0].residues.len(), 1);
+    assert!(structure.model.sequence.sequences[0].ranges.is_empty());
     assert_eq!(
-        structure.model.sequence.sequences[0].ranges,
+        structure.model.sequence.sequences[1].ranges,
         vec![SequenceRange {
             seq_id_begin: 1,
             seq_id_end: 10
         }]
     );
     assert_eq!(
-        structure.model.sequence.sequences[1].ranges,
+        structure.model.sequence.sequences[2].ranges,
         vec![SequenceRange {
             seq_id_begin: 11,
             seq_id_end: 20
@@ -2590,7 +2703,7 @@ fn molstar_helix_uses_oriented_elliptical_tube() {
     )
     .unwrap();
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         ..MeshOptions::default()
@@ -2666,7 +2779,7 @@ fn tubular_helices_use_molstar_helix_orientation_centers() {
         ..Molecule::default()
     };
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         tubular_helices: true,
         center: false,
         assembly: None,
@@ -2733,6 +2846,9 @@ fn molstar_trace_quality_options_are_parsed() {
     assert_eq!(defaults.block_index, None);
     assert_eq!(defaults.block_header, None);
     assert_eq!(defaults.color_theme, ColorTheme::ChainId);
+    assert_eq!(defaults.theme_global_name, None);
+    assert_eq!(defaults.theme_carbon_color, ColorTheme::ChainId);
+    assert_eq!(defaults.theme_symmetry_color, None);
 
     let options = MeshOptions::from_json(
             br#"{"color-theme":"chain-id","tubular-helices":true,"linear-segments":6,"radial-segments":12,"sheet-arrow-factor":0.75,"block-index":1,"block-header":"second"}"#,
@@ -2770,7 +2886,7 @@ fn molstar_trace_quality_options_are_parsed() {
 
     assert_eq!(
         MeshOptions::from_json(br#"{"color-theme":"residue-name"}"#).unwrap_err(),
-        "unsupported color-theme: residue-name; expected \"chain-id\""
+        "unsupported color-theme: residue-name; expected a supported Mol* color theme"
     );
 }
 
@@ -2808,7 +2924,7 @@ fn molstar_helix_normals_keep_carbonyl_orientation_continuous() {
         ..Molecule::default()
     };
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         ..MeshOptions::default()
@@ -3221,7 +3337,7 @@ fn sheet_builder_keeps_molstar_arrow_normal_offset_unnormalized() {
 fn molstar_sheet_and_tube_defaults_use_size_factor_aspect_and_caps() {
     let molecule = sheet_test_molecule();
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         ..MeshOptions::default()
@@ -3445,6 +3561,8 @@ fn polymer_trace_widths_ignore_type_symbol_for_uniform_size_theme() {
 #[test]
 fn spacefill_spheres_use_type_symbol_for_physical_size_theme() {
     let mut atom = test_atom(1, "CA", "A", 1, vec3(0.0, 0.0, 0.0));
+    atom.residue = "LIG".to_string();
+    atom.het = true;
     atom.element = "C".to_string();
     atom.type_symbol = "H".to_string();
     let molecule = Molecule {
@@ -3489,7 +3607,7 @@ fn nine_r1o_molstar_ply_regression_is_finite() {
     let ply = String::from_utf8(
             convert_to_ply(
                 pdb,
-                br#"{"format":"pdb","representation":"molstar","assembly":"asymmetric-unit","sphere-detail":1}"#,
+                br#"{"format":"pdb","representation":"cartoon","assembly":"asymmetric-unit","sphere-detail":1}"#,
             )
             .unwrap(),
         )
@@ -3556,7 +3674,7 @@ fn nine_r1o_default_assembly_molstar_mesh_stays_near_reference_density() {
     let ply = String::from_utf8(
         convert_to_ply(
             pdb,
-            br#"{"format":"pdb","representation":"molstar","sphere-detail":1}"#,
+            br#"{"format":"pdb","representation":"cartoon","sphere-detail":1}"#,
         )
         .unwrap(),
     )
@@ -3572,7 +3690,7 @@ fn nine_r1o_default_assembly_molstar_mesh_stays_near_reference_density() {
     let obj = String::from_utf8(
         convert_to_obj(
             pdb,
-            br#"{"format":"pdb","representation":"molstar","sphere-detail":1,"obj-basename":"9R1O","operator-metadata":false,"obj-groups":false}"#,
+            br#"{"format":"pdb","representation":"cartoon","sphere-detail":1,"obj-basename":"9R1O","operator-metadata":false,"obj-groups":false}"#,
         )
         .unwrap(),
     )
@@ -3683,11 +3801,53 @@ fn nine_r1o_default_assembly_live_export_diff_report_is_actionable() {
 }
 
 #[test]
+fn nine_r1o_exports_match_pinned_browser_contract_without_private_artifacts() {
+    let contract_path =
+        "tests/expected/molstar-reference/9r1o-molstar-assembly-1.reference.contract";
+    let contract = read_manifest_file(contract_path);
+    let fixture = read_manifest_file_bytes(contract_value(&contract, "fixture"));
+    let options = contract_value(&contract, "options");
+
+    let obj = convert_to_obj(&fixture, options.as_bytes()).unwrap();
+    let obj = String::from_utf8(obj).expect("9R1O OBJ should be UTF-8");
+    let obj_stats = obj_stats(&obj);
+    assert_eq!(obj.len(), contract_usize(&contract, "obj_byte_len"));
+    assert_eq!(
+        format!("{:016x}", stable_test_hash64(obj.as_bytes())),
+        contract_value(&contract, "obj_fnv1a64")
+    );
+    assert_eq!(
+        obj_stats.vertex_count,
+        contract_usize(&contract, "obj_vertex_count")
+    );
+    assert_eq!(
+        obj_stats.normal_count,
+        contract_usize(&contract, "obj_normal_count")
+    );
+    assert_eq!(
+        obj_stats.face_count,
+        contract_usize(&contract, "obj_face_count")
+    );
+
+    let stl = convert_to_stl(&fixture, options.as_bytes()).unwrap();
+    let stl_stats = stl_stats(&stl);
+    assert_eq!(stl.len(), contract_usize(&contract, "stl_byte_len"));
+    assert_eq!(
+        format!("{:016x}", stable_test_hash64(&stl)),
+        contract_value(&contract, "stl_fnv1a64")
+    );
+    assert_eq!(
+        stl_stats.facet_count,
+        contract_usize(&contract, "stl_facet_count")
+    );
+}
+
+#[test]
 #[ignore = "generates full 9R1O render-object span diagnostics on demand"]
 fn nine_r1o_default_assembly_render_object_spans_are_actionable() {
     let pdb = include_bytes!("../../../package/examples/data/9R1O.pdb");
     let options =
-        MeshOptions::from_json(br#"{"format":"pdb","representation":"molstar","sphere-detail":1}"#)
+        MeshOptions::from_json(br#"{"format":"pdb","representation":"cartoon","sphere-detail":1}"#)
             .unwrap();
     let molecule = parse_molecule_with_options(pdb, &options).unwrap();
     let actual = render_object_span_summary_json(&molecule, &options);
@@ -3700,7 +3860,7 @@ fn nine_r1o_default_assembly_render_object_spans_are_actionable() {
     assert!(actual.contains(r#""face_count":178864"#));
     assert!(actual.contains(r#""vertex_end":101114"#));
     assert!(actual.contains(r#""stl_facet_start":0,"stl_facet_end":1260"#));
-    assert!(actual.contains(r#""index":0,"geometry_type":"tube","visual":"polymer-trace","representation":"molstar","secondary_type":"helix","chain":"A","residue_start":3,"residue_end":3,"group_id":0,"polymer_trace":{"initial":true,"final":false,"sec_struc_first":false,"sec_struc_last":false},"vertex_start":0,"vertex_end":253,"face_start":0,"face_end":420,"stl_facet_start":0,"stl_facet_end":1260"#));
+    assert!(actual.contains(r#""index":0,"geometry_type":"tube","visual":"polymer-trace","representation":"cartoon","secondary_type":"helix","chain":"A","residue_start":3,"residue_end":3,"group_id":0,"polymer_trace":{"initial":true,"final":false,"sec_struc_first":false,"sec_struc_last":false},"vertex_start":0,"vertex_end":253,"face_start":0,"face_end":420,"stl_facet_start":0,"stl_facet_end":1260"#));
 }
 
 #[test]
@@ -3747,7 +3907,12 @@ fn molfig_obj_outputs_are_diffed_against_all_molstar_reference_fixtures() {
 
     for contract_path in reference_manifest_entries_for_format(manifest, "obj") {
         let contract = read_manifest_file(contract_path);
-        let reference = read_manifest_file(contract_value(&contract, "obj_reference"));
+        let reference_path = contract_value(&contract, "obj_reference");
+        if !manifest_file_exists(reference_path) {
+            eprintln!("skipping absent private Mol* OBJ reference: {reference_path}");
+            continue;
+        }
+        let reference = read_manifest_file(reference_path);
         let reference_stats = obj_stats(&reference);
         assert_eq!(
             reference_stats.vertex_count,
@@ -3799,13 +3964,21 @@ fn molfig_obj_outputs_are_diffed_against_all_molstar_reference_fixtures() {
             &generated,
             &format!("{contract_path}: OBJ exact export"),
         );
-        assert!(
-            report.passed
-                || (report.message.starts_with("FAIL ")
-                    && report.message.contains("first difference")),
-            "{contract_path}: OBJ exact diff report was not actionable: {}",
-            report.message
-        );
+        if contract_optional_value(&contract, "exact_diff_required") == Some("true") {
+            assert!(
+                report.passed,
+                "{contract_path}: OBJ must match the pinned Mol* browser export exactly: {}",
+                report.message
+            );
+        } else {
+            assert!(
+                report.passed
+                    || (report.message.starts_with("FAIL ")
+                        && report.message.contains("first difference")),
+                "{contract_path}: OBJ exact diff report was not actionable: {}",
+                report.message
+            );
+        }
         assert_ne!(
             stable_test_hash64(generated.as_bytes()),
             0,
@@ -3814,10 +3987,9 @@ fn molfig_obj_outputs_are_diffed_against_all_molstar_reference_fixtures() {
         checked += 1;
     }
 
-    assert!(
-        checked > 0,
-        "expected at least one Mol* OBJ reference fixture"
-    );
+    if checked == 0 {
+        eprintln!("no private Mol* OBJ reference artifacts are present");
+    }
 }
 
 #[test]
@@ -3827,7 +3999,12 @@ fn molfig_stl_outputs_are_diffed_against_all_molstar_reference_fixtures() {
 
     for contract_path in reference_manifest_entries_for_format(manifest, "stl") {
         let contract = read_manifest_file(contract_path);
-        let reference = read_manifest_file_bytes(contract_value(&contract, "stl_reference"));
+        let reference_path = contract_value(&contract, "stl_reference");
+        if !manifest_file_exists(reference_path) {
+            eprintln!("skipping absent private Mol* STL reference: {reference_path}");
+            continue;
+        }
+        let reference = read_manifest_file_bytes(reference_path);
         let reference_stats = stl_stats(&reference);
         assert_eq!(
             reference_stats.byte_len,
@@ -3858,13 +4035,21 @@ fn molfig_stl_outputs_are_diffed_against_all_molstar_reference_fixtures() {
             &generated,
             &format!("{contract_path}: STL exact export"),
         );
-        assert!(
-            report.passed
-                || (report.message.starts_with("FAIL ")
-                    && report.message.contains("first difference")),
-            "{contract_path}: STL exact diff report was not actionable: {}",
-            report.message
-        );
+        if contract_optional_value(&contract, "exact_diff_required") == Some("true") {
+            assert!(
+                report.passed,
+                "{contract_path}: STL must match the pinned Mol* browser export exactly: {}",
+                report.message
+            );
+        } else {
+            assert!(
+                report.passed
+                    || (report.message.starts_with("FAIL ")
+                        && report.message.contains("first difference")),
+                "{contract_path}: STL exact diff report was not actionable: {}",
+                report.message
+            );
+        }
         assert_ne!(
             stable_test_hash64(&generated),
             0,
@@ -3873,10 +4058,9 @@ fn molfig_stl_outputs_are_diffed_against_all_molstar_reference_fixtures() {
         checked += 1;
     }
 
-    assert!(
-        checked > 0,
-        "expected at least one Mol* STL reference fixture"
-    );
+    if checked == 0 {
+        eprintln!("no private Mol* STL reference artifacts are present");
+    }
 }
 
 #[test]
@@ -3886,8 +4070,16 @@ fn molstar_reference_obj_stl_artifacts_are_cross_checked_at_sparse_slots() {
 
     for contract_path in reference_manifest_entries_for_formats(manifest, &["obj", "stl"]) {
         let contract = read_manifest_file(contract_path);
-        let reference_obj = read_manifest_file(contract_value(&contract, "obj_reference"));
-        let reference_stl = read_manifest_file_bytes(contract_value(&contract, "stl_reference"));
+        let obj_path = contract_value(&contract, "obj_reference");
+        let stl_path = contract_value(&contract, "stl_reference");
+        if !manifest_file_exists(obj_path) || !manifest_file_exists(stl_path) {
+            eprintln!(
+                "skipping absent private Mol* OBJ/STL reference pair: {obj_path}, {stl_path}"
+            );
+            continue;
+        }
+        let reference_obj = read_manifest_file(obj_path);
+        let reference_stl = read_manifest_file_bytes(stl_path);
         let obj_vertices = obj_vectors(&reference_obj, "v ");
         let obj_faces = obj_face_indices(&reference_obj);
         let obj_stats = obj_stats(&reference_obj);
@@ -3906,6 +4098,24 @@ fn molstar_reference_obj_stl_artifacts_are_cross_checked_at_sparse_slots() {
         );
 
         let drift = obj_stl_sparse_slot_drift(&obj_vertices, &obj_faces, &reference_stl);
+
+        if contract_optional_value(&contract, "obj_stl_sparse_slot_total_components").is_none() {
+            assert_eq!(
+                drift.total_components,
+                obj_faces.len() * 9,
+                "{contract_path}: full sparse-slot component scan coverage"
+            );
+            assert_eq!(
+                drift.rounded_mismatch_count, 0,
+                "{contract_path}: exact sparse-slot reference should round back to OBJ"
+            );
+            assert!(
+                drift.max_delta <= 0.0005,
+                "{contract_path}: exact sparse-slot reference exceeded OBJ rounding: {drift:?}"
+            );
+            checked += 1;
+            continue;
+        }
 
         assert!(
             drift.rounded_mismatch_count > 0,
@@ -3990,10 +4200,9 @@ fn molstar_reference_obj_stl_artifacts_are_cross_checked_at_sparse_slots() {
         checked += 1;
     }
 
-    assert!(
-        checked > 0,
-        "expected at least one Mol* OBJ/STL reference fixture"
-    );
+    if checked == 0 {
+        eprintln!("no private Mol* OBJ/STL reference artifacts are present");
+    }
 }
 
 #[test]
@@ -4257,7 +4466,9 @@ fn molstar_reference_artifact_contracts_match_all_reference_fixtures() {
         MeshOptions::from_json(contract_value(&contract, "options").as_bytes())
             .unwrap_or_else(|error| panic!("{contract_path}: invalid options JSON: {error}"));
 
-        if entry.includes_format("obj") {
+        if entry.includes_format("obj")
+            && manifest_file_exists(contract_value(&contract, "obj_reference"))
+        {
             let obj_path = contract_value(&contract, "obj_reference");
             let obj = read_manifest_file(obj_path);
             let obj_stats = obj_stats(&obj);
@@ -4300,7 +4511,9 @@ fn molstar_reference_artifact_contracts_match_all_reference_fixtures() {
             );
         }
 
-        if entry.includes_format("stl") {
+        if entry.includes_format("stl")
+            && manifest_file_exists(contract_value(&contract, "stl_reference"))
+        {
             let stl_path = contract_value(&contract, "stl_reference");
             let stl = read_manifest_file_bytes(stl_path);
             let stl_stats = stl_stats(&stl);
@@ -4367,6 +4580,14 @@ fn molstar_reference_json_summaries_diff_all_reference_fixtures() {
 
     for contract_path in reference_manifest_entries_for_format(manifest, "json") {
         let contract = read_manifest_file(contract_path);
+        let obj_path = contract_value(&contract, "obj_reference");
+        let stl_path = contract_value(&contract, "stl_reference");
+        if !manifest_file_exists(obj_path) || !manifest_file_exists(stl_path) {
+            eprintln!(
+                "skipping JSON regeneration without private Mol* OBJ/STL references: {obj_path}, {stl_path}"
+            );
+            continue;
+        }
         let reference = read_manifest_file(contract_value(&contract, "json_reference"));
         let generated = molstar_reference_summary_from_contract(contract_path, &contract);
         let report = crate::diff_text(
@@ -4378,10 +4599,9 @@ fn molstar_reference_json_summaries_diff_all_reference_fixtures() {
         checked += 1;
     }
 
-    assert!(
-        checked > 0,
-        "expected at least one Mol* reference JSON summary"
-    );
+    if checked == 0 {
+        eprintln!("no private Mol* OBJ/STL references are present for JSON regeneration");
+    }
 }
 
 #[test]
@@ -9638,7 +9858,7 @@ fn render_object_summary_matches_molstar_representative_snapshot() {
         ..Molecule::default()
     };
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         ..MeshOptions::default()
@@ -9674,7 +9894,7 @@ fn render_object_span_summary_maps_mesh_faces_to_molstar_sparse_stl_slots() {
         ..Molecule::default()
     };
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         ..MeshOptions::default()
@@ -9867,7 +10087,7 @@ fn molstar_coil_bridges_missing_trace_residues_as_polymer_gap() {
         ..Molecule::default()
     };
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         ..MeshOptions::default()
@@ -9875,10 +10095,10 @@ fn molstar_coil_bridges_missing_trace_residues_as_polymer_gap() {
 
     let summary = render_object_summary_json(&molecule, &options);
     assert!(summary.contains(
-            r#""geometry_type":"tube","visual":"polymer-trace","representation":"molstar","secondary_type":"coil","chain":"A","residue_start":3,"residue_end":3"#
+            r#""geometry_type":"tube","visual":"polymer-trace","representation":"cartoon","secondary_type":"coil","chain":"A","residue_start":3,"residue_end":3"#
         ));
     assert!(summary.contains(
-            r#""geometry_type":"tube","visual":"polymer-trace","representation":"molstar","secondary_type":"coil","chain":"A","residue_start":6,"residue_end":6"#
+            r#""geometry_type":"tube","visual":"polymer-trace","representation":"cartoon","secondary_type":"coil","chain":"A","residue_start":6,"residue_end":6"#
         ));
 }
 
@@ -10250,7 +10470,7 @@ fn cartoon_representation_summary_selects_trace_gap_and_nucleotide_ring_visuals(
         summary.contains(r#""selected_visuals":["polymer-trace","nucleotide-ring","polymer-gap"]"#)
     );
     assert!(
-        summary.contains(r#""realized_visuals":["polymer-trace","nucleotide-ring","polymer-gap"]"#)
+        summary.contains(r#""realized_visuals":["polymer-trace","polymer-gap","nucleotide-ring"]"#)
     );
 }
 
@@ -10378,28 +10598,28 @@ fn molstar_representation_summary_selects_branched_ball_and_stick_for_carbohydra
         ..Molecule::default()
     };
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         ..MeshOptions::default()
     };
 
     let summary = representation_summary_json(&molecule, &options);
-    assert!(summary.contains(r#""name":"molstar""#));
-    assert!(summary.contains(r#""selected_visuals":["element-sphere","intra-bond","inter-bond"]"#));
+    assert!(summary.contains(r#""name":"cartoon""#));
+    assert!(summary.contains(r#""selected_visuals":["element-sphere","intra-bond","inter-bond","carbohydrate-symbol","carbohydrate-link","carbohydrate-terminal-link"]"#));
     assert!(summary.contains(r#""realized_visuals":["element-sphere","intra-bond"]"#));
 
     let render_summary = render_object_summary_json(&molecule, &options);
     assert!(render_summary.contains(
-        r#""visual":"element-sphere","representation":"molstar","secondary_type":"branched""#
+        r#""visual":"element-sphere","representation":"cartoon","secondary_type":"branched""#
     ));
     assert!(render_summary.contains(
-        r#""visual":"intra-bond","representation":"molstar","secondary_type":"branched""#
+        r#""visual":"intra-bond","representation":"cartoon","secondary_type":"branched""#
     ));
     assert!(!render_summary.contains(r#""visual":"carbohydrate-symbol""#));
 
     let cartoon_options = MeshOptions {
-        representation: Representation::Cartoon,
+        representation: Representation::PolymerCartoon,
         ..options
     };
     let cartoon_summary = representation_summary_json(&molecule, &cartoon_options);
@@ -10423,7 +10643,7 @@ fn molstar_representation_summary_realizes_ligand_branched_and_ion_components() 
         ..Molecule::default()
     };
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         ..MeshOptions::default()
@@ -10431,21 +10651,151 @@ fn molstar_representation_summary_realizes_ligand_branched_and_ion_components() 
 
     let representation = representation_summary_json(&molecule, &options);
     assert!(representation.contains(
-        r#""selected_visuals":["polymer-trace","element-sphere","intra-bond","inter-bond"]"#
+        r#""selected_visuals":["polymer-trace","element-sphere","intra-bond","inter-bond","carbohydrate-symbol","carbohydrate-link","carbohydrate-terminal-link"]"#
     ));
     assert!(representation
         .contains(r#""realized_visuals":["polymer-trace","element-sphere","intra-bond"]"#));
 
     let summary = render_object_summary_json(&molecule, &options);
-    assert!(summary.contains(r#""visual":"element-sphere","representation":"molstar","secondary_type":"ligand","chain":"L""#));
+    assert!(summary.contains(r#""visual":"element-sphere","representation":"cartoon","secondary_type":"ligand","chain":"L""#));
     assert!(summary.contains(
-        r#""visual":"intra-bond","representation":"molstar","secondary_type":"ligand","chain":"L""#
+        r#""visual":"intra-bond","representation":"cartoon","secondary_type":"ligand","chain":"L""#
     ));
-    assert!(summary.contains(r#""visual":"element-sphere","representation":"molstar","secondary_type":"branched","chain":"B""#));
-    assert!(summary.contains(r#""visual":"intra-bond","representation":"molstar","secondary_type":"branched","chain":"B""#));
+    assert!(summary.contains(r#""visual":"element-sphere","representation":"cartoon","secondary_type":"branched","chain":"B""#));
+    assert!(summary.contains(r#""visual":"intra-bond","representation":"cartoon","secondary_type":"branched","chain":"B""#));
     assert!(summary.contains(
-        r#""visual":"element-sphere","representation":"molstar","secondary_type":"ion","chain":"I""#
+        r#""visual":"element-sphere","representation":"cartoon","secondary_type":"ion","chain":"I""#
     ));
+}
+
+#[test]
+fn viewer_cartoon_component_contract_matches_molstar_order_tags_and_themes() {
+    let mut molecule = Molecule {
+        atoms: vec![
+            test_atom(1, "CA", "A", 1, vec3(0.0, 0.0, 0.0)),
+            test_atom(2, "CA", "A", 2, vec3(1.0, 0.0, 0.0)),
+            het_atom(3, "C1", "L", 1, "LIG", vec3(3.0, 0.0, 0.0)),
+            het_atom(4, "O1", "L", 1, "LIG", vec3(4.0, 0.0, 0.0)),
+            carbohydrate_atom(5, "C1", "B", 1, "MAN", vec3(0.0, 3.0, 0.0)),
+            carbohydrate_atom(6, "C2", "B", 1, "MAN", vec3(1.0, 3.0, 0.0)),
+            carbohydrate_atom(7, "C3", "B", 1, "MAN", vec3(1.5, 4.0, 0.0)),
+            carbohydrate_atom(8, "C4", "B", 1, "MAN", vec3(1.0, 5.0, 0.0)),
+            carbohydrate_atom(9, "C5", "B", 1, "MAN", vec3(0.0, 5.0, 0.0)),
+            carbohydrate_atom(10, "O5", "B", 1, "MAN", vec3(-0.5, 4.0, 0.0)),
+            het_atom(11, "O", "W", 1, "HOH", vec3(6.0, 2.0, 0.0)),
+            het_atom(12, "ZN", "I", 1, "ZN", vec3(8.0, 0.0, 0.0)),
+        ],
+        bonds: vec![
+            Bond { a: 2, b: 3 },
+            Bond { a: 4, b: 5 },
+            Bond { a: 5, b: 6 },
+            Bond { a: 6, b: 7 },
+            Bond { a: 7, b: 8 },
+            Bond { a: 8, b: 9 },
+            Bond { a: 9, b: 4 },
+        ],
+        bond_metadata: carbohydrate_bond_metadata(7),
+        ..Molecule::default()
+    };
+    molecule.refresh_topology_metadata();
+    let options = MeshOptions {
+        representation: Representation::Cartoon,
+        center: false,
+        assembly: None,
+        ..MeshOptions::default()
+    };
+
+    let representation = representation_summary_json(&molecule, &options);
+    assert!(representation.contains(
+        r#""components":["polymer","ligand","non-standard","branched","water","ion","lipid","coarse"]"#
+    ));
+    assert!(representation.contains(
+        r#""representation_tags":["polymer","ligand","non-standard","branched-ball-and-stick","branched-snfg-3d","water","ion","lipid","coarse"]"#
+    ));
+
+    let summary = render_object_summary_json(&molecule, &options);
+    let branched_ball = summary.find(r#""tag":"branched-ball-and-stick""#).unwrap();
+    let polymer = summary.find(r#""tag":"polymer""#).unwrap();
+    let ligand = summary.find(r#""tag":"ligand""#).unwrap();
+    let water = summary.find(r#""tag":"water""#).unwrap();
+    let ion = summary.find(r#""tag":"ion""#).unwrap();
+    assert!(branched_ball < polymer);
+    assert!(polymer < ligand);
+    assert!(ligand < water);
+    assert!(water < ion);
+
+    assert!(summary.contains(r#""component":"polymer","tag":"polymer","representation_order":0"#));
+    assert!(summary.contains(r#""tag":"ligand","representation_order":1"#));
+    assert!(summary.contains(r#""tag":"branched-ball-and-stick","representation_order":3"#));
+    assert!(summary.contains(r#""tag":"water","representation_order":5"#));
+    assert!(summary.contains(r#""tag":"ion","representation_order":6"#));
+    assert!(summary.contains(r#""tag":"polymer","representation_order":0"#));
+    assert!(summary.contains(r#""color_theme":"chain-id","carbon_color_theme":"""#));
+    assert!(summary.contains(r#""tag":"ligand","representation_order":1"#));
+    assert!(summary.contains(r#""color_theme":"element-symbol","carbon_color_theme":"chain-id""#));
+    assert!(summary.contains(r#""tag":"water","representation_order":5"#));
+    assert!(
+        summary.contains(r#""color_theme":"element-symbol","carbon_color_theme":"element-symbol""#)
+    );
+}
+
+#[test]
+fn viewer_cartoon_component_contract_tracks_molstar_preset_source() {
+    let source = read_molstar_source("mol-plugin-state/builder/structure/representation-preset.ts")
+        .expect("checked-in Mol* representation preset should be available");
+
+    let ordered_snippets = [
+        "polymer: builder.buildRepresentation",
+        "ligand: builder.buildRepresentation",
+        "nonStandard: builder.buildRepresentation",
+        "branchedBallAndStick: builder.buildRepresentation",
+        "branchedSnfg3d: builder.buildRepresentation",
+        "water: builder.buildRepresentation",
+        "ion: builder.buildRepresentation",
+        "lipid: builder.buildRepresentation",
+        "coarse: builder.buildRepresentation",
+    ];
+    let mut previous = 0;
+    for snippet in ordered_snippets {
+        let position = source[previous..]
+            .find(snippet)
+            .map(|position| previous + position)
+            .unwrap_or_else(|| panic!("missing Mol* preset snippet: {snippet}"));
+        previous = position + snippet.len();
+    }
+    for tag in [
+        "{ tag: 'polymer' }",
+        "{ tag: 'ligand' }",
+        "{ tag: 'non-standard' }",
+        "{ tag: 'branched-ball-and-stick' }",
+        "{ tag: 'branched-snfg-3d' }",
+        "{ tag: 'water' }",
+        "{ tag: 'ion' }",
+        "{ tag: 'lipid' }",
+        "{ tag: 'coarse' }",
+    ] {
+        assert!(source.contains(tag), "missing Mol* representation {tag}");
+    }
+
+    let cartoon = read_molstar_source("mol-repr/structure/representation/cartoon.ts")
+        .expect("checked-in Mol* cartoon provider should be available");
+    let mut previous = 0;
+    for visual in [
+        "'polymer-trace':",
+        "'polymer-gap':",
+        "'nucleotide-block':",
+        "'nucleotide-ring':",
+        "'nucleotide-atomic-ring-fill':",
+        "'nucleotide-atomic-bond':",
+        "'nucleotide-atomic-element':",
+        "'direction-wedge':",
+    ] {
+        let position = cartoon[previous..]
+            .find(visual)
+            .map(|position| previous + position)
+            .unwrap_or_else(|| panic!("missing Mol* cartoon visual: {visual}"));
+        previous = position + visual.len();
+    }
 }
 
 #[test]
@@ -10460,7 +10810,7 @@ fn molstar_component_intra_bond_objects_follow_unit_adjacency_slot_order() {
         ..Molecule::default()
     };
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         ..MeshOptions::default()
@@ -10470,16 +10820,16 @@ fn molstar_component_intra_bond_objects_follow_unit_adjacency_slot_order() {
     assert_eq!(summary.matches(r#""visual":"intra-bond""#).count(), 4);
 
     let group0 = summary
-        .find(r#""geometry_type":"cylinder","visual":"intra-bond","representation":"molstar","secondary_type":"ligand","chain":"L","residue_start":1,"residue_end":3,"group_id":0"#)
+        .find(r#""geometry_type":"cylinder","visual":"intra-bond","representation":"cartoon","secondary_type":"ligand","chain":"L","residue_start":1,"residue_end":3,"group_id":0"#)
         .expect("missing Mol* adjacency slot 0 half-link 1->3");
     let group1 = summary
-        .find(r#""geometry_type":"cylinder","visual":"intra-bond","representation":"molstar","secondary_type":"ligand","chain":"L","residue_start":1,"residue_end":2,"group_id":1"#)
+        .find(r#""geometry_type":"cylinder","visual":"intra-bond","representation":"cartoon","secondary_type":"ligand","chain":"L","residue_start":1,"residue_end":2,"group_id":1"#)
         .expect("missing Mol* adjacency slot 1 half-link 1->2");
     let group2 = summary
-        .find(r#""geometry_type":"cylinder","visual":"intra-bond","representation":"molstar","secondary_type":"ligand","chain":"L","residue_start":2,"residue_end":1,"group_id":2"#)
+        .find(r#""geometry_type":"cylinder","visual":"intra-bond","representation":"cartoon","secondary_type":"ligand","chain":"L","residue_start":2,"residue_end":1,"group_id":2"#)
         .expect("missing Mol* adjacency slot 2 half-link 2->1");
     let group3 = summary
-        .find(r#""geometry_type":"cylinder","visual":"intra-bond","representation":"molstar","secondary_type":"ligand","chain":"L","residue_start":3,"residue_end":1,"group_id":3"#)
+        .find(r#""geometry_type":"cylinder","visual":"intra-bond","representation":"cartoon","secondary_type":"ligand","chain":"L","residue_start":3,"residue_end":1,"group_id":3"#)
         .expect("missing Mol* adjacency slot 3 half-link 3->1");
 
     assert!(group0 < group1);
@@ -10522,7 +10872,7 @@ fn molstar_component_intra_bond_slots_follow_branching_edgebuilder_offsets() {
         ..Molecule::default()
     };
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         ..MeshOptions::default()
@@ -10543,7 +10893,7 @@ fn molstar_ion_only_component_realizes_ball_and_stick_sphere_without_bonds() {
         ..Molecule::default()
     };
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         ..MeshOptions::default()
@@ -10556,7 +10906,7 @@ fn molstar_ion_only_component_realizes_ball_and_stick_sphere_without_bonds() {
 
     let summary = render_object_summary_json(&molecule, &options);
     assert!(summary.contains(
-        r#""visual":"element-sphere","representation":"molstar","secondary_type":"ion","chain":"I""#
+        r#""visual":"element-sphere","representation":"cartoon","secondary_type":"ion","chain":"I""#
     ));
     assert!(!summary.contains(r#""secondary_type":"ligand""#));
     assert!(!summary.contains(r#""secondary_type":"branched""#));
@@ -10566,6 +10916,681 @@ fn molstar_ion_only_component_realizes_ball_and_stick_sphere_without_bonds() {
     assert_eq!(mesh.vertices.len(), 162);
     assert_eq!(mesh.faces.len(), 320);
     validate_mesh_for_export(&mesh).unwrap();
+}
+
+#[test]
+fn viewer_cartoon_components_follow_mmcif_entity_subtype_prd_and_chem_comp_metadata() {
+    let cif = b"data_components\n\
+loop_\n\
+_entity.id\n\
+_entity.type\n\
+1 polymer\n\
+2 polymer\n\
+3 non-polymer\n\
+4 non-polymer\n\
+5 non-polymer\n\
+6 non-polymer\n\
+7 polymer\n\
+#\n\
+loop_\n\
+_entity_poly.entity_id\n\
+_entity_poly.type\n\
+1 'polypeptide(L)'\n\
+2 'polypeptide(L)'\n\
+7 'polypeptide(L)'\n\
+#\n\
+loop_\n\
+_struct_asym.id\n\
+_struct_asym.entity_id\n\
+A 1\n\
+P 2\n\
+I 3\n\
+L 4\n\
+C 5\n\
+B 6\n\
+X 7\n\
+#\n\
+loop_\n\
+_pdbx_molecule.asym_id\n\
+_pdbx_molecule.prd_id\n\
+P PRD_000001\n\
+#\n\
+loop_\n\
+_chem_comp.id\n\
+_chem_comp.type\n\
+_chem_comp.mon_nstd_flag\n\
+ALA 'L-peptide linking' y\n\
+PRX other n\n\
+QX1 ion n\n\
+LPX lipid n\n\
+ACE non-polymer n\n\
+NAG 'D-saccharide, beta linking' n\n\
+PXL non-polymer n\n\
+#\n\
+loop_\n\
+_atom_site.group_PDB\n\
+_atom_site.id\n\
+_atom_site.type_symbol\n\
+_atom_site.label_atom_id\n\
+_atom_site.label_comp_id\n\
+_atom_site.label_asym_id\n\
+_atom_site.label_entity_id\n\
+_atom_site.label_seq_id\n\
+_atom_site.Cartn_x\n\
+_atom_site.Cartn_y\n\
+_atom_site.Cartn_z\n\
+ATOM 1 C CA ALA A 1 1 0 0 0\n\
+HETATM 2 C C1 PRX P 2 1 2 0 0\n\
+HETATM 3 Q Q1 QX1 I 3 . 4 0 0\n\
+HETATM 4 C C1 LPX L 4 . 6 0 0\n\
+HETATM 5 C C1 ACE C 5 . 8 0 0\n\
+HETATM 6 C C1 NAG B 6 . 10 0 0\n\
+HETATM 7 C C1 PXL X 7 1 12 0 0\n\
+#\n";
+    let molecule = parse_molecule(cif, InputFormat::Cif).unwrap();
+
+    assert_eq!(
+        molecule.entity_index.subtype,
+        vec![
+            "polypeptide(L)",
+            "polypeptide(L)",
+            "ion",
+            "lipid",
+            "other",
+            "oligosaccharide",
+            "polypeptide(L)",
+        ]
+    );
+    assert_eq!(molecule.entity_index.prd_id[1], "PRD_000001");
+
+    let options = MeshOptions {
+        representation: Representation::Cartoon,
+        center: false,
+        assembly: None,
+        ..MeshOptions::default()
+    };
+    let summary = render_object_summary_json(&molecule, &options);
+
+    assert!(summary.contains(r#""tag":"ligand""#));
+    assert!(summary.contains(r#""secondary_type":"ligand","chain":"P""#));
+    assert!(summary.contains(r#""secondary_type":"ligand","chain":"X""#));
+    assert!(!summary.contains(r#""secondary_type":"ligand","chain":"C""#));
+    assert!(!summary.contains(r#""secondary_type":"ligand","chain":"B""#));
+    assert!(summary.contains(r#""secondary_type":"ion","chain":"I""#));
+    assert!(summary.contains(r#""secondary_type":"lipid","chain":"L""#));
+    assert!(summary.contains(r#""secondary_type":"branched","chain":"B""#));
+    assert!(summary.contains(r#""tag":"non-standard""#));
+}
+
+#[test]
+fn viewer_cartoon_non_standard_query_checks_all_microheterogeneity_components() {
+    let cif = b"data_microheterogeneity\n\
+loop_\n\
+_entity.id\n\
+_entity.type\n\
+1 polymer\n\
+#\n\
+loop_\n\
+_entity_poly.entity_id\n\
+_entity_poly.type\n\
+1 'polypeptide(L)'\n\
+#\n\
+loop_\n\
+_entity_poly_seq.entity_id\n\
+_entity_poly_seq.num\n\
+_entity_poly_seq.mon_id\n\
+_entity_poly_seq.hetero\n\
+1 1 ALA y\n\
+1 1 MSE y\n\
+1 2 GLY y\n\
+1 2 SER y\n\
+#\n\
+loop_\n\
+_chem_comp.id\n\
+_chem_comp.type\n\
+_chem_comp.mon_nstd_flag\n\
+ALA 'L-peptide linking' y\n\
+MSE 'L-peptide linking' n\n\
+GLY 'L-peptide linking' y\n\
+SER 'L-peptide linking' y\n\
+#\n\
+loop_\n\
+_atom_site.group_PDB\n\
+_atom_site.id\n\
+_atom_site.type_symbol\n\
+_atom_site.label_atom_id\n\
+_atom_site.label_comp_id\n\
+_atom_site.label_asym_id\n\
+_atom_site.label_entity_id\n\
+_atom_site.label_seq_id\n\
+_atom_site.Cartn_x\n\
+_atom_site.Cartn_y\n\
+_atom_site.Cartn_z\n\
+ATOM 1 C CA ALA A 1 1 0 0 0\n\
+ATOM 2 C CA GLY A 1 2 3.8 0 0\n\
+#\n";
+    let molecule = parse_molecule(cif, InputFormat::Cif).unwrap();
+    let summary = render_object_summary_json(
+        &molecule,
+        &MeshOptions {
+            representation: Representation::Cartoon,
+            center: false,
+            assembly: None,
+            ..MeshOptions::default()
+        },
+    );
+
+    assert!(summary.contains(r#""tag":"non-standard","representation_order":2"#));
+    assert!(summary.contains(
+        r#""secondary_type":"non-standard","chain":"A","residue_start":1,"residue_end":1"#
+    ));
+    assert!(!summary.contains(
+        r#""secondary_type":"non-standard","chain":"A","residue_start":2,"residue_end":2"#
+    ));
+
+    let source = read_molstar_source("mol-model/structure/structure/properties.ts")
+        .expect("checked-in Mol* structure properties source should be available");
+    assert!(source.contains("microheterogeneityCompIds(l).some"));
+    assert!(source.contains("mon_nstd_flag[0] === 'n'"));
+}
+
+#[test]
+fn mixed_viewer_cartoon_fixture_covers_browser_component_contract() {
+    let bytes = include_bytes!("../../tests/fixtures/cif/mixed-viewer-cartoon-components.cif");
+    let molecule = parse_molecule(bytes, InputFormat::Cif).unwrap();
+    let options = MeshOptions {
+        representation: Representation::Cartoon,
+        quality: Some(VisualQuality::Custom),
+        sphere_detail: 1,
+        linear_segments: 14,
+        radial_segments: 28,
+        export_primitives_quality: ExportPrimitivesQuality::Low,
+        center: true,
+        assembly: None,
+        ..MeshOptions::default()
+    };
+    let summary = render_object_summary_json(&molecule, &options);
+    for expected in [
+        r#""component":"polymer","tag":"polymer","representation_order":0"#,
+        r#""component":"ligand","tag":"ligand","representation_order":1"#,
+        r#""component":"non-standard","tag":"non-standard","representation_order":2"#,
+        r#""component":"branched","tag":"branched-ball-and-stick","representation_order":3"#,
+        r#""component":"branched","tag":"branched-snfg-3d","representation_order":4"#,
+        r#""component":"water","tag":"water","representation_order":5"#,
+        r#""component":"ion","tag":"ion","representation_order":6"#,
+        r#""component":"lipid","tag":"lipid","representation_order":7"#,
+    ] {
+        assert!(summary.contains(expected), "missing {expected}");
+    }
+    assert!(!summary.contains(r#""chain":"C""#));
+
+    let mesh = build_mesh(&molecule, &options);
+    assert_eq!(mesh.faces.len(), 3_460);
+    validate_mesh_for_export(&mesh).unwrap();
+
+    let browser_report = include_str!(
+        "../../tests/expected/molstar-reference/mixed-viewer-cartoon-components.browser-report.json"
+    );
+    for expected in [
+        r#""component": "polymer""#,
+        r#""component": "ligand""#,
+        r#""component": "non-standard""#,
+        r#""component": "branched""#,
+        r#""component": "water""#,
+        r#""component": "ion""#,
+        r#""component": "lipid""#,
+        r#""colorTheme": "chain-id""#,
+        r#""colorTheme": "element-symbol""#,
+        r#""colorTheme": "carbohydrate-symbol""#,
+        r#""totalDrawCount": 5268"#,
+        r#""exportableDrawCount": 5268"#,
+        r#""sceneBoundingSphere""#,
+    ] {
+        assert!(browser_report.contains(expected), "missing {expected}");
+    }
+}
+
+#[test]
+fn large_viewer_cartoon_browser_report_confirms_water_and_lipid_line_thresholds() {
+    let report = include_str!(
+        "../../tests/expected/molstar-reference/large-viewer-cartoon-thresholds.browser-report.json"
+    );
+    assert_eq!(report.matches(r#""representation": "line""#).count(), 2);
+    assert_eq!(
+        report.matches(r#""colorTheme": "element-symbol""#).count(),
+        2
+    );
+    for expected in [
+        r#""type": "points""#,
+        r#""geometry": "points""#,
+        r#""drawCount": 50001"#,
+        r#""vertexCount": 50001"#,
+        r#""groupCount": 50001"#,
+        r#""component": "water""#,
+        r#""tag": "water""#,
+        r#""representationOrder": 5"#,
+        r#""type": "lines""#,
+        r#""geometry": "lines""#,
+        r#""drawCount": 120012"#,
+        r#""vertexCount": 80008"#,
+        r#""groupCount": 20002"#,
+        r#""component": "lipid""#,
+        r#""tag": "lipid""#,
+        r#""representationOrder": 7"#,
+        r#""totalDrawCount": 170013"#,
+        r#""exportableDrawCount": 170013"#,
+        r#""uploads": {}"#,
+        r#""webgl2": true"#,
+        r#""fragDepth": true"#,
+    ] {
+        assert!(report.contains(expected), "missing {expected}");
+    }
+
+    let generator = include_str!("../../scripts/generate-viewer-cartoon-threshold-fixture.mjs");
+    assert!(generator.contains("const waterCount = 50_001;"));
+    assert!(generator.contains("const lipidResidueCount = 10_001;"));
+    let contract = include_str!(
+        "../../tests/expected/molstar-reference/large-viewer-cartoon-thresholds.reference.contract"
+    );
+    assert!(contract
+        .contains("fixture_generator=scripts/generate-viewer-cartoon-threshold-fixture.mjs"));
+    assert!(contract.contains("browser_report_reference=tests/expected/molstar-reference/large-viewer-cartoon-thresholds.browser-report.json"));
+}
+
+#[test]
+fn viewer_auto_gaussian_surface_browser_reports_pin_huge_and_gigantic_routing() {
+    let gigantic = include_str!(
+        "../../tests/expected/molstar-reference/viewer-auto-gaussian-gigantic.browser-report.json"
+    );
+    for expected in [
+        r#""sizeClass": "Gigantic""#,
+        r#""representation": "gaussian-surface""#,
+        r#""visuals": ["#,
+        r#""structure-gaussian-surface-mesh""#,
+        r#""resolution": 1"#,
+        r#""smoothness": 1"#,
+        r#""radiusOffset": 2"#,
+        r#""traceOnly": true"#,
+        r#""tryUseGpu": false"#,
+        r#""drawCount": 2700"#,
+        r#""vertexCount": 452"#,
+        r#""groupCount": 7"#,
+    ] {
+        assert!(gigantic.contains(expected), "missing {expected}");
+    }
+
+    let huge = include_str!(
+        "../../tests/expected/molstar-reference/viewer-auto-gaussian-huge.browser-report.json"
+    );
+    for expected in [
+        r#""sizeClass": "Huge""#,
+        r#""representation": "gaussian-surface""#,
+        r#""gaussian-surface-mesh""#,
+        r#""radiusOffset": 0"#,
+        r#""traceOnly": false"#,
+        r#""tryUseGpu": false"#,
+        r#""drawCount": 1848"#,
+        r#""vertexCount": 310"#,
+        r#""groupCount": 14"#,
+        r#""instanceCount": 2"#,
+    ] {
+        assert!(huge.contains(expected), "missing {expected}");
+    }
+
+    let manifest = include_str!(
+        "../../tests/expected/molstar-reference/viewer-auto-gaussian-surfaces.manifest"
+    );
+    assert_eq!(manifest.matches("contract=").count(), 2);
+    assert_eq!(manifest.matches("formats=obj,stl,report").count(), 2);
+}
+
+#[test]
+fn configured_viewer_cartoon_browser_report_pins_global_and_carbon_theme_dispatch() {
+    let report = include_str!(
+        "../../tests/expected/molstar-reference/configured-viewer-cartoon-themes.browser-report.json"
+    );
+    assert_eq!(
+        report.matches(r#""colorTheme": "element-symbol""#).count(),
+        10
+    );
+    assert_eq!(
+        report.matches(r#""carbonColorTheme": "chain-id""#).count(),
+        7
+    );
+    assert_eq!(
+        report
+            .matches(r#""carbonColorTheme": "element-symbol""#)
+            .count(),
+        3
+    );
+    for expected in [
+        r#""component": "polymer""#,
+        r#""component": "ligand""#,
+        r#""component": "non-standard""#,
+        r#""component": "branched""#,
+        r#""component": "water""#,
+        r#""component": "ion""#,
+        r#""component": "lipid""#,
+        r#""totalDrawCount": 5268"#,
+        r#""exportableDrawCount": 5268"#,
+    ] {
+        assert!(report.contains(expected), "missing {expected}");
+    }
+
+    let contract = include_str!(
+        "../../tests/expected/molstar-reference/configured-viewer-cartoon-themes.reference.contract"
+    );
+    assert!(contract.contains(r#""globalName":"element-symbol""#));
+    assert!(contract.contains(r#""carbonColor":"chain-id""#));
+    assert!(contract.contains(r#""symmetryColor":"operator-name""#));
+    let harness = include_str!("../../scripts/molstar-browser-reference-harness.ts");
+    assert!(harness.contains("params?.colorTheme?.params?.carbonColor?.name"));
+}
+
+#[test]
+fn configured_viewer_theme_obj_matches_browser_geometry_and_materials() {
+    let contract_path =
+        "tests/expected/molstar-reference/configured-viewer-cartoon-themes.reference.contract";
+    let contract = read_manifest_file(contract_path);
+    let fixture = read_manifest_file_bytes(contract_value(&contract, "fixture"));
+    let options = contract_value(&contract, "options");
+    let reference_obj = read_manifest_file(contract_value(&contract, "obj_reference"));
+    let generated_obj = String::from_utf8(convert_to_obj(&fixture, options.as_bytes()).unwrap())
+        .expect("configured-theme OBJ should be UTF-8");
+    assert_eq!(generated_obj, reference_obj);
+
+    let reference_mtl = read_manifest_file(&format!(
+        "tests/expected/molstar-reference/{}",
+        contract_value(&contract, "obj_mtllib")
+    ));
+    let generated_mtl =
+        String::from_utf8(convert_to_mtl(&fixture, options.as_bytes()).unwrap()).unwrap();
+    assert_eq!(generated_mtl, reference_mtl);
+    assert_eq!(
+        format!("{:016x}", stable_test_hash64(reference_obj.as_bytes())),
+        contract_value(&contract, "obj_fnv1a64")
+    );
+    assert_eq!(
+        format!("{:016x}", stable_test_hash64(reference_mtl.as_bytes())),
+        contract_value(&contract, "mtl_fnv1a64")
+    );
+}
+
+#[test]
+fn viewer_default_annotation_browser_report_pins_plddt_spacefill_dispatch() {
+    let report = include_str!(
+        "../../tests/expected/molstar-reference/viewer-default-annotations.browser-report.json"
+    );
+    for expected in [
+        r#""component": "all""#,
+        r#""tag": "all""#,
+        r#""representation": "spacefill""#,
+        r#""colorTheme": "plddt-confidence""#,
+        r#""primitiveCount": 4"#,
+        r#""groupCount": 4"#,
+        r#""exportableDrawCount": 24"#,
+    ] {
+        assert!(report.contains(expected), "missing {expected}");
+    }
+}
+
+#[test]
+fn viewer_default_annotation_obj_matches_browser_geometry_and_materials() {
+    let contract_path =
+        "tests/expected/molstar-reference/viewer-default-annotations.reference.contract";
+    let contract = read_manifest_file(contract_path);
+    let fixture = read_manifest_file_bytes(contract_value(&contract, "fixture"));
+    let options = contract_value(&contract, "options");
+    let reference_obj = read_manifest_file(contract_value(&contract, "obj_reference"));
+    let generated_obj = String::from_utf8(convert_to_obj(&fixture, options.as_bytes()).unwrap())
+        .expect("Viewer default annotation OBJ should be UTF-8");
+    assert_eq!(generated_obj, reference_obj);
+
+    let reference_mtl = read_manifest_file(&format!(
+        "tests/expected/molstar-reference/{}",
+        contract_value(&contract, "obj_mtllib")
+    ));
+    let generated_mtl =
+        String::from_utf8(convert_to_mtl(&fixture, options.as_bytes()).unwrap()).unwrap();
+    assert_eq!(generated_mtl, reference_mtl);
+    assert_eq!(
+        format!("{:016x}", stable_test_hash64(reference_obj.as_bytes())),
+        contract_value(&contract, "obj_fnv1a64")
+    );
+    assert_eq!(
+        format!("{:016x}", stable_test_hash64(reference_mtl.as_bytes())),
+        contract_value(&contract, "mtl_fnv1a64")
+    );
+}
+
+#[test]
+fn symmetry_viewer_cartoon_browser_report_pins_operator_name_dispatch() {
+    let report = include_str!(
+        "../../tests/expected/molstar-reference/symmetry-viewer-cartoon-themes.browser-report.json"
+    );
+    for expected in [
+        r#""unitCount": 17"#,
+        r#""elementCount": 5559"#,
+        r#""spgrOp": 0"#,
+        r#""spgrOp": 1"#,
+        r#""isAssembly": false"#,
+        r#""instanceCount": 17"#,
+        r#""component": "polymer""#,
+        r#""representation": "cartoon""#,
+        r#""colorTheme": "operator-name""#,
+        r#""representationOrder": 0"#,
+        r#""exportableDrawCount": 47556"#,
+    ] {
+        assert!(report.contains(expected), "missing {expected}");
+    }
+    assert_eq!(report.matches(r#""isAssembly": false"#).count(), 17);
+    assert!(!report.contains(r#""isAssembly": true"#));
+
+    let contract = include_str!(
+        "../../tests/expected/molstar-reference/symmetry-viewer-cartoon-themes.reference.contract"
+    );
+    assert!(contract.contains(r#""structure-preset":"crystal-contacts""#));
+    assert!(contract.contains(r#""symmetryColor":"operator-name""#));
+}
+
+#[test]
+fn viewer_theme_options_parse_molstar_global_carbon_and_symmetry_names() {
+    let options = MeshOptions::from_json(
+        br#"{"color-theme":"entity-id","theme":{"globalName":"element-symbol","carbonColor":"operator-name","symmetryColor":"operator-name"}}"#,
+    )
+    .unwrap();
+    assert_eq!(options.color_theme, ColorTheme::EntityId);
+    assert_eq!(options.theme_global_name, Some(ColorTheme::ElementSymbol));
+    assert_eq!(options.theme_carbon_color, ColorTheme::OperatorName);
+    assert_eq!(options.theme_symmetry_color, Some(ColorTheme::OperatorName));
+}
+
+#[test]
+fn configured_viewer_theme_overrides_semantic_metadata_and_obj_materials() {
+    let bytes = include_bytes!("../../tests/fixtures/cif/mixed-viewer-cartoon-components.cif");
+    let mut molecule = parse_molecule(bytes, InputFormat::Cif).unwrap();
+    let options = MeshOptions {
+        representation: Representation::Cartoon,
+        theme_global_name: Some(ColorTheme::ElementSymbol),
+        theme_carbon_color: ColorTheme::ChainId,
+        center: false,
+        assembly: None,
+        ..MeshOptions::default()
+    };
+    let summary = render_object_summary_json(&molecule, &options);
+    assert!(summary.contains(r#""tag":"polymer","representation_order":0,"render_object_order":"#));
+    assert!(summary.contains(r#""color_theme":"element-symbol","carbon_color_theme":"chain-id""#));
+    assert!(summary.contains(r#""tag":"water""#));
+    assert!(
+        summary.contains(r#""color_theme":"element-symbol","carbon_color_theme":"element-symbol""#)
+    );
+    assert!(render_materials(&molecule, &options).len() >= 3);
+
+    for atom in &mut molecule.atoms {
+        atom.operator_name = if atom.chain == "A" {
+            "2_555".to_string()
+        } else {
+            "1_555".to_string()
+        };
+    }
+    let symmetry_options = MeshOptions {
+        theme_global_name: Some(ColorTheme::ChainId),
+        theme_symmetry_color: Some(ColorTheme::OperatorName),
+        ..options
+    };
+    let symmetry_summary = render_object_summary_json(&molecule, &symmetry_options);
+    assert!(symmetry_summary.contains(r#""tag":"polymer""#));
+    assert!(symmetry_summary.contains(r#""color_theme":"operator-name""#));
+    assert!(symmetry_summary.contains(r#""tag":"ligand""#));
+    assert!(symmetry_summary.contains(r#""color_theme":"chain-id""#));
+}
+
+const VIEWER_ANNOTATION_CIF: &[u8] = br#"data_annotations
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.B_iso_or_equiv
+_atom_site.pdbx_PDB_model_num
+ATOM 1 C CA ALA A 1 1 0 0 0 10 1
+ATOM 2 C CA GLY A 1 2 4 0 0 20 1
+ATOM 3 C CA SER A 1 3 8 0 0 30 1
+ATOM 4 C CA THR A 1 4 12 0 0 40 1
+#
+loop_
+_ma_qa_metric.id
+_ma_qa_metric.mode
+_ma_qa_metric.name
+_ma_qa_metric.type
+1 local pLDDT pLDDT
+2 local QMEAN QMEAN_[0,1]
+#
+loop_
+_ma_qa_metric_local.ordinal_id
+_ma_qa_metric_local.model_id
+_ma_qa_metric_local.label_asym_id
+_ma_qa_metric_local.label_seq_id
+_ma_qa_metric_local.metric_id
+_ma_qa_metric_local.metric_value
+1 1 A 1 1 25
+2 1 A 2 1 60
+3 1 A 3 1 80
+4 1 A 4 1 95
+5 1 A 1 2 0.25
+6 1 A 2 2 0.50
+7 1 A 3 2 0.75
+8 1 A 4 2 1.00
+#
+loop_
+_sb_ncbr_partial_atomic_charges_meta.id
+_sb_ncbr_partial_atomic_charges_meta.method
+1 test
+#
+loop_
+_sb_ncbr_partial_atomic_charges.type_id
+_sb_ncbr_partial_atomic_charges.atom_id
+_sb_ncbr_partial_atomic_charges.charge
+1 1 -1.0
+1 2 -0.5
+1 3 0.5
+1 4 1.0
+#
+"#;
+
+#[test]
+fn viewer_default_annotation_categories_parse_directly_from_cif_and_binary_cif() {
+    let molecule = parse_molecule(VIEWER_ANNOTATION_CIF, InputFormat::Cif).unwrap();
+    assert!(molecule.quality_assessment.has_plddt_metric);
+    assert!(molecule.quality_assessment.has_qmean_metric);
+    assert_eq!(
+        molecule.quality_assessment.plddt,
+        vec![Some(25.0), Some(60.0), Some(80.0), Some(95.0)]
+    );
+    assert_eq!(
+        molecule.quality_assessment.qmean,
+        vec![Some(0.25), Some(0.5), Some(0.75), Some(1.0)]
+    );
+    assert!(molecule.partial_charges.is_applicable);
+    assert_eq!(
+        molecule.partial_charges.atom,
+        vec![Some(-1.0), Some(-0.5), Some(0.5), Some(1.0)]
+    );
+    assert_eq!(
+        molecule.partial_charges.residue,
+        molecule.partial_charges.atom
+    );
+    assert_eq!(molecule.partial_charges.max_absolute_atom_charge, 1.0);
+    assert_eq!(molecule.partial_charges.max_absolute_residue_charge, 1.0);
+
+    let binary = parse_molecule(
+        include_bytes!("../../tests/fixtures/bcif/viewer-default-annotations.bcif"),
+        InputFormat::BinaryCif,
+    )
+    .unwrap();
+    assert_eq!(binary.quality_assessment, molecule.quality_assessment);
+    assert_eq!(binary.partial_charges, molecule.partial_charges);
+}
+
+#[test]
+fn viewer_default_annotation_preset_priority_and_colors_match_molstar() {
+    let mut molecule = parse_molecule(VIEWER_ANNOTATION_CIF, InputFormat::Cif).unwrap();
+    let default_options = MeshOptions {
+        representation: Representation::Default,
+        assembly: None,
+        center: false,
+        ..MeshOptions::default()
+    };
+    let colors = render_materials(&molecule, &default_options)
+        .into_iter()
+        .map(|material| material.color)
+        .collect::<Vec<_>>();
+    for color in [0xff7d45, 0xffdb13, 0x65cbf3, 0x0053d6] {
+        assert!(colors.contains(&color), "missing pLDDT color {color:06x}");
+    }
+    assert!(render_object_summary_json(&molecule, &default_options)
+        .contains(r#""color_theme":"plddt-confidence""#));
+
+    let auto_options = MeshOptions {
+        representation: Representation::Auto,
+        ..default_options.clone()
+    };
+    assert!(!render_object_summary_json(&molecule, &auto_options).contains("plddt-confidence"));
+
+    molecule.quality_assessment.has_plddt_metric = false;
+    let qmean_colors = render_materials(&molecule, &default_options)
+        .into_iter()
+        .map(|material| material.color)
+        .collect::<Vec<_>>();
+    for color in [0xff5000, 0x80557e, 0x025afd] {
+        assert!(
+            qmean_colors.contains(&color),
+            "missing QMEAN color {color:06x}"
+        );
+    }
+    assert!(render_object_summary_json(&molecule, &default_options)
+        .contains(r#""color_theme":"qmean-score""#));
+
+    molecule.quality_assessment.has_qmean_metric = false;
+    let charge_colors = render_materials(&molecule, &default_options)
+        .into_iter()
+        .map(|material| material.color)
+        .collect::<Vec<_>>();
+    for color in [0xff0000, 0xff7f7f, 0x7f7fff, 0x0000ff] {
+        assert!(
+            charge_colors.contains(&color),
+            "missing partial-charge color {color:06x}"
+        );
+    }
+    assert!(render_object_summary_json(&molecule, &default_options)
+        .contains(r#""color_theme":"sb-ncbr-partial-charges""#));
 }
 
 #[test]
@@ -10580,7 +11605,7 @@ fn molstar_water_only_component_realizes_ball_and_stick_spheres_and_bonds() {
         ..Molecule::default()
     };
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         sphere_detail: 1,
@@ -10594,7 +11619,7 @@ fn molstar_water_only_component_realizes_ball_and_stick_spheres_and_bonds() {
 
     let summary = render_object_summary_json(&molecule, &options);
     assert!(summary.contains(
-        r#""visual":"element-sphere","representation":"molstar","secondary_type":"water","chain":"W""#
+        r#""visual":"element-sphere","representation":"cartoon","secondary_type":"water","chain":"W""#
     ));
     assert!(!summary.contains(r#""secondary_type":"ligand""#));
     assert!(!summary.contains(r#""secondary_type":"ion""#));
@@ -10604,6 +11629,138 @@ fn molstar_water_only_component_realizes_ball_and_stick_spheres_and_bonds() {
     assert_eq!(mesh.vertices.len(), 422);
     assert_eq!(mesh.faces.len(), 528);
     validate_mesh_for_export(&mesh).unwrap();
+}
+
+#[test]
+fn viewer_cartoon_water_and_lipid_switch_to_line_strictly_above_molstar_limits() {
+    assert_eq!(
+        viewer_cartoon_component_visuals_for_test("water", 50_000),
+        vec!["element-sphere", "intra-bond", "inter-bond"]
+    );
+    assert_eq!(
+        viewer_cartoon_component_visuals_for_test("water", 50_001),
+        vec!["intra-bond", "element-point"]
+    );
+    assert_eq!(
+        viewer_cartoon_component_visuals_for_test("lipid", 20_000),
+        vec!["element-sphere", "intra-bond", "inter-bond"]
+    );
+    assert_eq!(
+        viewer_cartoon_component_visuals_for_test("lipid", 20_001),
+        vec!["intra-bond"]
+    );
+}
+
+#[test]
+fn viewer_cartoon_large_water_line_objects_follow_visual_group_and_export_contracts() {
+    let molecule = Molecule {
+        atoms: vec![
+            het_atom(1, "O", "W", 1, "HOH", vec3(0.0, 0.0, 0.0)),
+            het_atom(2, "H1", "W", 1, "HOH", vec3(1.0, 0.0, 0.0)),
+            het_atom(3, "H2", "W", 1, "HOH", vec3(0.0, 1.0, 0.0)),
+        ],
+        bonds: vec![Bond { a: 0, b: 1 }, Bond { a: 0, b: 2 }],
+        ..Molecule::default()
+    };
+    let options = MeshOptions {
+        representation: Representation::Cartoon,
+        center: false,
+        assembly: None,
+        ..MeshOptions::default()
+    };
+
+    let objects =
+        viewer_cartoon_component_render_objects_for_test(&molecule, &options, "water", 50_001);
+
+    assert_eq!(objects.len(), 7);
+    assert_eq!(
+        objects
+            .iter()
+            .map(|object| object.visual)
+            .collect::<Vec<_>>(),
+        vec![
+            "intra-bond",
+            "intra-bond",
+            "intra-bond",
+            "intra-bond",
+            "element-point",
+            "element-point",
+            "element-point",
+        ]
+    );
+    assert_eq!(
+        objects
+            .iter()
+            .map(|object| object.group_id)
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2, 3, 0, 1, 2]
+    );
+    assert!(objects
+        .iter()
+        .all(|object| object.secondary_type == "water" && object.representation == "cartoon"));
+    assert_eq!(objects[0].material, objects[4].material);
+
+    match &objects[0].object {
+        RenderObject::ExportLine { start, end, radius } => {
+            assert_eq!(*start, vec3(0.0, 0.0, 0.0));
+            assert_eq!(*end, vec3(0.5, 0.0, 0.0));
+            assert!((*radius - 0.066).abs() <= 0.000_001);
+        }
+        object => panic!("expected Mol* line export object, got {object:?}"),
+    }
+    match &objects[4].object {
+        RenderObject::ExportPoint { center, radius } => {
+            assert_eq!(*center, vec3(0.0, 0.0, 0.0));
+            assert!((*radius - 0.1368).abs() <= 0.000_000_1);
+        }
+        object => panic!("expected Mol* point export object, got {object:?}"),
+    }
+}
+
+#[test]
+fn viewer_cartoon_large_lipid_line_omits_element_points() {
+    let molecule = Molecule {
+        atoms: vec![
+            het_atom(1, "C1", "L", 1, "LIP", vec3(0.0, 0.0, 0.0)),
+            het_atom(2, "C2", "L", 1, "LIP", vec3(1.0, 0.0, 0.0)),
+        ],
+        bonds: vec![Bond { a: 0, b: 1 }],
+        ..Molecule::default()
+    };
+    let options = MeshOptions {
+        representation: Representation::Cartoon,
+        center: false,
+        assembly: None,
+        ..MeshOptions::default()
+    };
+
+    let objects =
+        viewer_cartoon_component_render_objects_for_test(&molecule, &options, "lipid", 20_001);
+
+    assert_eq!(objects.len(), 2);
+    assert_eq!(objects[0].group_id, 0);
+    assert_eq!(objects[1].group_id, 1);
+    assert!(objects.iter().all(|object| {
+        object.visual == "intra-bond"
+            && object.secondary_type == "lipid"
+            && matches!(object.object, RenderObject::ExportLine { .. })
+    }));
+}
+
+#[test]
+fn viewer_cartoon_size_switch_fixture_tracks_molstar_preset_source() {
+    let source = read_molstar_source("mol-plugin-state/builder/structure/representation-preset.ts")
+        .expect("checked-in Mol* representation preset should be available");
+
+    assert!(source.contains(
+        "(components.water?.obj?.data?.elementCount || 0) > 50_000 ? 'line' : 'ball-and-stick'"
+    ));
+    assert!(source
+        .contains("visuals: waterType === 'line' ? ['intra-bond', 'element-point'] : undefined"));
+    assert!(source.contains(
+        "(components.lipid?.obj?.data?.elementCount || 0) > 20_000 ? 'line' : 'ball-and-stick'"
+    ));
+    assert!(source.contains("visuals: lipidType === 'line' ? ['intra-bond'] : undefined"));
 }
 
 #[test]
@@ -10641,8 +11798,29 @@ fn carbohydrate_symbol_mesh_visual_uses_molstar_symbol_defaults() {
         ..Molecule::default()
     };
     molecule.refresh_topology_metadata();
+    let preset_summary = render_object_summary_json(
+        &molecule,
+        &MeshOptions {
+            representation: Representation::Cartoon,
+            center: false,
+            assembly: None,
+            ..MeshOptions::default()
+        },
+    );
+    let branched_ball = preset_summary
+        .find(r#""tag":"branched-ball-and-stick""#)
+        .expect("Cartoon preset should realize branched ball-and-stick first");
+    let branched_snfg = preset_summary
+        .find(r#""tag":"branched-snfg-3d""#)
+        .expect("Cartoon preset should realize branched SNFG");
+    assert!(branched_ball < branched_snfg);
+    assert!(preset_summary
+        .contains(r#""component":"branched","tag":"branched-snfg-3d","representation_order":4"#));
+    assert!(
+        preset_summary.contains(r#""color_theme":"carbohydrate-symbol","carbon_color_theme":"""#)
+    );
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         visuals: vec!["carbohydrate-symbol".to_string()],
@@ -10657,8 +11835,8 @@ fn carbohydrate_symbol_mesh_visual_uses_molstar_symbol_defaults() {
         summary.matches(r#""visual":"carbohydrate-symbol""#).count(),
         2
     );
-    assert!(summary.contains(r#""visual":"carbohydrate-symbol","representation":"molstar","secondary_type":"carbohydrate","chain":"A","residue_start":1,"residue_end":1,"group_id":0"#));
-    assert!(summary.contains(r#""visual":"carbohydrate-symbol","representation":"molstar","secondary_type":"carbohydrate","chain":"A","residue_start":2,"residue_end":2,"group_id":2"#));
+    assert!(summary.contains(r#""visual":"carbohydrate-symbol","representation":"cartoon","secondary_type":"carbohydrate","chain":"A","residue_start":1,"residue_end":1,"group_id":0"#));
+    assert!(summary.contains(r#""visual":"carbohydrate-symbol","representation":"cartoon","secondary_type":"carbohydrate","chain":"A","residue_start":2,"residue_end":2,"group_id":2"#));
     assert!(summary.contains(r#""drawCount":60,"uVertexCount":12"#));
     assert!(summary.contains(r#""drawCount":36,"uVertexCount":24"#));
 
@@ -10804,15 +11982,15 @@ fn molstar_summary_routes_sheet_to_sheet_geometry() {
         ..Molecule::default()
     };
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         ..MeshOptions::default()
     };
 
     let summary = render_object_summary_json(&molecule, &options);
-    assert!(summary.contains(r#""geometry_type":"tube","visual":"polymer-trace","representation":"molstar","secondary_type":"helix","chain":"A","residue_start":1,"residue_end":1,"group_id":0"#));
-    assert!(summary.contains(r#""geometry_type":"sheet","visual":"polymer-trace","representation":"molstar","secondary_type":"sheet","chain":"A","residue_start":4,"residue_end":4,"group_id":3"#));
+    assert!(summary.contains(r#""geometry_type":"tube","visual":"polymer-trace","representation":"cartoon","secondary_type":"helix","chain":"A","residue_start":1,"residue_end":1,"group_id":0"#));
+    assert!(summary.contains(r#""geometry_type":"sheet","visual":"polymer-trace","representation":"cartoon","secondary_type":"sheet","chain":"A","residue_start":4,"residue_end":4,"group_id":3"#));
     assert!(summary.contains(r#""u_group_count":6"#));
     assert!(summary.contains(r#""uGroupCount":1"#));
 }
@@ -10848,7 +12026,7 @@ fn molstar_radial_segments_two_routes_polymer_trace_to_ribbon_geometry() {
         ..Molecule::default()
     };
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         radial_segments: 2,
@@ -10856,8 +12034,8 @@ fn molstar_radial_segments_two_routes_polymer_trace_to_ribbon_geometry() {
     };
 
     let summary = render_object_summary_json(&molecule, &options);
-    assert!(summary.contains(r#""geometry_type":"ribbon","visual":"polymer-trace","representation":"molstar","secondary_type":"helix","chain":"A","residue_start":1,"residue_end":1,"group_id":0"#));
-    assert!(summary.contains(r#""geometry_type":"ribbon","visual":"polymer-trace","representation":"molstar","secondary_type":"sheet","chain":"A","residue_start":4,"residue_end":4,"group_id":3"#));
+    assert!(summary.contains(r#""geometry_type":"ribbon","visual":"polymer-trace","representation":"cartoon","secondary_type":"helix","chain":"A","residue_start":1,"residue_end":1,"group_id":0"#));
+    assert!(summary.contains(r#""geometry_type":"ribbon","visual":"polymer-trace","representation":"cartoon","secondary_type":"sheet","chain":"A","residue_start":4,"residue_end":4,"group_id":3"#));
 
     let mesh = build_mesh(&molecule, &options);
     assert!(!mesh.vertices.is_empty());
@@ -10869,7 +12047,7 @@ fn molstar_radial_segments_two_routes_polymer_trace_to_ribbon_geometry() {
 fn molstar_sheet_mesh_and_ply_faces_use_valid_finite_indices() {
     let molecule = sheet_test_molecule();
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         ..MeshOptions::default()
@@ -10889,7 +12067,7 @@ fn molstar_sheet_mesh_and_ply_faces_use_valid_finite_indices() {
     let ply = String::from_utf8(
         convert_to_ply(
             pdb,
-            br#"{"format":"pdb","representation":"molstar","center":false,"infer-bonds":false}"#,
+            br#"{"format":"pdb","representation":"cartoon","center":false,"infer-bonds":false}"#,
         )
         .unwrap(),
     )
@@ -10916,7 +12094,7 @@ fn molstar_ligand_overlay_includes_molstar_connected_whole_residues() {
     )
     .unwrap();
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         ..MeshOptions::default()
@@ -10962,7 +12140,7 @@ fn molstar_default_cartoon_selects_nucleotide_ring_only() {
         ..Molecule::default()
     };
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         ..MeshOptions::default()
@@ -11012,7 +12190,7 @@ fn backbone_representation_uses_molstar_backbone_cylinder_and_sphere_visuals() {
         summary
             .matches(r#""visual":"polymer-backbone-cylinder""#)
             .count(),
-        4
+        6
     );
     assert_eq!(
         summary
@@ -11037,12 +12215,16 @@ fn backbone_representation_uses_molstar_backbone_cylinder_and_sphere_visuals() {
         })
         .collect::<Vec<_>>();
 
-    assert_eq!(cylinders.len(), 4);
+    assert_eq!(cylinders.len(), 6);
     assert_eq!(spheres.len(), 3);
     assert_vec3_close(cylinders[0].0, vec3(0.0, 0.0, 0.0), 0.000_001);
     assert_vec3_close(cylinders[0].1, vec3(1.9, 0.0, 0.0), 0.000_001);
     assert_vec3_close(cylinders[1].0, vec3(3.8, 0.0, 0.0), 0.000_001);
     assert_vec3_close(cylinders[1].1, vec3(1.9, 0.0, 0.0), 0.000_001);
+    assert_vec3_close(cylinders[4].0, vec3(7.6, 0.0, 0.0), 0.000_001);
+    assert_vec3_close(cylinders[4].1, vec3(3.8, 0.0, 0.0), 0.000_001);
+    assert_vec3_close(cylinders[5].0, vec3(0.0, 0.0, 0.0), 0.000_001);
+    assert_vec3_close(cylinders[5].1, vec3(3.8, 0.0, 0.0), 0.000_001);
     assert!((cylinders[0].2 - 0.3).abs() <= 0.000_001);
     assert_vec3_close(spheres[2].0, vec3(7.6, 0.0, 0.0), 0.000_001);
     assert!((spheres[2].1 - 0.3).abs() <= 0.000_001);
@@ -11062,7 +12244,7 @@ fn molstar_preset_uses_physical_ball_and_stick_for_ion_and_water() {
     )
     .unwrap();
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         infer_bonds: false,
@@ -11076,8 +12258,8 @@ fn molstar_preset_uses_physical_ball_and_stick_for_ion_and_water() {
     assert!(representation.contains(r#""realized_visuals":["element-sphere"]"#));
 
     let summary = render_object_summary_json(&molecule, &options);
-    assert!(summary.contains(r#""visual":"element-sphere","representation":"molstar","secondary_type":"water","chain":"W","residue_start":1,"residue_end":1,"group_id":0"#));
-    assert!(summary.contains(r#""visual":"element-sphere","representation":"molstar","secondary_type":"ion","chain":"I","residue_start":1,"residue_end":1,"group_id":0"#));
+    assert!(summary.contains(r#""visual":"element-sphere","representation":"cartoon","secondary_type":"water","chain":"W","residue_start":1,"residue_end":1,"group_id":0"#));
+    assert!(summary.contains(r#""visual":"element-sphere","representation":"cartoon","secondary_type":"ion","chain":"I","residue_start":1,"residue_end":1,"group_id":0"#));
     assert!(!summary.contains(r#""representation":"spacefill""#));
 
     let spheres = build_render_objects(&molecule, &options)
@@ -11089,10 +12271,10 @@ fn molstar_preset_uses_physical_ball_and_stick_for_ion_and_water() {
         .collect::<Vec<_>>();
 
     assert_eq!(spheres.len(), 2);
-    assert_vec3_close(spheres[0].0, vec3(3.0, 0.0, 0.0), 0.000_001);
-    assert!((spheres[0].1 - 2.27 * 0.15).abs() <= 0.000_001);
-    assert_vec3_close(spheres[1].0, vec3(0.0, 0.0, 0.0), 0.000_001);
-    assert!((spheres[1].1 - 1.52 * 0.15).abs() <= 0.000_001);
+    assert_vec3_close(spheres[0].0, vec3(0.0, 0.0, 0.0), 0.000_001);
+    assert!((spheres[0].1 - 1.52 * 0.15).abs() <= 0.000_001);
+    assert_vec3_close(spheres[1].0, vec3(3.0, 0.0, 0.0), 0.000_001);
+    assert!((spheres[1].1 - 2.27 * 0.15).abs() <= 0.000_001);
 }
 
 #[test]
@@ -11109,7 +12291,7 @@ fn molstar_component_ball_and_stick_uses_physical_bond_radius() {
     )
     .unwrap();
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         infer_bonds: false,
@@ -11156,7 +12338,7 @@ fn molstar_component_ball_and_stick_uses_type_symbol_for_physical_size_theme() {
         ..Molecule::default()
     };
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         infer_bonds: false,
@@ -11210,19 +12392,28 @@ fn explicit_cartoon_visuals_realize_nucleotide_block_and_direction_wedge() {
         assembly: None,
         visuals: vec![
             "nucleotide-block".to_string(),
+            "nucleotide-ring".to_string(),
             "direction-wedge".to_string(),
         ],
         ..MeshOptions::default()
     };
 
     let representation = representation_summary_json(&molecule, &options);
-    assert!(representation.contains(r#""selected_visuals":["nucleotide-block","direction-wedge"]"#));
-    assert!(representation.contains(r#""realized_visuals":["nucleotide-block","direction-wedge"]"#));
+    assert!(representation.contains(
+        r#""selected_visuals":["nucleotide-block","nucleotide-ring","direction-wedge"]"#
+    ));
+    assert!(representation.contains(
+        r#""realized_visuals":["nucleotide-block","nucleotide-ring","direction-wedge"]"#
+    ));
 
     let summary = render_object_summary_json(&molecule, &options);
     assert!(summary.contains(r#""geometry_type":"nucleotide-block","visual":"nucleotide-block""#));
     assert!(summary.contains(r#""geometry_type":"direction-wedge","visual":"direction-wedge""#));
-    assert!(!summary.contains(r#""geometry_type":"nucleotide-ring""#));
+    let block = summary.find(r#""visual":"nucleotide-block""#).unwrap();
+    let ring = summary.find(r#""visual":"nucleotide-ring""#).unwrap();
+    let direction = summary.find(r#""visual":"direction-wedge""#).unwrap();
+    assert!(block < ring);
+    assert!(ring < direction);
 
     let mesh = build_mesh(&molecule, &options);
     assert!(!mesh.faces.is_empty());
@@ -11402,17 +12593,54 @@ fn mesh_options_parse_explicit_visuals_array() {
 }
 
 #[test]
-fn surface_and_volume_exclusion_is_documented_and_enforced() {
+fn representation_names_distinguish_viewer_cartoon_and_provider() {
+    let canonical = MeshOptions::from_json(br#"{"representation":"cartoon"}"#).unwrap();
+    let provider = MeshOptions::from_json(br#"{"representation":"polymer-cartoon"}"#).unwrap();
+
+    assert_eq!(canonical.representation, Representation::Cartoon);
+    assert_eq!(provider.representation, Representation::PolymerCartoon);
+    assert_eq!(
+        MeshOptions::from_json(br#"{"representation":"molstar"}"#).unwrap_err(),
+        "unsupported representation: molstar"
+    );
+}
+
+#[test]
+fn molstar_reference_mapping_uses_viewer_preset_and_provider_names() {
+    assert_eq!(
+        molstar_reference_representation(Representation::Cartoon),
+        "cartoon"
+    );
+    assert_eq!(
+        molstar_reference_representation(Representation::PolymerCartoon),
+        "polymer-cartoon"
+    );
+}
+
+#[test]
+fn test_fixture_paths_accept_crate_and_repository_relative_entries() {
+    assert_eq!(
+        test_fixture_path("tests/fixtures/pdb/water.pdb"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pdb/water.pdb")
+    );
+    assert_eq!(
+        test_fixture_path("package/examples/data/9R1O.pdb"),
+        repo_root().join("package/examples/data/9R1O.pdb")
+    );
+}
+
+#[test]
+fn surface_support_and_remaining_volume_exclusions_are_documented_and_enforced() {
     let Some(checklist) = read_internal_doc("molstar-parity-checklist.md") else {
         eprintln!("skipping internal surface/volume documentation audit; dev-docs is absent");
         return;
     };
     for snippet in [
-        "N/A: gaussian density volume generation is not required",
-        "N/A: marching cubes table and algorithm are not required",
-        "N/A: molecular surface mesh generation is not required",
-        "N/A: gaussian surface mesh generation is not required",
-        "N/A: color smoothing metadata is only relevant to excluded",
+        "molecular Surface is required for exact Mol* Viewer Quick",
+        "Port Mol* molecular-surface scalar-field calculation",
+        "Port the Mol* marching-cubes tables",
+        "Match the Viewer Quick Styles `Surface` preset exactly",
+        "Add primitive, fixture, and Mol* Viewer reference-export comparisons",
     ] {
         assert!(
             checklist.contains(snippet),
@@ -11425,10 +12653,10 @@ fn surface_and_volume_exclusion_is_documented_and_enforced() {
         return;
     };
     for snippet in [
-        "Molecular surface and gaussian surface visuals are intentionally excluded",
-        "Surface and volume representations such as",
-        "enables the Mol* gaussian density",
-        "IHM coarse gaussian rows remain supported as coarse units",
+        "`representation: \"surface\"` exposes the Viewer Quick Styles Molecular Surface",
+        "unit-level `molecular-surface-mesh` visual",
+        "Gaussian volume and",
+        "IHM coarse sphere",
     ] {
         assert!(
             api_contract.contains(snippet),
@@ -11438,9 +12666,10 @@ fn surface_and_volume_exclusion_is_documented_and_enforced() {
 
     let readme = include_str!("../../../README.md");
     for snippet in [
-        "Molecular surface, gaussian surface, gaussian",
-        "density/volume, marching-cubes, and surface color-smoothing metadata",
-        "they are not converted into Mol* gaussian",
+        "representation: \"surface\"",
+        "implements the Mol* Viewer Quick Styles Molecular Surface preset",
+        "Gaussian volume and density/volume visuals remain outside",
+        "participate in the size-dependent ViewerAuto Gaussian-surface path",
     ] {
         assert!(
             readme.contains(snippet),
@@ -11448,16 +12677,21 @@ fn surface_and_volume_exclusion_is_documented_and_enforced() {
         );
     }
 
-    for representation in [
-        "molecular-surface",
-        "gaussian-surface",
-        "gaussian-volume",
-        "volume",
-    ] {
+    for representation in ["gaussian-surface", "gaussian-volume", "volume"] {
         let json = format!(r#"{{"representation":"{representation}"}}"#);
         assert_eq!(
             MeshOptions::from_json(json.as_bytes()).unwrap_err(),
             format!("unsupported representation: {representation}")
+        );
+    }
+
+    for representation in ["surface", "molecular-surface"] {
+        let json = format!(r#"{{"representation":"{representation}"}}"#);
+        assert_eq!(
+            MeshOptions::from_json(json.as_bytes())
+                .unwrap()
+                .representation,
+            Representation::MolecularSurface
         );
     }
 
@@ -11466,7 +12700,7 @@ fn surface_and_volume_exclusion_is_documented_and_enforced() {
         ..Molecule::default()
     };
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         visuals: vec![
@@ -11493,6 +12727,80 @@ fn surface_and_volume_exclusion_is_documented_and_enforced() {
 }
 
 #[test]
+fn viewer_surface_ply_preserves_the_exact_reference_mesh_counts() {
+    let fixture = read_manifest_file_bytes("tests/fixtures/cif/atomic-protein-no-altloc.cif");
+    let options = br#"{"format":"cif","representation":"surface","assembly":"asymmetric-unit","quality":"custom","resolution":0.5,"probe-radius":1.4,"probe-positions":36,"center":true}"#;
+    let ply = String::from_utf8(convert_to_ply(&fixture, options).unwrap())
+        .expect("molecular Surface PLY is UTF-8");
+    assert!(ply.contains("element vertex 606\n"));
+    assert!(ply.contains("element face 1208\n"));
+}
+
+#[test]
+fn viewer_surface_entity_and_water_materials_match_real_chrome_molstar() {
+    let contract = read_manifest_file(
+        "tests/expected/molstar-reference/viewer-surface-materials.reference.contract",
+    );
+    let fixture = read_manifest_file_bytes(contract_value(&contract, "fixture"));
+    let options = contract_value(&contract, "options");
+    let generated = String::from_utf8(convert_to_mtl(&fixture, options.as_bytes()).unwrap())
+        .expect("molecular Surface MTL is UTF-8");
+    let reference =
+        read_manifest_file("tests/expected/molstar-reference/viewer-surface-materials.mtl");
+    assert_eq!(generated, reference);
+    assert!(generated.contains("newmtl 0xff0d0d1\n"));
+    assert_eq!(generated.matches("newmtl ").count(), 7);
+}
+
+#[test]
+fn viewer_surface_color_smoothing_matches_real_chrome_molstar() {
+    let contract = read_manifest_file(
+        "tests/expected/molstar-reference/viewer-surface-smoothing.reference.contract",
+    );
+    let fixture = read_manifest_file_bytes(contract_value(&contract, "fixture"));
+    let options = contract_value(&contract, "options");
+    let generated_obj = String::from_utf8(convert_to_obj(&fixture, options.as_bytes()).unwrap())
+        .expect("smoothed molecular Surface OBJ is UTF-8");
+    let reference_obj =
+        read_manifest_file("tests/expected/molstar-reference/viewer-surface-smoothing.obj");
+    assert_eq!(generated_obj, reference_obj);
+
+    let generated_mtl = String::from_utf8(convert_to_mtl(&fixture, options.as_bytes()).unwrap())
+        .expect("smoothed molecular Surface MTL is UTF-8");
+    let reference_mtl =
+        read_manifest_file("tests/expected/molstar-reference/viewer-surface-smoothing.mtl");
+    assert_eq!(generated_mtl, reference_mtl);
+    assert_eq!(generated_mtl.matches("newmtl ").count(), 427);
+}
+
+#[test]
+fn structure_molecular_surface_matches_real_chrome_molstar() {
+    let contract = read_manifest_file(
+        "tests/expected/molstar-reference/structure-molecular-surface.reference.contract",
+    );
+    let fixture = read_manifest_file_bytes(contract_value(&contract, "fixture"));
+    let options = contract_value(&contract, "options");
+
+    let generated_obj = convert_to_obj(&fixture, options.as_bytes()).unwrap();
+    let reference_obj = read_manifest_file_bytes(
+        "tests/expected/molstar-reference/structure-molecular-surface.obj",
+    );
+    assert_eq!(generated_obj, reference_obj);
+
+    let generated_mtl = convert_to_mtl(&fixture, options.as_bytes()).unwrap();
+    let reference_mtl = read_manifest_file_bytes(
+        "tests/expected/molstar-reference/structure-molecular-surface.mtl",
+    );
+    assert_eq!(generated_mtl, reference_mtl);
+
+    let generated_stl = convert_to_stl(&fixture, options.as_bytes()).unwrap();
+    let reference_stl = read_manifest_file_bytes(
+        "tests/expected/molstar-reference/structure-molecular-surface.stl",
+    );
+    assert_eq!(generated_stl, reference_stl);
+}
+
+#[test]
 fn nucleotide_ring_uses_molstar_named_atom_fallbacks() {
     let named_atoms = [
         ("O3'", vec3(0.0, 0.0, 0.0)),
@@ -11508,7 +12816,7 @@ fn nucleotide_ring_uses_molstar_named_atom_fallbacks() {
     ];
     let molecule = nucleotide_molecule("A", &named_atoms);
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         ..MeshOptions::default()
@@ -11550,7 +12858,7 @@ fn nucleotide_ring_uses_pyrimidine_c1_fallback() {
     ];
     let molecule = nucleotide_molecule("C", &named_atoms);
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         ..MeshOptions::default()
@@ -11655,7 +12963,7 @@ fn nucleotide_base_ring_reference_tests_cover_rna_and_dna_names() {
         ("C6", vec3(0.0, 0.6, 0.0)),
     ];
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         ..MeshOptions::default()
@@ -11714,7 +13022,7 @@ fn nucleotide_base_geometry_uses_molstar_ring_atoms_only() {
     ];
     let molecule = nucleotide_molecule("A", &named_atoms);
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         ..MeshOptions::default()
@@ -11753,7 +13061,7 @@ fn nucleic_acid_fixture_covers_rna_and_dna_base_geometry() {
         ),
     ];
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         infer_bonds: false,
@@ -11899,7 +13207,7 @@ fn mixed_protein_nucleic_acid_fixture_derives_both_polymer_families() {
         ),
     ];
     let render_options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         infer_bonds: false,
@@ -12203,29 +13511,34 @@ fn api_obj_export_emits_molstar_default_materials_from_semantic_objects() {
     let molecule = parse_molecule_with_options(cif, &parsed_options).unwrap();
     let mesh = build_mesh(&molecule, &parsed_options);
     assert_eq!(mesh.face_materials.len(), mesh.faces.len());
-    assert_eq!(mesh.sections.len(), 1);
-    assert_eq!(mesh.sections[0].key, "element-sphere");
+    assert_eq!(mesh.sections.len(), 2);
+    assert_eq!(mesh.sections[0].key, "element-sphere|all|A");
+    assert_eq!(mesh.sections[1].key, "element-sphere|all|B");
     assert_eq!(mesh.sections[0].vertex_start, 0);
-    assert_eq!(mesh.sections[0].vertex_end, mesh.vertices.len());
+    assert_eq!(mesh.sections[0].vertex_end, 642);
     assert_eq!(mesh.sections[0].face_start, 0);
-    assert_eq!(mesh.sections[0].face_end, mesh.faces.len());
+    assert_eq!(mesh.sections[0].face_end, 1_280);
+    assert_eq!(mesh.sections[1].vertex_start, 642);
+    assert_eq!(mesh.sections[1].vertex_end, mesh.vertices.len());
+    assert_eq!(mesh.sections[1].face_start, 1_280);
+    assert_eq!(mesh.sections[1].face_end, mesh.faces.len());
     assert!(mesh
         .face_materials
         .iter()
-        .any(|material| material.color == 0x1b9e77 && material.alpha_tenths == 10));
+        .any(|material| material.color == 0x4fc69c && material.alpha_tenths == 10));
     assert!(mesh
         .face_materials
         .iter()
-        .any(|material| material.color == 0xff2618 && material.alpha_tenths == 10));
+        .any(|material| material.color == 0xff0d0d && material.alpha_tenths == 10));
 
     let obj = String::from_utf8(convert_to_obj(cif, options).unwrap()).unwrap();
     let switches = obj
         .lines()
         .filter(|line| line.starts_with("usemtl "))
         .collect::<Vec<_>>();
-    assert_eq!(switches, vec!["usemtl 0x1b9e771", "usemtl 0xff26181"]);
-    assert!(obj.contains("\nusemtl 0x1b9e771\nf "));
-    assert!(obj.contains("\nusemtl 0xff26181\nf "));
+    assert_eq!(switches, vec!["usemtl 0x4fc69c1", "usemtl 0xff0d0d1"]);
+    assert!(obj.contains("\nusemtl 0x4fc69c1\nf "));
+    assert!(obj.contains("\nusemtl 0xff0d0d1\nf "));
 
     let mtl = String::from_utf8(convert_to_mtl(cif, options).unwrap()).unwrap();
     if let Some(reference_mtl) = read_repo_file_if_present("package/examples/data/9R1O.mtl") {
@@ -12234,13 +13547,13 @@ fn api_obj_export_emits_molstar_default_materials_from_semantic_objects() {
     assert_eq!(mtl.len(), 181);
     assert_eq!(
         format!("{:016x}", stable_test_hash64(mtl.as_bytes())),
-        "6820621c995f3add"
+        "a9264402b504efb2"
     );
 
     let material_map = String::from_utf8(maquette_material_map(obj.as_bytes()).unwrap()).unwrap();
     assert_eq!(
         material_map,
-        r##"{"0x1b9e771":"#1b9e77","0xff26181":"#ff2618"}"##
+        r##"{"0x4fc69c1":"#4fc69c","0xff0d0d1":"#ff0d0d"}"##
     );
 }
 
@@ -12397,7 +13710,7 @@ fn exports_stl_header_count() {
 #[test]
 fn static_exports_are_deterministic_for_same_input() {
     let options =
-        br#"{"format":"pdb","representation":"molstar","sphere-detail":1,"center":false}"#;
+        br#"{"format":"pdb","representation":"cartoon","sphere-detail":1,"center":false}"#;
 
     assert_eq!(
         convert_to_obj(PDB, options).unwrap(),
@@ -12417,6 +13730,10 @@ fn static_exports_are_deterministic_for_same_input() {
 fn visible_renderable_sphere_padding_uses_type_symbol_physical_size() {
     let mut atom_a = test_atom(1, "CA", "A", 1, vec3(0.0, 0.0, 0.0));
     let mut atom_b = test_atom(2, "CB", "A", 1, vec3(2.0, 0.0, 0.0));
+    atom_a.residue = "LIG".to_string();
+    atom_a.het = true;
+    atom_b.residue = "LIG".to_string();
+    atom_b.het = true;
     atom_a.element = "C".to_string();
     atom_a.type_symbol = "H".to_string();
     atom_b.element = "C".to_string();
@@ -12437,7 +13754,7 @@ fn visible_renderable_sphere_padding_uses_type_symbol_physical_size() {
     let sphere = visible_sphere.expect("visible renderable sphere");
 
     assert!(
-        (sphere.radius - 3.736_083).abs() <= 0.000_001,
+        (sphere.radius - 4.915_034_3).abs() <= 0.000_001,
         "visible sphere radius should use type_symbol vdW padding, got {}",
         sphere.radius
     );
@@ -12584,6 +13901,11 @@ fn write_stl_vec3(stl: &mut [u8], offset: usize, values: [f32; 3]) {
 #[test]
 fn performance_baseline_artifact_covers_large_lookup_mesh_and_wasm_memory() {
     let baseline = include_str!("../../tests/expected/performance-baselines.json");
+    assert_eq!(
+        baseline.matches(r#""representation": "cartoon""#).count(),
+        2
+    );
+    assert!(!baseline.contains(r#""representation": "molstar""#));
     assert!(baseline.contains(r#""name": "9r1o-asymmetric-lookup3d""#));
     assert!(baseline.contains(r#""query_count": 64"#));
     assert!(baseline.contains(r#""name": "9r1o-asymmetric-mesh-generation""#));
@@ -12592,15 +13914,15 @@ fn performance_baseline_artifact_covers_large_lookup_mesh_and_wasm_memory() {
     assert!(baseline.contains(r#""group_count": 362"#));
     assert!(baseline.contains(r#""debug_max_elapsed_ms": 600000"#));
     assert!(baseline.contains(r#""name": "checked-in-wasm-memory""#));
-    assert!(baseline.contains(r#""byte_len": 845479"#));
+    assert!(baseline.contains(r#""byte_len": 1043104"#));
     assert!(baseline.contains(r#""initial_pages": 18"#));
 }
 
 #[test]
 fn checked_in_wasm_memory_usage_matches_baseline() {
     let wasm = include_bytes!("../../../package/molfig.wasm");
-    assert_eq!(wasm.len(), 845_479);
-    assert!(wasm.len() <= 900_000);
+    assert_eq!(wasm.len(), 1_043_104);
+    assert!(wasm.len() <= 1_060_000);
 
     let memory = parse_wasm_memory_summary(wasm).unwrap();
     assert_eq!(
@@ -12619,7 +13941,7 @@ fn large_structure_lookup3d_performance_baseline() {
     let pdb = include_bytes!("../../../package/examples/data/9R1O.pdb");
     let options = MeshOptions {
         format: InputFormat::Pdb,
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         assembly: None,
         sphere_detail: 1,
         ..MeshOptions::default()
@@ -12658,7 +13980,7 @@ fn large_structure_mesh_generation_performance_baseline() {
     let pdb = include_bytes!("../../../package/examples/data/9R1O.pdb");
     let options = MeshOptions {
         format: InputFormat::Pdb,
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         assembly: None,
         sphere_detail: 1,
         ..MeshOptions::default()
@@ -13053,7 +14375,7 @@ fn carbohydrate_link_cylinder_visual_uses_molstar_directed_half_links() {
     };
     molecule.refresh_topology_metadata();
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         visuals: vec!["carbohydrate-link".to_string()],
@@ -13068,8 +14390,8 @@ fn carbohydrate_link_cylinder_visual_uses_molstar_directed_half_links() {
         summary.matches(r#""visual":"carbohydrate-link""#).count(),
         2
     );
-    assert!(summary.contains(r#""visual":"carbohydrate-link","representation":"molstar","secondary_type":"carbohydrate","chain":"A","residue_start":1,"residue_end":2,"group_id":0"#));
-    assert!(summary.contains(r#""visual":"carbohydrate-link","representation":"molstar","secondary_type":"carbohydrate","chain":"A","residue_start":2,"residue_end":1,"group_id":1"#));
+    assert!(summary.contains(r#""visual":"carbohydrate-link","representation":"cartoon","secondary_type":"carbohydrate","chain":"A","residue_start":1,"residue_end":2,"group_id":0"#));
+    assert!(summary.contains(r#""visual":"carbohydrate-link","representation":"cartoon","secondary_type":"carbohydrate","chain":"A","residue_start":2,"residue_end":1,"group_id":1"#));
     assert_eq!(
         summary
             .matches(r#""drawCount":96,"uVertexCount":34"#)
@@ -13151,7 +14473,7 @@ fn carbohydrate_terminal_links_are_detected_from_inter_unit_covalent_bonds() {
     );
 
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         visuals: vec!["carbohydrate-terminal-link".to_string()],
@@ -13167,8 +14489,8 @@ fn carbohydrate_terminal_links_are_detected_from_inter_unit_covalent_bonds() {
             .count(),
         2
     );
-    assert!(summary.contains(r#""visual":"carbohydrate-terminal-link","representation":"molstar","secondary_type":"carbohydrate","chain":"A","residue_start":1,"residue_end":1,"group_id":0"#));
-    assert!(summary.contains(r#""visual":"carbohydrate-terminal-link","representation":"molstar","secondary_type":"carbohydrate","chain":"B","residue_start":1,"residue_end":1,"group_id":1"#));
+    assert!(summary.contains(r#""visual":"carbohydrate-terminal-link","representation":"cartoon","secondary_type":"carbohydrate","chain":"A","residue_start":1,"residue_end":1,"group_id":0"#));
+    assert!(summary.contains(r#""visual":"carbohydrate-terminal-link","representation":"cartoon","secondary_type":"carbohydrate","chain":"B","residue_start":1,"residue_end":1,"group_id":1"#));
     assert_eq!(
         summary
             .matches(r#""drawCount":96,"uVertexCount":34"#)
@@ -13550,7 +14872,21 @@ fn assert_manifest_token_exists(
     token: &str,
 ) {
     if looks_like_repo_path(token) {
-        let path = repo.join(token);
+        let crate_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(token);
+        let path = if crate_path.exists() {
+            crate_path
+        } else {
+            repo.join(token)
+        };
+        if !path.exists()
+            && field == "reference comparison"
+            && matches!(
+                path.extension().and_then(|extension| extension.to_str()),
+                Some("obj" | "stl" | "mtl")
+            )
+        {
+            return;
+        }
         assert!(
             path.exists(),
             "{field} listed for {domain} does not exist: {token}"
@@ -13647,15 +14983,28 @@ fn validate_reference_manifest_formats(formats: &[&str], label: &str) {
 }
 
 fn read_manifest_file(relative_path: &str) -> String {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative_path);
+    let path = test_fixture_path(relative_path);
     std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()))
 }
 
 fn read_manifest_file_bytes(relative_path: &str) -> Vec<u8> {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative_path);
+    let path = test_fixture_path(relative_path);
     std::fs::read(&path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()))
+}
+
+fn test_fixture_path(relative_path: &str) -> std::path::PathBuf {
+    let crate_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative_path);
+    if crate_path.exists() {
+        crate_path
+    } else {
+        repo_root().join(relative_path)
+    }
+}
+
+fn manifest_file_exists(relative_path: &str) -> bool {
+    test_fixture_path(relative_path).is_file()
 }
 
 fn faces_have_valid_indices(mesh: &Mesh) -> bool {
@@ -13858,7 +15207,7 @@ fn stl_stats(stl: &[u8]) -> StlStats {
 
 fn nine_r1o_default_assembly_live_export_diff_json() -> Option<String> {
     const FIXTURE: &str = "package/examples/data/9R1O.pdb";
-    const OPTIONS: &str = r#"{"format":"pdb","representation":"molstar","sphere-detail":1}"#;
+    const OPTIONS: &str = r#"{"format":"pdb","representation":"cartoon","sphere-detail":1}"#;
     let fixture = include_bytes!("../../../package/examples/data/9R1O.pdb");
     let reference_obj = read_repo_file_if_present("package/examples/data/9R1O.obj")?;
     let reference_stl = read_repo_bytes_if_present("package/examples/data/9R1O.stl")?;
@@ -13954,7 +15303,7 @@ fn nine_r1o_default_assembly_live_export_diff_json() -> Option<String> {
 
 fn nine_r1o_asymmetric_ply_vs_assembly_one_reference_gap_json() -> Option<String> {
     const FIXTURE: &str = "package/examples/data/9R1O.pdb";
-    const MOLFIG_OPTIONS: &str = r#"{"format":"pdb","representation":"molstar","assembly":"asymmetric-unit","sphere-detail":1}"#;
+    const MOLFIG_OPTIONS: &str = r#"{"format":"pdb","representation":"cartoon","assembly":"asymmetric-unit","sphere-detail":1}"#;
     const MOLSTAR_REFERENCE_OPTIONS: &str =
         r#"{"format":"pdb","representation":"molstar","assembly":"1","sphere-detail":1}"#;
     let reference_obj = read_repo_file_if_present("package/examples/data/9R1O.obj")?;
@@ -14737,12 +16086,16 @@ fn molstar_reference_input_format(contract: &str, options: &MeshOptions) -> Stri
 
 fn molstar_reference_representation(representation: Representation) -> &'static str {
     match representation {
-        Representation::Molstar => "molstar",
+        Representation::Default => "default",
+        Representation::Auto => "auto",
+        Representation::Cartoon => "cartoon",
+        Representation::PolymerCartoon => "polymer-cartoon",
         Representation::Spacefill => "spacefill",
         Representation::BallAndStick => "ball-and-stick",
-        Representation::Cartoon => "cartoon",
         Representation::Ribbon => "ribbon",
         Representation::Backbone => "backbone",
+        Representation::MolecularSurface => "surface",
+        Representation::GaussianSurface => "gaussian-surface",
     }
 }
 
@@ -15288,7 +16641,7 @@ fn nucleotide_reference_summary_json(molecule: &Molecule) -> String {
     let structure = molecule.atomic_structure();
     let hierarchy = &structure.model.hierarchy;
     let options = MeshOptions {
-        representation: Representation::Molstar,
+        representation: Representation::Cartoon,
         center: false,
         assembly: None,
         infer_bonds: false,

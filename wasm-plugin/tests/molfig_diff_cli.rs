@@ -3,7 +3,7 @@ use std::process::Command;
 
 #[test]
 fn molfig_diff_stl_cli_emits_aggregate_delta_scan() {
-    let options = br#"{"format":"pdb","representation":"molstar","assembly":null}"#;
+    let options = br#"{"format":"pdb","representation":"cartoon","assembly":null}"#;
     let input = include_bytes!("fixtures/pdb/tiny-peptide.pdb");
     let generated = molfig::convert_to_stl(input, options).expect("fixture STL");
     assert!(

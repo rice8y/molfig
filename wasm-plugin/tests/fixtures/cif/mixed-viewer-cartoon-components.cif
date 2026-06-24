@@ -1,0 +1,119 @@
+data_mixed_viewer_cartoon_components
+loop_
+_entity.id
+_entity.type
+1 polymer
+2 polymer
+3 polymer
+4 branched
+5 water
+6 non-polymer
+7 non-polymer
+#
+loop_
+_entity_poly.entity_id
+_entity_poly.type
+_entity_poly.pdbx_seq_one_letter_code
+1 'polypeptide(L)' AGS
+2 'polypeptide(L)' X
+3 'polypeptide(L)' M
+#
+loop_
+_entity_poly_seq.entity_id
+_entity_poly_seq.num
+_entity_poly_seq.mon_id
+_entity_poly_seq.hetero
+1 1 ALA n
+1 2 GLY n
+1 3 SER n
+2 1 PRX n
+3 1 MSE n
+#
+loop_
+_pdbx_entity_branch.entity_id
+_pdbx_entity_branch.type
+4 oligosaccharide
+#
+loop_
+_struct_asym.id
+_struct_asym.entity_id
+A 1
+P 2
+M 3
+B 4
+W 5
+I 6
+L 7
+#
+loop_
+_pdbx_molecule.asym_id
+_pdbx_molecule.prd_id
+P PRD_000001
+#
+loop_
+_chem_comp.id
+_chem_comp.name
+_chem_comp.type
+_chem_comp.mon_nstd_flag
+ALA ALANINE 'L-peptide linking' y
+GLY GLYCINE 'L-peptide linking' y
+SER SERINE 'L-peptide linking' y
+PRX 'PRD TEST COMPONENT' other n
+MSE SELENOMETHIONINE 'L-peptide linking' n
+NAG 'N-ACETYL-D-GLUCOSAMINE' 'D-saccharide, beta linking' n
+HOH WATER non-polymer n
+ZN 'ZINC ION' ion n
+LPX 'LIPID TEST COMPONENT' lipid n
+#
+loop_
+_chem_comp_bond.comp_id
+_chem_comp_bond.atom_id_1
+_chem_comp_bond.atom_id_2
+_chem_comp_bond.value_order
+NAG C1 C2 sing
+NAG C2 C3 sing
+NAG C3 C4 sing
+NAG C4 C5 sing
+NAG C5 O5 sing
+NAG O5 C1 sing
+#
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.occupancy
+ATOM 1 N N ALA A 1 1 0.000 0.000 0.000 1.00
+ATOM 2 C CA ALA A 1 1 1.450 0.000 0.000 1.00
+ATOM 3 C C ALA A 1 1 2.050 1.380 0.000 1.00
+ATOM 4 O O ALA A 1 1 1.450 2.430 0.000 1.00
+ATOM 5 C CB ALA A 1 1 1.950 -0.800 1.200 1.00
+ATOM 6 N N GLY A 1 2 3.330 1.390 0.000 1.00
+ATOM 7 C CA GLY A 1 2 4.000 2.650 0.000 1.00
+ATOM 8 C C GLY A 1 2 5.480 2.530 0.100 1.00
+ATOM 9 O O GLY A 1 2 6.100 3.570 0.100 1.00
+ATOM 10 N N SER A 1 3 6.020 1.320 0.200 1.00
+ATOM 11 C CA SER A 1 3 7.430 1.080 0.300 1.00
+ATOM 12 C C SER A 1 3 8.200 2.310 0.000 1.00
+ATOM 13 O O SER A 1 3 7.780 3.430 0.200 1.00
+ATOM 14 C CB SER A 1 3 7.820 -0.100 -0.600 1.00
+ATOM 15 O OG SER A 1 3 9.180 -0.300 -0.400 1.00
+HETATM 16 C C1 PRX P 2 1 0.000 6.000 0.000 1.00
+HETATM 17 C CA MSE M 3 1 4.000 6.000 0.000 1.00
+HETATM 18 C C1 NAG B 4 1 0.000 10.000 0.000 1.00
+HETATM 19 C C2 NAG B 4 1 1.300 9.250 0.000 1.00
+HETATM 20 C C3 NAG B 4 1 2.600 10.000 0.000 1.00
+HETATM 21 C C4 NAG B 4 1 2.600 11.500 0.000 1.00
+HETATM 22 C C5 NAG B 4 1 1.300 12.250 0.000 1.00
+HETATM 23 O O5 NAG B 4 1 0.000 11.500 0.000 1.00
+HETATM 24 O O HOH W 5 . 5.500 10.000 0.000 1.00
+HETATM 25 Zn ZN ZN I 6 . 8.000 10.000 0.000 1.00
+HETATM 26 C C1 LPX L 7 . 11.500 10.000 0.000 1.00
+#

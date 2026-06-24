@@ -5,7 +5,7 @@
   "fixture": "package/examples/data/9R1O.pdb",
   "options": {
     "format": "pdb",
-    "representation": "molstar",
+    "representation": "cartoon",
     "assembly": "1",
     "sphere-detail": 1
   },
@@ -26,7 +26,7 @@
   },
   "stl": {
     "byte_len": 26829684,
-    "fnv1a64": "a40f29587e82b5f4",
+    "fnv1a64": "9d972591ab3b8542",
     "facet_count": 536592,
     "header": "Exported from Mol* 5.9.0",
     "bounds": {

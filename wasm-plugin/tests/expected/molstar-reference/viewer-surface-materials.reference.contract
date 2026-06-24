@@ -1,0 +1,20 @@
+# Real Chrome/WebGL Mol* Viewer Surface entity-id/water material contract.
+fixture=tests/fixtures/cif/mixed-viewer-cartoon-components.cif
+options={"format":"cif","representation":"surface","assembly":"asymmetric-unit","molecular-surface-params":{"quality":"custom","resolution":0.5,"probeRadius":1.4,"probePositions":36},"quality":"custom","resolution":0.5,"probe-radius":1.4,"probe-positions":36,"export-primitives-quality":"low","obj-basename":"viewer-surface-materials","operator-metadata":false,"obj-groups":false}
+input_format=cif
+molstar_reference_commit=1b8117d3f10f7c978aabb5a0d3d47370635aefe4
+browser_report_reference=tests/expected/molstar-reference/viewer-surface-materials.browser-report.json
+exact_diff_required=true
+obj_reference=tests/expected/molstar-reference/viewer-surface-materials.obj
+obj_export_basename=viewer-surface-materials
+obj_mtllib=viewer-surface-materials.mtl
+obj_byte_len=303099
+obj_fnv1a64=3c88130cb3970f37
+obj_vertex_count=2866
+obj_normal_count=2866
+obj_face_count=5704
+obj_bounds_min=-7.173,-7.999,-2.565
+obj_bounds_max=7.715,8.412,2.616
+mtl_byte_len=646
+mtl_fnv1a64=339aaf66ceae96b8
+mtl_material_count=7
