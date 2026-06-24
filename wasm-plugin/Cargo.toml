@@ -1,6 +1,6 @@
 [package]
 name = "molfig"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "PDB/mmCIF to OBJ/STL/PLY converter for Typst and maquette"
 license = "MIT"
