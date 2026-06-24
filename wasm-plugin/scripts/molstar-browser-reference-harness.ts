@@ -2,14 +2,49 @@ import '../artifacts/molstar/src/mol-util/polyfill';
 import { ObjExporter } from '../artifacts/molstar/src/extensions/geo-export/obj-exporter';
 import { StlExporter } from '../artifacts/molstar/src/extensions/geo-export/stl-exporter';
 import { Box3D } from '../artifacts/molstar/src/mol-math/geometry';
+import { BoundaryHelper } from '../artifacts/molstar/src/mol-math/geometry/boundary-helper';
+import { Structure } from '../artifacts/molstar/src/mol-model/structure';
 import { PluginContext } from '../artifacts/molstar/src/mol-plugin/context';
-import { DefaultPluginSpec } from '../artifacts/molstar/src/mol-plugin/spec';
+import { PluginConfig } from '../artifacts/molstar/src/mol-plugin/config';
+import { DefaultPluginSpec, PluginSpec } from '../artifacts/molstar/src/mol-plugin/spec';
 import { OpenFiles } from '../artifacts/molstar/src/mol-plugin-state/actions/file';
+import { PresetStructureRepresentations } from '../artifacts/molstar/src/mol-plugin-state/builder/structure/representation-preset';
+import { PresetTrajectoryHierarchy } from '../artifacts/molstar/src/mol-plugin-state/builder/structure/hierarchy-preset';
+import { ViewerAutoPreset } from '../artifacts/molstar/src/apps/viewer/presets';
+import { MAQualityAssessment } from '../artifacts/molstar/src/extensions/model-archive/quality-assessment/behavior';
+import { SbNcbrPartialCharges } from '../artifacts/molstar/src/extensions/sb-ncbr';
 import { Asset } from '../artifacts/molstar/src/mol-util/assets';
 import { Task } from '../artifacts/molstar/src/mol-task';
 import type { ValueCell } from '../artifacts/molstar/src/mol-util/value-cell';
 
-type ExportFormat = 'obj' | 'stl'
+type ExportFormat = 'obj' | 'stl' | 'report'
+
+type ViewerTheme = {
+    globalName?: string
+    globalColorParams?: Record<string, unknown>
+    carbonColor?: 'chain-id' | 'operator-name' | 'element-symbol'
+    symmetryColor?: string
+    symmetryColorParams?: Record<string, unknown>
+}
+
+type GaussianSurfaceParams = {
+    quality?: string
+    resolution?: number
+    smoothness?: number
+    radiusOffset?: number
+    traceOnly?: boolean
+    tryUseGpu?: boolean
+    visuals?: string[]
+}
+
+type MolecularSurfaceParams = {
+    quality?: string
+    resolution?: number
+    probeRadius?: number
+    probePositions?: number
+    floodfill?: string
+    visuals?: string[]
+}
 
 type BrowserReferenceRequest = {
     id: string
@@ -18,6 +53,12 @@ type BrowserReferenceRequest = {
     formats: ExportFormat[]
     objExportBasename: string
     dataFormat?: string
+    structurePreset?: string
+    representation?: string
+    theme?: ViewerTheme
+    sizeThresholds?: Partial<Structure.SizeThresholds>
+    gaussianSurfaceParams?: GaussianSurfaceParams
+    molecularSurfaceParams?: MolecularSurfaceParams
     renderObjectReport?: boolean
     debugStlFacets?: number[]
     exporterOptions?: {
@@ -34,6 +75,25 @@ type RenderObjectSummary = {
     vertexCount: number
     groupCount: number
     instanceCount: number
+    component?: string
+    tag?: string
+    representation?: string
+    colorTheme?: string
+    carbonColorTheme?: string
+    representationOrder?: number
+    visuals?: string[]
+    surfaceParams?: GaussianSurfaceParams
+    stlTriangleCount?: number
+    primitiveCount?: number
+    cylinderCapHistogram?: Record<string, number>
+    cylinderSamples?: Array<{
+        group: number
+        cap: number
+        scale: number
+        start: number[]
+        end: number[]
+    }>
+    meshVertexSamples?: number[][]
     boundingSphere?: {
         center: number[]
         radius: number
@@ -45,6 +105,8 @@ type RenderObjectSummary = {
 type BrowserReferenceResult = {
     id: string
     renderObjects: RenderObjectSummary[]
+    structures: ReturnType<typeof summarizeStructures>
+    sceneBoundingSphere: ReturnType<typeof sphereSummary>
     totalDrawCount: number
     visibleDrawCount: number
     hiddenDrawCount: number
@@ -107,8 +169,18 @@ async function getPlugin() {
     const target = document.getElementById('app');
     if (!target) throw new Error('missing #app mount target');
 
-    plugin = new PluginContext(DefaultPluginSpec());
+    const spec = DefaultPluginSpec();
+    spec.behaviors.push(
+        PluginSpec.Behavior(MAQualityAssessment),
+        PluginSpec.Behavior(SbNcbrPartialCharges),
+    );
+    spec.config = [
+        ...(spec.config ?? []),
+        [PluginConfig.Structure.DefaultRepresentationPreset, ViewerAutoPreset.id],
+    ];
+    plugin = new PluginContext(spec);
     await plugin.init();
+    plugin.builders.structure.representation.registerPreset(ViewerAutoPreset);
     const mounted = await plugin.mountAsync(target, { checkeredCanvasBackground: false });
     if (!mounted) throw new Error('failed to mount Mol* plugin');
     await plugin.canvas3dInitialized;
@@ -117,26 +189,31 @@ async function getPlugin() {
 
 window.molfigBrowserReferenceExport = async (request: BrowserReferenceRequest) => {
     const plugin = await getPlugin();
+    const sizeThresholds = { ...Structure.DefaultSizeThresholds, ...(request.sizeThresholds ?? {}) };
+    plugin.config.set(PluginConfig.Structure.SizeThresholds, sizeThresholds);
     const bytes = new Uint8Array(await (await fetch(request.fixtureUrl)).arrayBuffer());
     const file = new File([bytes], request.fileName);
     await plugin.runTask(plugin.state.data.applyAction(OpenFiles, {
         files: [Asset.File(file)],
         format: openFilesFormat(request.dataFormat),
-        visuals: true,
+        visuals: !request.structurePreset,
     }));
+    await applyStructurePreset(plugin, request.structurePreset);
+    await applyRequestedRepresentation(plugin, request.representation, request.theme, !request.structurePreset);
+    await updateGaussianSurfaceParams(plugin, request.gaussianSurfaceParams);
+    await updateMolecularSurfaceParams(plugin, request.molecularSurfaceParams);
     plugin.canvas3d?.commit(true);
     await animationFrames(3);
 
     const renderObjects = plugin.canvas3d?.getRenderObjects() ?? [];
     if (renderObjects.length === 0) throw new Error('Mol* produced no render objects');
-    const summary = summarizeRenderObjects(renderObjects);
-    const sphere = plugin.canvas3d!.boundingSphereVisible;
+    const summary = summarizeRenderObjects(renderObjects, renderObjectStateMetadata(plugin));
+    const sphere = visibleRenderObjectBoundingSphere(renderObjects);
     const box = Box3D.fromSphere3D(Box3D(), sphere);
     const debug = request.debugStlFacets?.length
         ? { stlFacets: request.debugStlFacets.map(facet => debugStlFacet(renderObjects, box, sphere, facet)) }
         : undefined;
     const uploads: BrowserReferenceResult['uploads'] = {};
-
     for (const format of request.formats) {
         if (format === 'obj') {
             const exporter = new ObjExporter(request.objExportBasename, box);
@@ -149,7 +226,9 @@ window.molfigBrowserReferenceExport = async (request: BrowserReferenceRequest) =
         } else if (format === 'stl') {
             const exporter = new StlExporter(box);
             configureExporter(exporter, request.exporterOptions);
-            const data = await exportWith(plugin, renderObjects, exporter);
+            const data = await exportWith(plugin, renderObjects, exporter, (index, triangleCount) => {
+                summary.renderObjects[index].stlTriangleCount = triangleCount;
+            });
             await uploadBytes(request.id, 'stl', data.stl);
             uploads.stl = { byteLength: data.stl.byteLength };
         }
@@ -158,11 +237,245 @@ window.molfigBrowserReferenceExport = async (request: BrowserReferenceRequest) =
     return {
         id: request.id,
         ...summary,
+        structures: summarizeStructures(plugin, sizeThresholds),
+        sceneBoundingSphere: sphereSummary(sphere),
         uploads,
         webgl: webglSummary(plugin),
         debug,
     };
 };
+
+function visibleRenderObjectBoundingSphere(renderObjects: any[]) {
+    const helper = new BoundaryHelper('98');
+    const spheres = renderObjects
+        .filter(renderObject => (renderObject.state?.visible ?? true) && Number(value(renderObject.values.drawCount)) > 0)
+        .map(renderObject => value(renderObject.values.boundingSphere))
+        .filter(sphere => sphere && sphere.radius > 0);
+    helper.reset();
+    for (const sphere of spheres) helper.includeSphere(sphere);
+    helper.finishedIncludeStep();
+    for (const sphere of spheres) helper.radiusSphere(sphere);
+    return helper.getSphere();
+}
+
+function summarizeStructures(plugin: PluginContext, sizeThresholds: Structure.SizeThresholds = Structure.DefaultSizeThresholds) {
+    return plugin.managers.structure.hierarchy.selection.structures.map((entry: any, index: number) => {
+        const structure = entry?.cell?.obj?.data;
+        const operators = new Map<string, any>();
+        for (const unit of structure?.units ?? []) {
+            const operator = unit?.conformation?.operator;
+            if (!operator) continue;
+            const key = `${operator.name}|${operator.spgrOp}|${operator.assembly?.id ?? ''}`;
+            if (!operators.has(key)) {
+                operators.set(key, {
+                    name: operator.name,
+                    spgrOp: operator.spgrOp,
+                    assemblyId: operator.assembly?.id,
+                    isAssembly: !!operator.assembly,
+                });
+            }
+        }
+        return {
+            index,
+            unitCount: structure?.units?.length ?? 0,
+            elementCount: structure?.elementCount ?? 0,
+            polymerResidueCount: structure?.polymerResidueCount ?? 0,
+            sizeClass: structure ? Structure.Size[Structure.getSize(structure, sizeThresholds)] : undefined,
+            sizeThresholds,
+            operators: [...operators.values()],
+        };
+    });
+}
+
+async function updateGaussianSurfaceParams(plugin: PluginContext, requested: GaussianSurfaceParams | undefined) {
+    if (!requested) return;
+    const update = plugin.state.data.build();
+    let count = 0;
+
+    for (const structure of plugin.managers.structure.hierarchy.selection.structures) {
+        for (const component of structure.components) {
+            for (const representation of component.representations) {
+                const old = representation.cell.transform.params as any;
+                if (old?.type?.name !== 'gaussian-surface') continue;
+                update.to(representation.cell).update({
+                    ...old,
+                    type: {
+                        ...old.type,
+                        params: { ...old.type.params, ...requested },
+                    },
+                });
+                count += 1;
+            }
+        }
+    }
+    if (count === 0) throw new Error('requested Gaussian surface parameters but ViewerAuto produced no gaussian-surface representation');
+    await update.commit({ revertOnError: true });
+}
+
+async function updateMolecularSurfaceParams(plugin: PluginContext, requested: MolecularSurfaceParams | undefined) {
+    if (!requested) return;
+    const update = plugin.state.data.build();
+    let count = 0;
+
+    for (const structure of plugin.managers.structure.hierarchy.selection.structures) {
+        for (const component of structure.components) {
+            for (const representation of component.representations) {
+                const old = representation.cell.transform.params as any;
+                if (old?.type?.name !== 'molecular-surface') continue;
+                update.to(representation.cell).update({
+                    ...old,
+                    type: {
+                        ...old.type,
+                        params: { ...old.type.params, ...requested },
+                    },
+                });
+                count += 1;
+            }
+        }
+    }
+    if (count === 0) throw new Error('requested molecular surface parameters but the Surface preset produced no molecular-surface representation');
+    await update.commit({ revertOnError: true });
+}
+
+async function applyStructurePreset(plugin: PluginContext, value: string | undefined) {
+    if (!value) return;
+    const trajectories = plugin.managers.structure.hierarchy.selection.trajectories;
+    const preset = String(value).trim().toLowerCase().replaceAll('_', '-');
+    if (preset === 'crystal-contacts') {
+        await plugin.managers.structure.hierarchy.applyPreset(trajectories, PresetTrajectoryHierarchy.crystalContacts, {
+            representationPreset: 'empty',
+        });
+        return;
+    }
+    throw new Error(`unsupported browser structure preset: ${value}`);
+}
+
+async function applyRequestedRepresentation(
+    plugin: PluginContext,
+    value: string | undefined,
+    theme: ViewerTheme | undefined,
+    canReuseInitial: boolean,
+) {
+    if (canReuseInitial && representationMatches(plugin, value)) {
+        if (theme) await updateViewerThemes(plugin, theme);
+        return;
+    }
+    await applyRepresentationPreset(plugin, value, theme);
+    // Built-in presets do not consistently consume the optional theme
+    // parameter (notably molecular-surface), so update the realized
+    // representations after the preset has created them as well.
+    if (theme) await updateViewerThemes(plugin, theme);
+}
+
+function representationMatches(plugin: PluginContext, value: string | undefined) {
+    const representation = String(value ?? 'default').trim().toLowerCase().replaceAll('_', '-');
+    if (representation === 'default' || representation === 'auto') return true;
+
+    const entries = representationStateEntries(plugin);
+    if (representation === 'cartoon' || representation === 'polymer-cartoon') {
+        return entries.some(entry => entry.type === 'cartoon');
+    }
+    if (representation === 'spacefill') {
+        return entries.some(entry => entry.type === 'spacefill' && entry.tags.includes('all'));
+    }
+    if (representation === 'surface' || representation === 'molecular-surface') {
+        return entries.some(entry => entry.type === 'molecular-surface' && entry.tags.includes('all'));
+    }
+    return false;
+}
+
+function representationStateEntries(plugin: PluginContext) {
+    const entries: Array<{ type?: string, tags: string[] }> = [];
+    for (const cell of plugin.state.data.cells.values()) {
+        const repr = (cell.obj as any)?.data?.repr;
+        if (!repr?.renderObjects?.length) continue;
+        entries.push({
+            type: (cell.transform.params as any)?.type?.name,
+            tags: [...(cell.transform.tags ?? [])],
+        });
+    }
+    return entries;
+}
+
+async function updateViewerThemes(plugin: PluginContext, theme: ViewerTheme) {
+    await plugin.dataTransaction(async () => {
+        for (const structure of plugin.managers.structure.hierarchy.selection.structures) {
+            await plugin.managers.structure.component.updateRepresentationsTheme(
+                structure.components,
+                (component: any, representation: any) => viewerThemeForRepresentation(component, representation, theme),
+            );
+        }
+    }, { canUndo: 'Update Viewer Theme' });
+}
+
+function viewerThemeForRepresentation(component: any, representation: any, theme: ViewerTheme) {
+    const representationParams = representation.cell.transform.params as any;
+    const representationType = representationParams?.type?.name;
+    const representationTags = [...(representation.cell.transform.tags ?? [])];
+    const componentTags = [...(component.cell.transform.tags ?? [])];
+    const componentName = componentTags
+        .find((tag: string) => tag.startsWith('structure-component-static-'))
+        ?.slice('structure-component-static-'.length);
+    const globalName = theme.globalName || representationParams?.colorTheme?.name;
+    const globalParams = { ...(theme.globalColorParams ?? {}) };
+
+    if (representationTags.includes('polymer') && theme.symmetryColor && structureHasSymmetry(component.structure.cell.obj?.data)) {
+        return {
+            color: theme.symmetryColor as any,
+            colorParams: { ...globalParams, ...(theme.symmetryColorParams ?? {}) },
+        };
+    }
+
+    if (representationType === 'ball-and-stick') {
+        const carbonColor = componentName === 'water' || componentName === 'ion' || componentName === 'lipid'
+            ? 'element-symbol'
+            : theme.carbonColor;
+        return {
+            color: globalName as any,
+            colorParams: carbonColor
+                ? { carbonColor: { name: carbonColor, params: {} }, ...globalParams }
+                : globalParams,
+        };
+    }
+
+    return { color: globalName as any, colorParams: globalParams };
+}
+
+function structureHasSymmetry(structure: any) {
+    return (structure?.units ?? []).some((unit: any) => {
+        const operator = unit?.conformation?.operator;
+        return operator && !operator.assembly && operator.spgrOp >= 0;
+    });
+}
+
+async function applyRepresentationPreset(plugin: PluginContext, value: string | undefined, theme?: ViewerTheme) {
+    const structures = plugin.managers.structure.hierarchy.selection.structures;
+    const representation = String(value ?? 'default').trim().toLowerCase().replaceAll('_', '-');
+    const params = theme ? { theme } : undefined;
+    switch (representation) {
+        case 'default':
+            await plugin.managers.structure.component.applyPreset(structures, ViewerAutoPreset, params);
+            break;
+        case 'auto':
+            await plugin.managers.structure.component.applyPreset(structures, PresetStructureRepresentations.auto, params);
+            break;
+        case 'cartoon':
+            await plugin.managers.structure.component.applyPreset(structures, PresetStructureRepresentations['polymer-and-ligand'], params);
+            break;
+        case 'polymer-cartoon':
+            await plugin.managers.structure.component.applyPreset(structures, PresetStructureRepresentations['polymer-cartoon'], params);
+            break;
+        case 'spacefill':
+            await plugin.managers.structure.component.applyPreset(structures, PresetStructureRepresentations.illustrative, params);
+            break;
+        case 'surface':
+        case 'molecular-surface':
+            await plugin.managers.structure.component.applyPreset(structures, PresetStructureRepresentations['molecular-surface'], params);
+            break;
+        default:
+            throw new Error(`unsupported browser representation: ${representation}`);
+    }
+}
 
 function openFilesFormat(provider: string | undefined) {
     if (!provider || provider === 'auto') return { name: 'auto', params: {} };
@@ -174,17 +487,88 @@ function configureExporter(exporter: ObjExporter | StlExporter, options: Browser
     if (quality) exporter.options.primitivesQuality = quality;
 }
 
-async function exportWith<D>(plugin: PluginContext, renderObjects: any[], exporter: { add: Function, getData: Function }) {
+async function exportWith<D>(
+    plugin: PluginContext,
+    renderObjects: any[],
+    exporter: { add: Function, getData: Function, triangleCount?: number },
+    onAdded?: (index: number, triangleCount: number) => void,
+) {
     return plugin.runTask(Task.create('Export Mol* browser reference geometry', async ctx => {
         for (let i = 0; i < renderObjects.length; i++) {
             await ctx.update({ message: `Exporting object ${i + 1}/${renderObjects.length}` });
+            const before = Number((exporter as any).triangleCount ?? 0);
             await exporter.add(renderObjects[i], plugin.canvas3d!.webgl, ctx);
+            const after = Number((exporter as any).triangleCount ?? before);
+            onAdded?.(i, after - before);
         }
         return exporter.getData();
     })) as Promise<D>;
 }
 
-function summarizeRenderObjects(renderObjects: any[]) {
+type RenderObjectStateMetadata = {
+    component?: string
+    tag?: string
+    representation?: string
+    colorTheme?: string
+    carbonColorTheme?: string
+    representationOrder?: number
+    visuals?: string[]
+    surfaceParams?: GaussianSurfaceParams
+}
+
+function renderObjectStateMetadata(plugin: PluginContext) {
+    const metadata = new Map<any, RenderObjectStateMetadata>();
+    const orderByTag = new Map([
+        ['polymer', 0],
+        ['ligand', 1],
+        ['non-standard', 2],
+        ['branched-ball-and-stick', 3],
+        ['branched-snfg-3d', 4],
+        ['water', 5],
+        ['ion', 6],
+        ['lipid', 7],
+        ['coarse', 8],
+    ]);
+
+    for (const cell of plugin.state.data.cells.values()) {
+        const repr = (cell.obj as any)?.data?.repr;
+        if (!repr?.renderObjects?.length) continue;
+        const tags = cell.transform.tags ?? [];
+        const tag = tags.find((value: string) => orderByTag.has(value)) ?? tags[0];
+        const parent = plugin.state.data.cells.get(cell.transform.parent);
+        const parentTags = parent?.transform.tags ?? [];
+        const componentTag = parentTags.find((value: string) => value.startsWith('structure-component-static-'));
+        const component = componentTag?.slice('structure-component-static-'.length);
+        const params = cell.transform.params as any;
+        const typeParams = params?.type?.params;
+        const stateMetadata: RenderObjectStateMetadata = {
+            component,
+            tag,
+            representation: params?.type?.name,
+            colorTheme: params?.colorTheme?.name,
+            carbonColorTheme: params?.colorTheme?.params?.carbonColor?.name,
+            representationOrder: tag === undefined ? undefined : orderByTag.get(tag),
+            visuals: Array.isArray(typeParams?.visuals) ? [...typeParams.visuals] : undefined,
+            surfaceParams: params?.type?.name === 'gaussian-surface' ? gaussianSurfaceParamsSummary(typeParams) : undefined,
+        };
+        for (const renderObject of repr.renderObjects) metadata.set(renderObject, stateMetadata);
+    }
+    return metadata;
+}
+
+function gaussianSurfaceParamsSummary(params: any): GaussianSurfaceParams {
+    return {
+        quality: params?.quality,
+        resolution: params?.resolution,
+        smoothness: params?.smoothness,
+        radiusOffset: params?.radiusOffset,
+        traceOnly: params?.traceOnly,
+        tryUseGpu: params?.tryUseGpu,
+        visuals: Array.isArray(params?.visuals) ? [...params.visuals] : undefined,
+    };
+}
+
+function summarizeRenderObjects(renderObjects: any[], stateMetadata: Map<any, RenderObjectStateMetadata>) {
     const objects: RenderObjectSummary[] = [];
     let totalDrawCount = 0;
     let visibleDrawCount = 0;
@@ -201,6 +585,7 @@ function summarizeRenderObjects(renderObjects: any[]) {
         const geometry = String(value(values.dGeometryType) ?? renderObject.type ?? '<unknown>');
         const visible = renderObject.state?.visible ?? true;
         const sphere = value(values.boundingSphere);
+        const primitiveSummary = summarizePrimitiveValues(geometry, values, vertexCount);
 
         totalDrawCount += drawCount;
         if (visible) {
@@ -218,11 +603,62 @@ function summarizeRenderObjects(renderObjects: any[]) {
             vertexCount,
             groupCount,
             instanceCount,
+            ...primitiveSummary,
+            ...stateMetadata.get(renderObject),
             boundingSphere: sphere ? sphereSummary(sphere) : undefined,
         });
     }
 
     return { renderObjects: objects, totalDrawCount, visibleDrawCount, hiddenDrawCount, exportableDrawCount };
+}
+
+function summarizePrimitiveValues(geometry: string, values: any, vertexCount: number) {
+    if (geometry === 'spheres') {
+        return { primitiveCount: vertexCount / 6 };
+    }
+    if (geometry === 'mesh') {
+        const positions = value(values.aPosition) as ArrayLike<number> | undefined;
+        const samples = [];
+        if (positions) {
+            for (let i = 0; i < Math.min(vertexCount, 24); i++) {
+                samples.push([
+                    positions[i * 3],
+                    positions[i * 3 + 1],
+                    positions[i * 3 + 2],
+                ]);
+            }
+        }
+        return { meshVertexSamples: samples };
+    }
+    if (geometry !== 'cylinders') return {};
+
+    const caps = value(values.aCap) as ArrayLike<number> | undefined;
+    const starts = value(values.aStart) as ArrayLike<number> | undefined;
+    const ends = value(values.aEnd) as ArrayLike<number> | undefined;
+    const scales = value(values.aScale) as ArrayLike<number> | undefined;
+    const groups = value(values.aGroup) as ArrayLike<number> | undefined;
+    const histogram: Record<string, number> = {};
+    const samples = [];
+    if (caps) {
+        for (let i = 0; i < vertexCount; i += 6) {
+            const cap = String(caps[i] ?? 0);
+            histogram[cap] = (histogram[cap] ?? 0) + 1;
+            if (samples.length < 8 && starts && ends && scales && groups) {
+                samples.push({
+                    group: groups[i] ?? 0,
+                    cap: caps[i] ?? 0,
+                    scale: scales[i] ?? 0,
+                    start: [starts[i * 3], starts[i * 3 + 1], starts[i * 3 + 2]],
+                    end: [ends[i * 3], ends[i * 3 + 1], ends[i * 3 + 2]],
+                });
+            }
+        }
+    }
+    return {
+        primitiveCount: vertexCount / 6,
+        cylinderCapHistogram: histogram,
+        cylinderSamples: samples,
+    };
 }
 
 function sphereSummary(sphere: any) {

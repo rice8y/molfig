@@ -34,7 +34,7 @@ Options:
   --manifest <path>        Reference fixture manifest. Default: ${defaultManifest}
   --molstar-dir <path>     Pinned Mol* checkout/build directory. Default: ${defaultMolstarDir}
   --out-dir <path>         Output directory. Default: ${defaultOutDir}
-  --formats <list>         Comma-separated export formats: obj,stl. Default: ${defaultFormats.join(',')}
+  --formats <list>         Comma-separated targets: obj,stl,report. Default: ${defaultFormats.join(',')}
   --chrome <path>          Chrome/Chromium executable. Default: ${defaultChromePath}
   --headed                 Show the browser window. Default is headless Chrome.
   --keep-profile           Keep the temporary Chrome user-data-dir.
@@ -148,8 +148,8 @@ function validateFormats(formats, label) {
   if (formats.length === 0) throw new Error(`${label}: expected at least one format`);
   const seen = new Set();
   for (const format of formats) {
-    if (format !== 'obj' && format !== 'stl') {
-      throw new Error(`${label}: unsupported format '${format}'. Expected obj or stl.`);
+    if (format !== 'obj' && format !== 'stl' && format !== 'report') {
+      throw new Error(`${label}: unsupported format '${format}'. Expected obj, stl, or report.`);
     }
     if (seen.has(format)) throw new Error(`${label}: duplicate format '${format}'`);
     seen.add(format);
@@ -170,6 +170,24 @@ function displayPath(value) {
   return relative && !relative.startsWith('..') && !path.isAbsolute(relative) ? relative : absolute;
 }
 
+function materializeGeneratedFixture(contract, contractPath, absFixturePath) {
+  const generator = String(contract.fixture_generator ?? '');
+  if (!generator) return;
+  const absGeneratorPath = resolveRepoPath(generator);
+  if (!existsSync(absGeneratorPath) || !statSync(absGeneratorPath).isFile()) {
+    throw new Error(`${contractPath}: fixture generator not found: ${generator}`);
+  }
+  mkdirSync(path.dirname(absFixturePath), { recursive: true });
+  const result = spawnSync(process.execPath, [absGeneratorPath, absFixturePath], {
+    cwd: rootDir,
+    encoding: 'utf8',
+    maxBuffer: 20 * 1024 * 1024,
+  });
+  if (result.status !== 0) {
+    throw new Error(`${contractPath}: fixture generator failed.\n${formatProcessOutput(result)}`);
+  }
+}
+
 function loadPlan(args) {
   const manifestPath = resolveRepoPath(args.manifest);
   if (!existsSync(manifestPath)) throw new Error(`Manifest not found: ${args.manifest}`);
@@ -187,12 +205,17 @@ function loadPlan(args) {
     const fixture = String(contract.fixture ?? '');
     if (!fixture) throw new Error(`${entry.contractPath}: missing fixture=...`);
     const absFixturePath = resolveRepoPath(fixture);
+    materializeGeneratedFixture(contract, entry.contractPath, absFixturePath);
     if (!existsSync(absFixturePath)) throw new Error(`${entry.contractPath}: fixture not found: ${fixture}`);
     if (!statSync(absFixturePath).isFile()) throw new Error(`${entry.contractPath}: fixture is not a file: ${fixture}`);
 
     const options = contract.options ? parseJson(contract.options, `${entry.contractPath}: options`) : {};
     const objReference = String(contract.obj_reference ?? '');
     const stlReference = String(contract.stl_reference ?? '');
+    const browserReportReference = String(contract.browser_report_reference ?? '');
+    const browserExpectation = contract.browser_expectation
+      ? parseJson(contract.browser_expectation, `${entry.contractPath}: browser_expectation`)
+      : undefined;
     const stem = contractOutputStem(entry.contractPath);
     const objExportBasename = validateBasename(
       String(contract.obj_export_basename ?? (objReference ? path.basename(objReference, path.extname(objReference)) : stem)),
@@ -200,8 +223,8 @@ function loadPlan(args) {
     );
     const formats = args.formatsFromCli
       ? args.formats
-      : (entry.formats ? entry.formats.filter(format => format === 'obj' || format === 'stl') : args.formats);
-    if (formats.length === 0) throw new Error(`${entry.contractPath}: no browser-exportable formats selected`);
+      : (entry.formats ? entry.formats.filter(format => format === 'obj' || format === 'stl' || format === 'report') : args.formats);
+    if (formats.length === 0) throw new Error(`${entry.contractPath}: no browser targets selected`);
 
     return {
       id: String(index),
@@ -215,6 +238,8 @@ function loadPlan(args) {
       stem,
       objReference,
       stlReference,
+      browserReportReference,
+      browserExpectation,
       objExportBasename,
       objMtllib: String(contract.obj_mtllib ?? `${objExportBasename}.mtl`),
     };
@@ -256,8 +281,8 @@ function parseFormatsForManifest(value, label) {
   const formats = String(value).split(',').map(s => s.trim()).filter(Boolean);
   if (formats.length === 0) throw new Error(`${label}: expected at least one format`);
   for (const format of formats) {
-    if (format !== 'json' && format !== 'obj' && format !== 'stl') {
-      throw new Error(`${label}: unsupported format '${format}'. Expected json, obj, or stl.`);
+    if (format !== 'json' && format !== 'obj' && format !== 'stl' && format !== 'report') {
+      throw new Error(`${label}: unsupported format '${format}'. Expected json, obj, stl, or report.`);
     }
   }
   return formats;
@@ -317,6 +342,7 @@ function plannedOutputPaths(args, item) {
     obj: path.join(outDir, `${item.stem}.obj`),
     mtl: path.join(outDir, item.objMtllib),
     stl: path.join(outDir, `${item.stem}.stl`),
+    report: path.join(outDir, `${item.stem}.browser-report.json`),
   };
 }
 
@@ -422,6 +448,10 @@ async function runBrowserConversion(args, plan, bundlePath) {
     for (const item of plan) {
       console.log(`Converting ${item.fixture}`);
       const result = await runFixtureInBrowser(cdp, args, item, server.url);
+      writeBrowserReport(args, item, result);
+      const contractChecks = validateBrowserContract(item, result);
+      for (const check of contractChecks) console.log(check.message);
+      comparisonFailures.push(...contractChecks.filter(check => !check.ok));
       if (args.renderObjectReport) printBrowserRenderObjectReport(item, result);
       if (args.debugStlFacets.length > 0) printBrowserStlFacetDebug(item, result);
       printBrowserPassSummary(item, result);
@@ -491,6 +521,12 @@ async function runFixtureInBrowser(cdp, args, item, baseUrl) {
     formats: item.formats,
     objExportBasename: item.objExportBasename,
     dataFormat: dataFormatProviderId(item),
+    structurePreset: item.options['structure-preset'] ?? item.options.structure_preset,
+    representation: String(item.options.representation ?? 'default'),
+    theme: browserTheme(item.options),
+    sizeThresholds: browserObjectOption(item.options, 'viewer-size-thresholds', 'viewerSizeThresholds'),
+    gaussianSurfaceParams: browserObjectOption(item.options, 'gaussian-surface-params', 'gaussianSurfaceParams'),
+    molecularSurfaceParams: browserObjectOption(item.options, 'molecular-surface-params', 'molecularSurfaceParams'),
     renderObjectReport: args.renderObjectReport,
     exporterOptions: {
       primitivesQuality: String(item.options['export-primitives-quality'] ?? item.options.export_primitives_quality ?? 'auto'),
@@ -511,6 +547,24 @@ async function runFixtureInBrowser(cdp, args, item, baseUrl) {
   return response.result.value;
 }
 
+function browserTheme(options) {
+  const theme = options.theme ?? options['viewer-theme'] ?? options.viewer_theme;
+  return theme && typeof theme === 'object' && !Array.isArray(theme) ? theme : undefined;
+}
+
+function browserObjectOption(options, ...keys) {
+  for (const key of keys) {
+    const value = options[key];
+    if (value !== undefined) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error(`browser option '${key}' must be an object`);
+      }
+      return value;
+    }
+  }
+  return undefined;
+}
+
 function dataFormatProviderId(item) {
   const provider = item.options['data-format'] ?? item.options.data_format;
   if (provider !== undefined) return String(provider);
@@ -527,15 +581,156 @@ function formatRuntimeException(exception) {
 }
 
 function printBrowserRenderObjectReport(item, result) {
+  console.log(`Mol* browser structures for ${item.stem}: ${JSON.stringify(result.structures)}`);
   console.log(`Mol* browser render objects for ${item.stem}: ${result.renderObjects.length}`);
   for (const object of result.renderObjects) {
     const sphere = object.boundingSphere
       ? ` sphereCenter=${formatNumberArray(object.boundingSphere.center)} sphereRadius=${formatNumber(object.boundingSphere.radius)} sphereExtrema=${object.boundingSphere.extremaCount}`
       : '';
-    console.log(`  [${object.index}] type=${object.type} geometry=${object.geometry} visible=${object.visible} drawCount=${object.drawCount} vertexCount=${object.vertexCount} groupCount=${object.groupCount} instanceCount=${object.instanceCount}${sphere}`);
+    const preset = object.tag
+      ? ` component=${object.component ?? '<unknown>'} tag=${object.tag} representation=${object.representation ?? '<unknown>'} colorTheme=${object.colorTheme ?? '<unknown>'} carbonColorTheme=${object.carbonColorTheme ?? '<none>'} representationOrder=${object.representationOrder ?? '<unknown>'}`
+      : '';
+    const exportCount = object.stlTriangleCount === undefined ? '' : ` stlTriangleCount=${object.stlTriangleCount}`;
+    const primitiveCount = object.primitiveCount === undefined ? '' : ` primitiveCount=${object.primitiveCount}`;
+    const cylinderCaps = object.cylinderCapHistogram === undefined ? '' : ` cylinderCaps=${JSON.stringify(object.cylinderCapHistogram)}`;
+    const cylinderSamples = object.cylinderSamples === undefined ? '' : ` cylinderSamples=${JSON.stringify(object.cylinderSamples)}`;
+    const meshVertexSamples = object.meshVertexSamples === undefined ? '' : ` meshVertexSamples=${JSON.stringify(object.meshVertexSamples)}`;
+    console.log(`  [${object.index}] type=${object.type} geometry=${object.geometry} visible=${object.visible} drawCount=${object.drawCount} vertexCount=${object.vertexCount} groupCount=${object.groupCount} instanceCount=${object.instanceCount}${preset}${exportCount}${primitiveCount}${cylinderCaps}${cylinderSamples}${meshVertexSamples}${sphere}`);
   }
   console.log(`  totalDrawCount=${result.totalDrawCount} visibleDrawCount=${result.visibleDrawCount} hiddenDrawCount=${result.hiddenDrawCount} exportableDrawCount=${result.exportableDrawCount}`);
   console.log(`  webgl webgl2=${result.webgl.webgl2} fragDepth=${result.webgl.fragDepth} textureFloat=${result.webgl.textureFloat}`);
+}
+
+function writeBrowserReport(args, item, result) {
+  const output = plannedOutputPaths(args, item);
+  const structures = item.browserExpectation
+    ? result.structures
+    : result.structures.map(({ polymerResidueCount, sizeClass, sizeThresholds, ...legacy }) => legacy);
+  const report = {
+    ...(item.options['structure-preset'] || item.options.structure_preset || item.browserExpectation
+      ? { structures }
+      : {}),
+    renderObjects: result.renderObjects.map(object => ({
+      index: object.index,
+      type: object.type,
+      geometry: object.geometry,
+      visible: object.visible,
+      drawCount: object.drawCount,
+      vertexCount: object.vertexCount,
+      groupCount: object.groupCount,
+      instanceCount: object.instanceCount,
+      component: object.component,
+      tag: object.tag,
+      representation: object.representation,
+      colorTheme: object.colorTheme,
+      carbonColorTheme: object.carbonColorTheme,
+      representationOrder: object.representationOrder,
+      ...(item.browserExpectation ? {
+        visuals: object.visuals,
+        surfaceParams: object.surfaceParams,
+      } : {}),
+      stlTriangleCount: object.stlTriangleCount,
+      primitiveCount: object.primitiveCount,
+      cylinderCapHistogram: object.cylinderCapHistogram,
+      cylinderSamples: object.cylinderSamples,
+      meshVertexSamples: object.meshVertexSamples,
+      boundingSphere: object.boundingSphere && {
+        center: object.boundingSphere.center,
+        radius: object.boundingSphere.radius,
+        extremaCount: object.boundingSphere.extremaCount,
+        extrema: object.boundingSphere.extrema,
+      },
+    })),
+    sceneBoundingSphere: result.sceneBoundingSphere,
+    totalDrawCount: result.totalDrawCount,
+    visibleDrawCount: result.visibleDrawCount,
+    hiddenDrawCount: result.hiddenDrawCount,
+    exportableDrawCount: result.exportableDrawCount,
+    uploads: result.uploads,
+    webgl: result.webgl,
+  };
+  mkdirSync(path.dirname(output.report), { recursive: true });
+  writeFileSync(output.report, `${JSON.stringify(report, null, 2)}\n`);
+}
+
+function validateBrowserContract(item, result) {
+  const expected = item.browserExpectation;
+  if (!expected) return [];
+  const failures = [];
+  const checks = [];
+  const record = (ok, label, actual, wanted) => {
+    const message = `- ${ok ? 'PASS' : 'FAIL'} ${item.stem}: ${label}${ok ? '' : `; expected=${JSON.stringify(wanted)} actual=${JSON.stringify(actual)}`}`;
+    const check = { ok, label: `${item.stem}: ${label}`, message };
+    checks.push(check);
+    if (!ok) failures.push(check);
+  };
+
+  if (expected.renderObjectCount !== undefined) {
+    record(result.renderObjects.length === expected.renderObjectCount, 'renderObjectCount', result.renderObjects.length, expected.renderObjectCount);
+  }
+  for (const field of ['totalDrawCount', 'visibleDrawCount', 'hiddenDrawCount', 'exportableDrawCount']) {
+    if (expected[field] !== undefined) record(result[field] === expected[field], field, result[field], expected[field]);
+  }
+  if (expected.uploads) record(isObjectSubset(result.uploads, expected.uploads), 'uploads', result.uploads, expected.uploads);
+  if (expected.structure) {
+    const actual = result.structures[expected.structure.index ?? 0];
+    record(Boolean(actual), 'structure exists', actual, expected.structure);
+    if (actual) validateExpectedFields(record, 'structure', actual, expected.structure, new Set(['index']));
+  }
+  for (const [index, objectExpectation] of (expected.renderObjects ?? []).entries()) {
+    const actual = findExpectedRenderObject(result.renderObjects, objectExpectation);
+    record(Boolean(actual), `renderObjects[${index}] exists`, actual, objectExpectation);
+    if (!actual) continue;
+    validateExpectedFields(record, `renderObjects[${index}]`, actual, objectExpectation, new Set([
+      'minDrawCount', 'minVertexCount', 'minGroupCount',
+    ]));
+    for (const [field, actualField] of [
+      ['minDrawCount', 'drawCount'],
+      ['minVertexCount', 'vertexCount'],
+      ['minGroupCount', 'groupCount'],
+    ]) {
+      if (objectExpectation[field] !== undefined) {
+        record(actual[actualField] >= objectExpectation[field], `renderObjects[${index}].${field}`, actual[actualField], `>= ${objectExpectation[field]}`);
+      }
+    }
+  }
+  if (failures.length === 0) checks.unshift({
+    ok: true,
+    label: `${item.stem}: browser expectation`,
+    message: `- PASS ${item.stem}: browser expectation (${checks.length} assertions)`,
+  });
+  return checks;
+}
+
+function findExpectedRenderObject(objects, expected) {
+  return objects.find(object => {
+    if (expected.index !== undefined && object.index !== expected.index) return false;
+    if (expected.tag !== undefined && object.tag !== expected.tag) return false;
+    if (expected.representation !== undefined && object.representation !== expected.representation) return false;
+    if (expected.geometry !== undefined && object.geometry !== expected.geometry) return false;
+    return true;
+  });
+}
+
+function validateExpectedFields(record, prefix, actual, expected, ignored = new Set()) {
+  for (const [key, wanted] of Object.entries(expected)) {
+    if (ignored.has(key)) continue;
+    const got = actual?.[key];
+    if (wanted && typeof wanted === 'object' && !Array.isArray(wanted)) {
+      record(isObjectSubset(got, wanted), `${prefix}.${key}`, got, wanted);
+    } else {
+      record(JSON.stringify(got) === JSON.stringify(wanted), `${prefix}.${key}`, got, wanted);
+    }
+  }
+}
+
+function isObjectSubset(actual, expected) {
+  if (!actual || typeof actual !== 'object') return false;
+  return Object.entries(expected).every(([key, value]) => {
+    const got = actual[key];
+    if (value && typeof value === 'object' && !Array.isArray(value)) return isObjectSubset(got, value);
+    return JSON.stringify(got) === JSON.stringify(value);
+  });
 }
 
 function formatNumber(value) {
@@ -548,6 +743,7 @@ function formatNumberArray(values) {
 
 function printBrowserPassSummary(item, result) {
   const parts = item.formats.map(format => {
+    if (format === 'report') return `REPORT ${result.renderObjects.length} render objects`;
     const upload = result.uploads[format];
     return `${format.toUpperCase()} ${upload?.byteLength ?? 0} bytes`;
   });
@@ -573,6 +769,13 @@ function compareBrowserOutputsToReferences(args, item) {
   if (item.formats.includes('stl')) {
     if (!item.stlReference) throw new Error(`${item.contractPath}: missing stl_reference for --compare-references`);
     checks.push(compareBinaryFiles(resolveRepoPath(item.stlReference), output.stl, `${item.stem}: stl`));
+  }
+  if (item.browserReportReference) {
+    checks.push(compareTextFiles(
+      resolveRepoPath(item.browserReportReference),
+      output.report,
+      `${item.stem}: browser report`,
+    ));
   }
 
   return checks;

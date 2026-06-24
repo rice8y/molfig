@@ -37,13 +37,14 @@ pub use model::{
     EntityPoly, EntityPolySeq, Entry, Experiment, GlobalModelTransform, IhmCrossLinkRestraint,
     IhmModelGroup, IhmModelGroupLink, IhmModelList, IndexPairBonds, IntraUnitBondProps,
     IntraUnitBonds, LookupHit, ModelPropertyData, Molecule, MoleculeType, MolstarBondSiteEntry,
-    Operator, PartialCarbohydrateElement, PdbxBranchScheme, PdbxEntityBranch, PdbxEntityBranchLink,
-    PdbxNonpolyScheme, PdbxPolySeqScheme, PolymerType, PrincipalAxes, ResidueDerivedData,
-    Resonance, Ring, SaccharideCompIdMapType, SaccharideComponent, SaccharideShape, SaccharideType,
-    SecondaryRange, SequenceEntity, SequenceRange, SequenceResidue, SourceCategory, SourceData,
-    StructAsym, StructConnMetadata, StructureLookup3D, StructureLookupHit, StructureProperties,
-    StructureSequence, StructureUnit, Transform, UnitKind, UnitLookup3D, UnitOperator, UnitProps,
-    UnitSymmetryGroup, UnitTraits, Vec3,
+    Operator, PartialCarbohydrateElement, PartialChargeData, PdbxBranchScheme, PdbxEntityBranch,
+    PdbxEntityBranchLink, PdbxNonpolyScheme, PdbxPolySeqScheme, PolymerType, PrincipalAxes,
+    QualityAssessmentData, ResidueDerivedData, Resonance, Ring, SaccharideCompIdMapType,
+    SaccharideComponent, SaccharideShape, SaccharideType, SecondaryRange, SequenceEntity,
+    SequenceRange, SequenceResidue, SourceCategory, SourceData, StructAsym, StructConnMetadata,
+    StructureLookup3D, StructureLookupHit, StructureProperties, StructureSequence, StructureUnit,
+    Transform, UnitKind, UnitLookup3D, UnitOperator, UnitProps, UnitSymmetryGroup, UnitTraits,
+    Vec3,
 };
 pub use options::{InputFormat, MeshOptions};
 pub use parser::parse_molecule;
