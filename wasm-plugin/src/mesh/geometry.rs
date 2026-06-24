@@ -140,59 +140,91 @@ impl CylinderPrimitiveCache {
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct MolstarPrimitiveTransform {
-    center: Vec3,
-    axes: [Vec3; 3],
+    center: DVec3,
+    axes: [DVec3; 3],
 }
 
 impl MolstarPrimitiveTransform {
     pub(super) fn from_axes(center: Vec3, x_axis: Vec3, y_axis: Vec3, z_axis: Vec3) -> Self {
         Self {
-            center,
-            axes: [x_axis, y_axis, z_axis],
+            center: DVec3::from_vec3(center),
+            axes: [
+                DVec3::from_vec3(x_axis),
+                DVec3::from_vec3(y_axis),
+                DVec3::from_vec3(z_axis),
+            ],
         }
     }
 
     pub(super) fn from_target_to(eye: Vec3, target: Vec3, up: Vec3) -> Self {
+        let eye = DVec3::from_vec3(eye);
+        let target = DVec3::from_vec3(target);
+        let up = DVec3::from_vec3(up);
         let z = (eye - target).normalized();
         let mut x = up.cross(z).normalized();
         if x.length() <= 0.000_001 {
-            x = fallback_side(z, None);
+            x = DVec3::from_vec3(fallback_side(z.to_vec3(), None));
         }
         let y = z.cross(x);
-        Self::from_axes(eye, x, y, z)
+        Self {
+            center: eye,
+            axes: [x, y, z],
+        }
     }
 
     pub(super) fn scale(self, scale: Vec3) -> Self {
-        Self::from_axes(
-            self.center,
-            self.axes[0] * scale.x,
-            self.axes[1] * scale.y,
-            self.axes[2] * scale.z,
-        )
+        self.scale64(DVec3::from_vec3(scale))
+    }
+
+    pub(super) fn scale64(self, scale: DVec3) -> Self {
+        Self {
+            center: self.center,
+            axes: [
+                self.axes[0] * scale.x,
+                self.axes[1] * scale.y,
+                self.axes[2] * scale.z,
+            ],
+        }
     }
 
     pub(super) fn scale_uniformly(self, scale: f32) -> Self {
         self.scale(Vec3::new(scale, scale, scale))
     }
 
+    pub(super) fn scale_uniformly64(self, scale: f64) -> Self {
+        self.scale64(DVec3::new(scale, scale, scale))
+    }
+
     pub(super) fn mul_local(self, rhs: MolstarLocalTransform) -> Self {
         let transform_direction = |direction: Vec3| {
-            self.axes[0] * direction.x + self.axes[1] * direction.y + self.axes[2] * direction.z
+            self.axes[0] * direction.x as f64
+                + self.axes[1] * direction.y as f64
+                + self.axes[2] * direction.z as f64
         };
-        Self::from_axes(
-            self.center,
-            transform_direction(rhs.axes[0]),
-            transform_direction(rhs.axes[1]),
-            transform_direction(rhs.axes[2]),
-        )
+        Self {
+            center: self.center,
+            axes: [
+                transform_direction(rhs.axes[0]),
+                transform_direction(rhs.axes[1]),
+                transform_direction(rhs.axes[2]),
+            ],
+        }
     }
 
     fn transform_position(self, point: Vec3) -> Vec3 {
-        molstar_transform_position(self.center, self.axes, point)
+        (self.center
+            + self.axes[0] * point.x as f64
+            + self.axes[1] * point.y as f64
+            + self.axes[2] * point.z as f64)
+            .to_vec3()
     }
 
     fn direction_transform(self) -> [f32; 9] {
-        molstar_direction_transform(self.axes)
+        molstar_direction_transform([
+            self.axes[0].to_vec3(),
+            self.axes[1].to_vec3(),
+            self.axes[2].to_vec3(),
+        ])
     }
 }
 
@@ -434,19 +466,27 @@ fn molstar_create_primitive(source_vertices: &[Vec3], source_indices: &[usize]) 
 
 fn molstar_polygon(side_count: usize, shifted: bool) -> Vec<Vec3> {
     let radius = if side_count <= 4 {
-        std::f32::consts::FRAC_1_SQRT_2
+        std::f64::consts::SQRT_2 / 2.0
     } else {
-        0.6
+        0.6f64
     };
-    molstar_polygon_with_radius(side_count, shifted, radius)
+    molstar_polygon_with_radius64(side_count, shifted, radius)
 }
 
 fn molstar_polygon_with_radius(side_count: usize, shifted: bool, radius: f32) -> Vec<Vec3> {
+    molstar_polygon_with_radius64(side_count, shifted, radius as f64)
+}
+
+fn molstar_polygon_with_radius64(side_count: usize, shifted: bool, radius: f64) -> Vec<Vec3> {
     let offset = usize::from(shifted);
     (0..side_count)
         .map(|i| {
-            let angle = (i * 2 + offset) as f32 / side_count as f32 * PI;
-            Vec3::new(angle.cos() * radius, angle.sin() * radius, 0.0)
+            let angle = (i * 2 + offset) as f64 / side_count as f64 * std::f64::consts::PI;
+            Vec3::new(
+                (angle.cos() * radius) as f32,
+                (angle.sin() * radius) as f32,
+                0.0,
+            )
         })
         .collect()
 }
@@ -1136,12 +1176,12 @@ mod tests {
             ),
             (
                 72,
-                Vec3::new(0.234_579_70, 0.963_828_44, 0.126_519_31),
+                Vec3::new(0.234_579_7, 0.963_828_44, 0.126_519_31),
                 Vec3::new(0.229_469_79, 0.964_327_16, 0.131_972_58),
             ),
             (
                 71,
-                Vec3::new(0.152_696_59, 0.988_273_14, 0.0),
+                Vec3::new(0.152_696_6, 0.988_273_14, 0.0),
                 Vec3::new(0.151_797_31, 0.988_411_66, 3.339_272_7e-10),
             ),
         ];
@@ -2513,6 +2553,35 @@ pub(super) fn add_molstar_cylinder_caps_cached(
 }
 
 #[allow(clippy::too_many_arguments)]
+pub(super) fn add_molstar_cylinder_caps_with_radius64_cached(
+    mesh: &mut Mesh,
+    start: Vec3,
+    end: Vec3,
+    radius: f64,
+    segments: usize,
+    top_cap: bool,
+    bottom_cap: bool,
+    cache: &mut CylinderPrimitiveCache,
+) {
+    let start = DVec3::from_vec3(start);
+    let end = DVec3::from_vec3(end);
+    add_cylinder_dvec3_from_dir_with_caps_and_match_dir_cached(
+        mesh,
+        start,
+        end - start,
+        start.distance(end),
+        radius,
+        segments,
+        CylinderBuildMode {
+            start_cap: bottom_cap,
+            end_cap: top_cap,
+            match_dir: true,
+        },
+        cache,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
 fn add_cylinder_with_caps_cached(
     mesh: &mut Mesh,
     start: Vec3,
@@ -3125,6 +3194,7 @@ fn add_fixed_count_dashed_cylinder_with_stub_cap_cached(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn add_cylinder_dvec3_from_dir_with_caps_and_match_dir_cached(
     mesh: &mut Mesh,
     start: DVec3,
@@ -3666,7 +3736,7 @@ pub(super) fn add_curve_segment_tube(
     };
     add_profile_tube(
         mesh,
-        &samples,
+        samples,
         radial_segments.max(3),
         profile,
         start_cap,
@@ -3709,7 +3779,7 @@ pub(super) fn add_curve_segment_ribbon(
     if swap_width_height {
         std::mem::swap(&mut samples.widths, &mut samples.heights);
     }
-    add_ribbon_samples(mesh, &samples, arrow_height);
+    add_ribbon_samples(mesh, samples, arrow_height);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3744,7 +3814,7 @@ pub(super) fn add_curve_segment_sheet(
         swap_normal_binormal,
         linear_segments,
     );
-    add_sheet_samples(mesh, &samples, arrow_height, start_cap, end_cap);
+    add_sheet_samples(mesh, samples, arrow_height, start_cap, end_cap);
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
