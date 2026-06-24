@@ -13,11 +13,12 @@
 #molfig.render(
     data, 
     format: "bcif", 
-    representation: "molstar", 
+    representation: "spacefill",
     mesh-format: "obj", 
     quality: "high", 
     output-format: "svg",
     config: (
-        background: ""
+        background: "",
+        elevation: 45
     )
 )

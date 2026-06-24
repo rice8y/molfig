@@ -13,11 +13,12 @@
 #molfig.render(
     data, 
     format: "pdb", 
-    representation: "molstar", 
+    representation: "cartoon",
     mesh-format: "obj", 
-    quality: "high", 
-    output-format: "svg",
+    quality: "auto",
+    output-format: "png",
     config: (
-        background: ""
+        background: "",
+        elevation: 45
     )
 )
