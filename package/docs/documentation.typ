@@ -9,6 +9,7 @@
 #let rendered-representations-pdf = "../examples/representations.pdf"
 #let rendered-render-object-pdf = "../examples/render-object.pdf"
 #let rendered-theme-pdf = "../examples/theme.pdf"
+#let rendered-decimate-pdf = "../examples/decimate.pdf"
 #let rendered-exports-pdf = "../examples/exports.pdf"
 #let rendered-metadata-pdf = "../examples/metadata.pdf"
 #let rendered-draft-pdf = "../examples/9M1U.pdf"
@@ -261,7 +262,7 @@ as inline molecular text, not as a file path.
   row3([I need readable geometry diffs.], [#ic("mesh-format: \"obj\"")], [OBJ is text and preserves face groups.]),
   row3([I need compact triangle bytes.], [#ic("mesh-format: \"stl\"")], [STL is binary and simple for downstream mesh tools.]),
   row3([I want text mesh plus group metadata.], [#ic("mesh-format: \"ply\"")], [PLY is ASCII and carries package-owned group comments/properties.]),
-  row3([Compilation is slow.], [#ic("quality: \"auto\"")], [Lets Molfig pick lower tessellation for large structures.]),
+  row3([Compilation is slow.], [#ic("quality: \"auto\"") or #ic("decimate: 0.3")], [Lets Molfig pick lower tessellation for large structures or apply semantic molecular level-of-detail.]),
 ))
 
 = Public API <sec:api>
@@ -617,6 +618,7 @@ these MTL opacity values.
 
 #option-table((
   option-row("quality", ic("\"custom\""), [#ic("\"custom\"") preserves explicit numeric controls. #ic("\"auto\"") chooses a preset from structure size. Also accepts #ic("\"highest\""), #ic("\"higher\""), #ic("\"high\""), #ic("\"medium\""), #ic("\"low\""), #ic("\"lower\""), #ic("\"lowest\"").]),
+  option-row("decimate", ic("0"), [Molfig-side molecular level-of-detail strength in #ic("[0, 1]"). It reduces sphere detail, polymer curve/profile segments, surface resolution, probe sampling, and exported cylinder detail before maquette receives the mesh. In @cmd:render[-] and @cmd:render-object[-], #ic("config.decimate") is also consumed this way and is not forwarded to maquette's generic triangle decimator.]),
   option-row("sphere-detail", ic("2"), [Sphere tessellation detail. Public input is clamped by the plugin.]),
   option-row("linear-segments", ic("8"), [Curve subdivisions for polymer and tube paths.]),
   option-row("radial-segments", ic("16"), [Radial subdivisions for cylinders, tubes, and ribbon-like profiles.]),
@@ -634,7 +636,9 @@ these MTL opacity values.
 Quality presets override the explicit numeric tessellation controls. Use
 #ic("quality: \"custom\"") when exact reproducibility matters, and use
 #ic("quality: \"auto\"") or a lower preset when large structures compile too
-slowly.
+slowly. #arg[decimate] is applied after the quality preset, so it can be used
+as an additional opt-in geometry budget without changing representation
+selection.
 
 #table4([Preset], [Sphere detail], [Radial segments], [Linear segments], (
   row4([#ic("\"highest\"")], [3], [36], [18]),
@@ -645,6 +649,64 @@ slowly.
   row4([#ic("\"lower\"")], [0], [4], [2]),
   row4([#ic("\"lowest\"")], [0], [2], [1]),
 ))
+
+=== Semantic Decimate <sec:semantic-decimate>
+
+#arg[decimate] is intended for document builds where a molecularly meaningful
+lower-detail mesh is preferable to generic triangle clustering. The example
+below keeps the same PDB entry, quality preset, and camera, but compares
+practical semantic level-of-detail strengths for Cartoon, Surface, and Spacefill.
+Cartoon primarily reduces curve and profile segments, Surface raises the
+molecular-surface grid resolution and reduces probe sampling, and Spacefill
+reduces sphere tessellation before maquette receives the OBJ.
+
+#let decimate-example-code = (
+  "#import \"" + package-import + "\"\n\n"
+  + "// Structural data: RCSB PDB / wwPDB entry 1CRN.\n"
+  + "// https://doi.org/10.2210/pdb1CRN/pdb (CC0 1.0)\n"
+  + "#let data = read(\"1CRN.bcif\", encoding: none)\n"
+  + "#let panel-width = 55mm\n"
+  + "#let panel-height = 42mm\n\n"
+  + "#let panel(name, representation, strength, zoom) = [\n"
+  + "  #align(center)[#strong(name)\\\n"
+  + "    #text(size: 8pt)[decimate: #strength]]\n"
+  + "  #block(width: panel-width, height: panel-height, clip: true)[\n"
+  + "    #align(center + horizon, scale(\n"
+  + "      x: zoom, y: zoom, origin: center + horizon,\n"
+  + "      molfig.render(data, format: \"bcif\", representation: representation,\n"
+  + "        mesh-format: \"obj\", quality: \"high\", center: true,\n"
+  + "        output-format: \"svg\",\n"
+  + "        config: (azimuth: 35, elevation: 24, background: \"\",\n"
+  + "          decimate: strength),\n"
+  + "        width: panel-width, height: panel-height),\n"
+  + "    ))\n"
+  + "  ]\n"
+  + "]\n\n"
+  + "#grid(\n"
+  + "  columns: (1fr, 1fr, 1fr), column-gutter: 2mm, row-gutter: 3mm,\n"
+  + "  panel([Cartoon], \"cartoon\", 0, 165%),\n"
+  + "  panel([Cartoon], \"cartoon\", 0.35, 165%),\n"
+  + "  panel([Cartoon], \"cartoon\", 0.65, 165%),\n"
+  + "  panel([Surface], \"surface\", 0, 145%),\n"
+  + "  panel([Surface], \"surface\", 0.35, 145%),\n"
+  + "  panel([Surface], \"surface\", 0.65, 145%),\n"
+  + "  panel([Spacefill], \"spacefill\", 0, 145%),\n"
+  + "  panel([Spacefill], \"spacefill\", 0.35, 145%),\n"
+  + "  panel([Spacefill], \"spacefill\", 0.65, 145%),\n"
+  + ")"
+)
+
+#code("typ", decimate-example-code, title: "Compare Molfig semantic decimate strengths on RCSB PDB entry 1CRN", file: "decimate.typ")
+
+#example-result(
+  rendered-decimate-pdf,
+  [RCSB PDB entry 1CRN rendered as Cartoon, Surface, and Spacefill with practical Molfig semantic decimate strengths.],
+  "1CRN",
+  "https://doi.org/10.2210/pdb1CRN/pdb",
+  source-note: [Primary citation: Teeter, #emph[Proceedings of the National
+    Academy of Sciences] 81, 6014--6018 (1984),
+    #link("https://doi.org/10.1073/pnas.81.19.6014")[doi:10.1073/pnas.81.19.6014].],
+)
 
 #info-alert[
   The public default is #ic("quality: \"custom\""), so the numeric defaults in
@@ -782,7 +844,7 @@ artifacts outside Typst.
   row3([Plugin says Molfig expects bytes.], [The input was not bytes, inline string data, or a Typst 0.15+ path value.], [For example, pass #ic("path(\"9R1O.pdb\")") on Typst 0.15+, or #ic("read(\"9R1O.pdb\", encoding: none)") for Typst 0.14-compatible documents.]),
   row3([BinaryCIF reports a missing encoding.], [The file is not valid BinaryCIF MessagePack or a column lacks required BinaryCIF encoding metadata.], [Check the source file and use #ic("format: \"cif\"") only for text CIF/mmCIF.]),
   row3([The figure is sparse or missing chains.], [Assembly or altLoc selection filtered the structure.], [Inspect #ic("molfig.info(...).assemblies") and #ic("alt_locs_info"), then set #arg[assembly] and #arg[alt-loc] explicitly.]),
-  row3([A large assembly compiles slowly.], [High tessellation or too much assembly geometry.], [Use #ic("quality: \"auto\""), lower #arg[radial-segments] and #arg[linear-segments], or choose a lighter representation.]),
+  row3([A large assembly compiles slowly.], [High tessellation or too much assembly geometry.], [Use #ic("quality: \"auto\""), #arg[decimate], lower #arg[radial-segments] and #arg[linear-segments], or choose a lighter representation.]),
   row3([SVG parsing fails with #ic("\"nodes limit reached\"").], [A high-poly mesh, commonly a large spacefill representation, expands to more SVG nodes than Typst accepts.], [Use #ic("output-format: \"png\""). If vector output is required, reduce #arg[quality], #arg[sphere-detail], #arg[linear-segments], or #arg[radial-segments].]),
   row3([Bonds are missing.], [The file lacks explicit bonds and inference is disabled.], [Leave #arg[infer-bonds] as #value(true), or inspect #ic("bond_metadata") to see available bond sources.]),
   row3([Rendered view differs from external OBJ inspection.], [Different camera, centering, or mesh format.], [Pin #arg[center], #arg[mesh-format], maquette #arg[config], and representation quality options.]),

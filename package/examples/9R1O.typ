@@ -22,6 +22,7 @@
   config: (
     azimuth: 35,
     elevation: 24,
+    decimate: 0,
     background: "",
   ),
 )
