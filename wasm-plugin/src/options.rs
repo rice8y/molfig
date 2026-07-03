@@ -90,6 +90,7 @@ pub struct MeshOptions {
     pub(crate) linear_segments: usize,
     pub(crate) radial_segments: usize,
     pub(crate) quality: Option<VisualQuality>,
+    pub(crate) decimate: f32,
     pub(crate) export_primitives_quality: ExportPrimitivesQuality,
     pub(crate) visuals: Vec<String>,
     pub(crate) obj_basename: Option<String>,
@@ -129,6 +130,7 @@ impl Default for MeshOptions {
             linear_segments: 8,
             radial_segments: 16,
             quality: None,
+            decimate: 0.0,
             export_primitives_quality: ExportPrimitivesQuality::Auto,
             visuals: Vec::new(),
             obj_basename: None,
@@ -325,6 +327,9 @@ impl MeshOptions {
         if let Some(value) = json_string(text, "quality") {
             options.quality = Some(parse_quality(&value)?);
         }
+        if let Some(value) = json_number(text, "decimate") {
+            options.decimate = value.clamp(0.0, 1.0);
+        }
         if let Some(value) = json_string(text, "export-primitives-quality") {
             options.export_primitives_quality = parse_export_primitives_quality(&value)?;
         }
@@ -364,16 +369,18 @@ impl MeshOptions {
     }
 
     pub(crate) fn resolved_for_quality(&self, element_count: usize, is_coarse: bool) -> Self {
-        let Some(quality) = self.quality else {
-            return self.clone();
-        };
-        let quality = match quality {
-            VisualQuality::Auto => auto_quality(element_count, is_coarse),
-            VisualQuality::Custom => return self.clone(),
-            quality => quality,
-        };
         let mut options = self.clone();
-        apply_quality(&mut options, quality);
+        if let Some(quality) = self.quality {
+            let quality = match quality {
+                VisualQuality::Auto => Some(auto_quality(element_count, is_coarse)),
+                VisualQuality::Custom => None,
+                quality => Some(quality),
+            };
+            if let Some(quality) = quality {
+                apply_quality(&mut options, quality);
+            }
+        }
+        apply_semantic_decimate(&mut options);
         options
     }
 }
@@ -553,6 +560,48 @@ fn apply_quality(options: &mut MeshOptions, quality: VisualQuality) {
     }
 }
 
+fn apply_semantic_decimate(options: &mut MeshOptions) {
+    let strength = options.decimate.clamp(0.0, 1.0);
+    if strength <= 0.0 {
+        return;
+    }
+
+    options.sphere_detail = options
+        .sphere_detail
+        .saturating_sub((strength * 2.5).floor() as usize);
+    options.linear_segments = decimated_count(options.linear_segments, 1, strength, 0.72);
+    options.radial_segments = if options.radial_segments <= 2 {
+        options.radial_segments
+    } else {
+        decimated_count(options.radial_segments, 3, strength, 0.78)
+    };
+    options.probe_positions = decimated_count(options.probe_positions, 12, strength, 0.55);
+
+    let resolution_factor = 1.0 + 2.0 * strength + 3.0 * strength * strength;
+    options.surface_resolution =
+        (options.surface_resolution * resolution_factor).clamp(0.1, 20.0);
+    options.molecular_surface_resolution =
+        (options.molecular_surface_resolution * resolution_factor as f64).clamp(0.01, 20.0);
+
+    if options.export_primitives_quality == ExportPrimitivesQuality::Auto {
+        options.export_primitives_quality = if strength >= 0.66 {
+            ExportPrimitivesQuality::Low
+        } else if strength >= 0.33 {
+            ExportPrimitivesQuality::Medium
+        } else {
+            ExportPrimitivesQuality::Auto
+        };
+    }
+}
+
+fn decimated_count(value: usize, min: usize, strength: f32, weight: f32) -> usize {
+    if value <= min {
+        return value;
+    }
+    let scale = (1.0 - weight * strength).clamp(0.15, 1.0);
+    ((value as f32 * scale).round() as usize).clamp(min, value)
+}
+
 fn json_string(text: &str, key: &str) -> Option<String> {
     let marker = format!("\"{key}\"");
     let mut tail = text.split_once(&marker)?.1;
@@ -647,7 +696,7 @@ fn json_string_array(text: &str, key: &str) -> Option<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MeshOptions, Representation, VisualQuality};
+    use super::{ExportPrimitivesQuality, MeshOptions, Representation, VisualQuality};
 
     #[test]
     fn representation_names_follow_molstar_viewer_and_provider_semantics() {
@@ -748,6 +797,46 @@ mod tests {
         assert_eq!(options.molecular_surface_resolution, 1.7);
         assert_eq!(options.radial_segments, 18);
         assert_eq!(options.linear_segments, 6);
+    }
+
+    #[test]
+    fn semantic_decimate_reduces_resolved_molecular_lod_after_quality() {
+        let options = MeshOptions::from_json(br#"{"quality":"high","decimate":0.5}"#)
+            .unwrap()
+            .resolved_for_quality(2_870, false);
+
+        assert_eq!(options.quality, Some(VisualQuality::High));
+        assert_eq!(options.sphere_detail, 1);
+        assert_eq!(options.radial_segments, 12);
+        assert_eq!(options.linear_segments, 6);
+        assert_eq!(options.probe_positions, 26);
+        assert!((options.surface_resolution - 1.375).abs() < 1e-6);
+        assert!((options.molecular_surface_resolution - 1.375).abs() < 1e-12);
+        assert_eq!(
+            options.export_primitives_quality,
+            ExportPrimitivesQuality::Medium
+        );
+    }
+
+    #[test]
+    fn semantic_decimate_preserves_custom_as_the_base_lod() {
+        let options = MeshOptions::from_json(
+            br#"{"quality":"custom","sphere-detail":3,"resolution":0.4,"linear-segments":12,"radial-segments":24,"probe-positions":48,"decimate":0.75}"#,
+        )
+        .unwrap()
+        .resolved_for_quality(10, false);
+
+        assert_eq!(options.quality, Some(VisualQuality::Custom));
+        assert_eq!(options.sphere_detail, 2);
+        assert_eq!(options.radial_segments, 10);
+        assert_eq!(options.linear_segments, 6);
+        assert_eq!(options.probe_positions, 28);
+        assert!((options.surface_resolution - 1.675).abs() < 1e-6);
+        assert!((options.molecular_surface_resolution - 1.675).abs() < 1e-6);
+        assert_eq!(
+            options.export_primitives_quality,
+            ExportPrimitivesQuality::Low
+        );
     }
 
     #[test]
