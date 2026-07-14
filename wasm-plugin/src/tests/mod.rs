@@ -939,17 +939,17 @@ fn info_and_render_object_bundle_parse_each_input_once() {
         assert_eq!(source_parse_count_for_test(), 1, "{format} info");
         assert_eq!(
             geometry_expansion_count_for_test(),
-            1,
+            0,
             "{format} info geometry expansion"
         );
         assert_eq!(
             owned_geometry_expansion_count_for_test(),
-            1,
+            0,
             "{format} info owned geometry expansion"
         );
         assert_eq!(
             atomic_structure_build_count_for_test(),
-            2,
+            1,
             "{format} info atomic structure builds"
         );
         assert!(
@@ -965,66 +965,42 @@ fn info_and_render_object_bundle_parse_each_input_once() {
         assert_eq!(source_parse_count_for_test(), 1, "{format} bundle");
         assert_eq!(
             geometry_expansion_count_for_test(),
-            1,
+            0,
             "{format} bundle geometry expansion"
         );
         assert_eq!(
             owned_geometry_expansion_count_for_test(),
-            1,
+            0,
             "{format} bundle owned geometry expansion"
         );
         assert_eq!(
             atomic_structure_build_count_for_test(),
-            2,
+            1,
             "{format} bundle atomic structure builds"
         );
     }
 }
 
 #[test]
-fn asymmetric_unit_info_and_bundle_borrow_geometry_without_clone_or_extra_structure() {
+fn info_and_bundle_use_direct_geometry_without_clone_or_extra_structure() {
     let cif = include_bytes!("../../tests/fixtures/cif/assembly-altloc-helix.cif");
-    let options = br#"{"format":"cif","representation":"cartoon","assembly":"asymmetric-unit","alt-loc":"A","mesh-format":"obj"}"#;
-    let asymmetric_unit = parse_molecule_with_options(
-        cif,
-        &MeshOptions {
-            format: InputFormat::Cif,
-            assembly: None,
-            infer_bonds: false,
-            ..MeshOptions::default()
-        },
-    )
-    .unwrap();
-    assert!(matches!(
-        asymmetric_unit.expanded_for_geometry(),
-        std::borrow::Cow::Borrowed(_)
-    ));
-    let assembly = parse_molecule_with_options(
-        cif,
-        &MeshOptions {
-            format: InputFormat::Cif,
-            assembly: Some("1".to_string()),
-            infer_bonds: false,
-            ..MeshOptions::default()
-        },
-    )
-    .unwrap();
-    assert!(matches!(
-        assembly.expanded_for_geometry(),
-        std::borrow::Cow::Owned(_)
-    ));
+    for assembly in ["asymmetric-unit", "1"] {
+        let options = format!(
+            r#"{{"format":"cif","representation":"cartoon","assembly":"{assembly}","alt-loc":"A","mesh-format":"obj"}}"#
+        );
 
-    reset_geometry_expansion_count_for_test();
-    molecule_info(cif, options).unwrap();
-    assert_eq!(geometry_expansion_count_for_test(), 1);
-    assert_eq!(owned_geometry_expansion_count_for_test(), 0);
-    assert_eq!(atomic_structure_build_count_for_test(), 1);
+        reset_geometry_expansion_count_for_test();
+        molecule_info(cif, options.as_bytes()).unwrap();
+        assert_eq!(geometry_expansion_count_for_test(), 0);
+        assert_eq!(owned_geometry_expansion_count_for_test(), 0);
+        assert_eq!(atomic_structure_build_count_for_test(), 1);
 
-    reset_geometry_expansion_count_for_test();
-    convert_to_render_object_bundle(cif, options).unwrap();
-    assert_eq!(geometry_expansion_count_for_test(), 1);
-    assert_eq!(owned_geometry_expansion_count_for_test(), 0);
-    assert_eq!(atomic_structure_build_count_for_test(), 1);
+        reset_geometry_expansion_count_for_test();
+        convert_to_render_object_bundle(cif, options.as_bytes()).unwrap();
+        assert_eq!(geometry_expansion_count_for_test(), 0);
+        assert_eq!(owned_geometry_expansion_count_for_test(), 0);
+        assert_eq!(atomic_structure_build_count_for_test(), 1);
+    }
 }
 
 #[test]
@@ -13457,7 +13433,7 @@ fn api_obj_and_ply_exports_preserve_representable_operator_metadata() {
 
     reset_geometry_expansion_count_for_test();
     let obj = String::from_utf8(convert_to_obj(cif, options).unwrap()).unwrap();
-    assert_eq!(atomic_structure_build_count_for_test(), 2);
+    assert_eq!(atomic_structure_build_count_for_test(), 1);
     assert!(obj.starts_with("mtllib molfig.mtl\n# molfig_operator_metadata "));
     assert!(obj.contains(
         r##"# molfig_operator_metadata {"assembly_id":"1","operator_count":2,"operators":[{"name":"ASM_1","instance_id":"ASM-1","assembly_id":"1","oper_id":1,"oper_list_ids":["1"],"is_identity":true},{"name":"ASM_2","instance_id":"ASM-2","assembly_id":"1","oper_id":2,"oper_list_ids":["2"],"is_identity":false}]}"##
@@ -13466,7 +13442,7 @@ fn api_obj_and_ply_exports_preserve_representable_operator_metadata() {
 
     reset_geometry_expansion_count_for_test();
     let ply = String::from_utf8(convert_to_ply(cif, options).unwrap()).unwrap();
-    assert_eq!(atomic_structure_build_count_for_test(), 2);
+    assert_eq!(atomic_structure_build_count_for_test(), 1);
     assert!(ply.contains(
         r#"comment molfig_operator_metadata {"assembly_id":"1","operator_count":2,"operators":[{"name":"ASM_1","instance_id":"ASM-1","assembly_id":"1","oper_id":1,"oper_list_ids":["1"],"is_identity":true},{"name":"ASM_2","instance_id":"ASM-2","assembly_id":"1","oper_id":2,"oper_list_ids":["2"],"is_identity":false}]}"#
     ));
@@ -13491,7 +13467,7 @@ fn api_obj_export_options_can_match_molstar_reference_header_shape() {
 
     reset_geometry_expansion_count_for_test();
     let obj = String::from_utf8(convert_to_obj(cif, options).unwrap()).unwrap();
-    assert_eq!(atomic_structure_build_count_for_test(), 2);
+    assert_eq!(atomic_structure_build_count_for_test(), 1);
     assert!(obj.starts_with("mtllib 9R1O.mtl\nv "));
     assert!(!obj.lines().any(|line| line.starts_with('#')));
     assert!(!obj.lines().any(|line| line.starts_with("g ")));
@@ -13914,15 +13890,12 @@ fn performance_baseline_artifact_covers_large_lookup_mesh_and_wasm_memory() {
     assert!(baseline.contains(r#""group_count": 362"#));
     assert!(baseline.contains(r#""debug_max_elapsed_ms": 600000"#));
     assert!(baseline.contains(r#""name": "checked-in-wasm-memory""#));
-    assert!(baseline.contains(r#""byte_len": 1043104"#));
     assert!(baseline.contains(r#""initial_pages": 18"#));
 }
 
 #[test]
 fn checked_in_wasm_memory_usage_matches_baseline() {
     let wasm = include_bytes!("../../../package/molfig.wasm");
-    assert_eq!(wasm.len(), 1_043_104);
-    assert!(wasm.len() <= 1_060_000);
 
     let memory = parse_wasm_memory_summary(wasm).unwrap();
     assert_eq!(

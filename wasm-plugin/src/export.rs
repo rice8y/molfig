@@ -16,6 +16,12 @@ pub(crate) struct ExportMetadata {
     pub(crate) vertex_offset: ExportVec3,
 }
 
+#[derive(Debug)]
+pub(crate) struct ObjExport {
+    pub(crate) text: String,
+    pub(crate) materials: Vec<MeshMaterial>,
+}
+
 impl Default for ExportMetadata {
     fn default() -> Self {
         Self {
@@ -66,8 +72,29 @@ pub(crate) fn export_obj(mesh: &Mesh) -> String {
 }
 
 pub(crate) fn export_obj_with_metadata(mesh: &Mesh, metadata: &ExportMetadata) -> String {
+    export_obj_with_metadata_impl(mesh, metadata, false)
+        .expect("writing OBJ to String cannot fail")
+        .text
+}
+
+pub(crate) fn export_obj_with_metadata_checked(
+    mesh: &Mesh,
+    metadata: &ExportMetadata,
+) -> Result<ObjExport, String> {
+    export_obj_with_metadata_impl(mesh, metadata, true)
+}
+
+fn export_obj_with_metadata_impl(
+    mesh: &Mesh,
+    metadata: &ExportMetadata,
+    validate: bool,
+) -> Result<ObjExport, String> {
+    if validate {
+        validate_mesh_layout_for_export(mesh)?;
+    }
     let basename = metadata.obj_basename.as_deref().unwrap_or("molfig");
     let mut out = String::with_capacity(obj_output_capacity(mesh));
+    let mut materials = Vec::new();
     writeln!(out, "mtllib {basename}.mtl").expect("writing to String cannot fail");
     if metadata.include_operator_metadata {
         if let Some(metadata_json) = export_metadata_json(metadata) {
@@ -77,11 +104,14 @@ pub(crate) fn export_obj_with_metadata(mesh: &Mesh, metadata: &ExportMetadata) -
         }
     }
     if let Some(sections) = molstar_obj_sections(mesh) {
-        export_obj_sections(mesh, metadata, sections, &mut out);
+        export_obj_sections(mesh, metadata, sections, &mut out, &mut materials, validate)?;
     } else {
-        export_obj_unsectioned(mesh, metadata, &mut out);
+        export_obj_unsectioned(mesh, metadata, &mut out, &mut materials, validate)?;
     }
-    out
+    Ok(ObjExport {
+        text: out,
+        materials,
+    })
 }
 
 fn export_obj_sections(
@@ -89,14 +119,28 @@ fn export_obj_sections(
     metadata: &ExportMetadata,
     sections: &[crate::model::MeshSection],
     out: &mut String,
-) {
+    materials: &mut Vec<MeshMaterial>,
+    validate: bool,
+) -> Result<(), String> {
     let mut current_group = None;
     let mut current_material = None;
     for section in sections {
-        for v in &mesh.vertices[section.vertex_start..section.vertex_end] {
+        for (index, v) in mesh.vertices[section.vertex_start..section.vertex_end]
+            .iter()
+            .enumerate()
+        {
+            if validate {
+                validate_mesh_vertex(section.vertex_start + index, *v)?;
+            }
             write_obj_vertex(out, *v, metadata.vertex_offset);
         }
-        for n in &mesh.normals[section.vertex_start..section.vertex_end] {
+        for (index, n) in mesh.normals[section.vertex_start..section.vertex_end]
+            .iter()
+            .enumerate()
+        {
+            if validate {
+                validate_mesh_normal(section.vertex_start + index, *n)?;
+            }
             write_obj_normal(out, *n);
         }
         write_obj_faces(
@@ -107,15 +151,30 @@ fn export_obj_sections(
             out,
             &mut current_group,
             &mut current_material,
-        );
+            materials,
+            validate,
+        )?;
     }
+    Ok(())
 }
 
-fn export_obj_unsectioned(mesh: &Mesh, metadata: &ExportMetadata, out: &mut String) {
-    for v in &mesh.vertices {
+fn export_obj_unsectioned(
+    mesh: &Mesh,
+    metadata: &ExportMetadata,
+    out: &mut String,
+    materials: &mut Vec<MeshMaterial>,
+    validate: bool,
+) -> Result<(), String> {
+    for (index, v) in mesh.vertices.iter().enumerate() {
+        if validate {
+            validate_mesh_vertex(index, *v)?;
+        }
         write_obj_vertex(out, *v, metadata.vertex_offset);
     }
-    for n in &mesh.normals {
+    for (index, n) in mesh.normals.iter().enumerate() {
+        if validate {
+            validate_mesh_normal(index, *n)?;
+        }
         write_obj_normal(out, *n);
     }
     let mut current_group = None;
@@ -128,7 +187,9 @@ fn export_obj_unsectioned(mesh: &Mesh, metadata: &ExportMetadata, out: &mut Stri
         out,
         &mut current_group,
         &mut current_material,
-    );
+        materials,
+        validate,
+    )
 }
 
 fn write_obj_vertex(out: &mut String, v: crate::model::Vec3, offset: ExportVec3) {
@@ -173,6 +234,7 @@ fn write_obj_normal(out: &mut String, n: crate::model::Vec3) {
     .expect("writing to String cannot fail");
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_obj_faces(
     mesh: &Mesh,
     metadata: &ExportMetadata,
@@ -181,15 +243,23 @@ fn write_obj_faces(
     out: &mut String,
     current_group: &mut Option<usize>,
     current_material: &mut Option<MeshMaterial>,
-) {
+    materials: &mut Vec<MeshMaterial>,
+    validate: bool,
+) -> Result<(), String> {
     for face_index in face_start..face_end {
         let f = &mesh.faces[face_index];
+        if validate {
+            validate_mesh_face(mesh, face_index, f)?;
+        }
         let group = mesh.face_group(face_index);
         if metadata.include_face_groups && *current_group != Some(group) {
             writeln!(out, "g molfig_group_{group}").expect("writing to String cannot fail");
             *current_group = Some(group);
         }
         if let Some(material) = mesh.face_material(face_index) {
+            if !materials.contains(&material) {
+                materials.push(material);
+            }
             if *current_material != Some(material) {
                 out.push_str("usemtl ");
                 write_molstar_material_id(out, material);
@@ -201,6 +271,7 @@ fn write_obj_faces(
         writeln!(out, "f {0}//{0} {1}//{1} {2}//{2}", a, b, c)
             .expect("writing to String cannot fail");
     }
+    Ok(())
 }
 
 fn obj_output_capacity(mesh: &Mesh) -> usize {
@@ -257,8 +328,15 @@ pub(crate) fn export_mtl(mesh: &Mesh) -> String {
     export_mtl_from_materials(&mesh_materials_in_first_use_order(mesh))
 }
 
+#[cfg(test)]
 pub(crate) fn export_maquette_material_map_json(mesh: &Mesh) -> String {
-    let entries = mesh_materials_in_first_use_order(mesh)
+    export_maquette_material_map_json_from_materials(&mesh_materials_in_first_use_order(mesh))
+}
+
+pub(crate) fn export_maquette_material_map_json_from_materials(
+    materials: &[MeshMaterial],
+) -> String {
+    let entries = materials
         .iter()
         .map(|material| {
             format!(
@@ -331,6 +409,7 @@ pub(crate) fn export_mtl_from_materials(materials: &[MeshMaterial]) -> String {
     out
 }
 
+#[cfg(test)]
 fn mesh_materials_in_first_use_order(mesh: &Mesh) -> Vec<MeshMaterial> {
     let mut materials = Vec::new();
     for material in &mesh.face_materials {
@@ -347,6 +426,24 @@ pub(crate) fn export_ply(mesh: &Mesh) -> String {
 }
 
 pub(crate) fn export_ply_with_metadata(mesh: &Mesh, metadata: &ExportMetadata) -> String {
+    export_ply_with_metadata_impl(mesh, metadata, false).expect("writing PLY to String cannot fail")
+}
+
+pub(crate) fn export_ply_with_metadata_checked(
+    mesh: &Mesh,
+    metadata: &ExportMetadata,
+) -> Result<String, String> {
+    export_ply_with_metadata_impl(mesh, metadata, true)
+}
+
+fn export_ply_with_metadata_impl(
+    mesh: &Mesh,
+    metadata: &ExportMetadata,
+    validate: bool,
+) -> Result<String, String> {
+    if validate {
+        validate_mesh_layout_for_export(mesh)?;
+    }
     let mut out = String::with_capacity(ply_output_capacity(mesh));
     writeln!(out, "ply").expect("writing to String cannot fail");
     writeln!(out, "format ascii 1.0").expect("writing to String cannot fail");
@@ -371,10 +468,17 @@ pub(crate) fn export_ply_with_metadata(mesh: &Mesh, metadata: &ExportMetadata) -
         mesh.faces.len()
     )
     .expect("writing to String cannot fail");
-    for v in &mesh.vertices {
+    for (index, v) in mesh.vertices.iter().enumerate() {
+        if validate {
+            validate_mesh_vertex(index, *v)?;
+            validate_mesh_normal(index, mesh.normals[index])?;
+        }
         writeln!(out, "{:.5} {:.5} {:.5}", v.x, v.y, v.z).expect("writing to String cannot fail");
     }
     for (face_index, f) in mesh.faces.iter().enumerate() {
+        if validate {
+            validate_mesh_face(mesh, face_index, f)?;
+        }
         writeln!(
             out,
             "3 {} {} {} {}",
@@ -385,7 +489,7 @@ pub(crate) fn export_ply_with_metadata(mesh: &Mesh, metadata: &ExportMetadata) -
         )
         .expect("writing to String cannot fail");
     }
-    out
+    Ok(out)
 }
 
 fn ply_output_capacity(mesh: &Mesh) -> usize {
@@ -408,6 +512,32 @@ pub(crate) fn export_stl(mesh: &Mesh) -> Vec<u8> {
 }
 
 pub(crate) fn export_stl_with_metadata(mesh: &Mesh, metadata: &ExportMetadata) -> Vec<u8> {
+    export_stl_with_metadata_impl(mesh, metadata, false).expect("writing STL cannot fail")
+}
+
+pub(crate) fn export_stl_with_metadata_checked(
+    mesh: &Mesh,
+    metadata: &ExportMetadata,
+) -> Result<Vec<u8>, String> {
+    export_stl_with_metadata_impl(mesh, metadata, true)
+}
+
+fn export_stl_with_metadata_impl(
+    mesh: &Mesh,
+    metadata: &ExportMetadata,
+    validate: bool,
+) -> Result<Vec<u8>, String> {
+    if validate {
+        validate_mesh_layout_for_export(mesh)?;
+    }
+    // STL does not serialize stored normals or unreferenced vertices, so these
+    // values still need one validation pass to preserve the public contract.
+    if validate {
+        for (index, (vertex, normal)) in mesh.vertices.iter().zip(&mesh.normals).enumerate() {
+            validate_mesh_vertex(index, *vertex)?;
+            validate_mesh_normal(index, *normal)?;
+        }
+    }
     let draw_count = mesh.faces.len().saturating_mul(3);
     let size = 84usize
         .checked_add(
@@ -422,6 +552,9 @@ pub(crate) fn export_stl_with_metadata(mesh: &Mesh, metadata: &ExportMetadata) -
     let draw_count = u32::try_from(draw_count).expect("STL draw count exceeds u32");
     out[80..84].copy_from_slice(&draw_count.to_le_bytes());
     for (i, face) in mesh.faces.iter().enumerate() {
+        if validate {
+            validate_mesh_face(mesh, i, face)?;
+        }
         let offset = 84 + i * 3 * 50;
         let a = molstar_stl_vertex_transform(mesh.vertices[face.a], metadata.vertex_offset);
         let b = molstar_stl_vertex_transform(mesh.vertices[face.b], metadata.vertex_offset);
@@ -432,7 +565,120 @@ pub(crate) fn export_stl_with_metadata(mesh: &Mesh, metadata: &ExportMetadata) -
             out[offset + j * 4..offset + j * 4 + 4].copy_from_slice(&value.to_le_bytes());
         }
     }
-    out
+    Ok(out)
+}
+
+pub(crate) fn validate_mesh_for_export(mesh: &Mesh) -> Result<(), String> {
+    for (index, vertex) in mesh.vertices.iter().enumerate() {
+        validate_mesh_vertex(index, *vertex)?;
+    }
+    for (index, normal) in mesh.normals.iter().enumerate() {
+        validate_mesh_normal(index, *normal)?;
+    }
+    validate_mesh_layout_for_export(mesh)?;
+    for (index, face) in mesh.faces.iter().enumerate() {
+        validate_mesh_face(mesh, index, face)?;
+    }
+    Ok(())
+}
+
+fn validate_mesh_vertex(index: usize, vertex: Vec3) -> Result<(), String> {
+    if vec3_is_finite(vertex) {
+        Ok(())
+    } else {
+        Err(format!("mesh vertex {index} contains NaN or infinity"))
+    }
+}
+
+fn validate_mesh_normal(index: usize, normal: Vec3) -> Result<(), String> {
+    if vec3_is_finite(normal) {
+        Ok(())
+    } else {
+        Err(format!("mesh normal {index} contains NaN or infinity"))
+    }
+}
+
+fn validate_mesh_face(mesh: &Mesh, index: usize, face: &crate::model::Face) -> Result<(), String> {
+    if face.a < mesh.vertices.len() && face.b < mesh.vertices.len() && face.c < mesh.vertices.len()
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "mesh face {index} references an out-of-range vertex"
+        ))
+    }
+}
+
+fn vec3_is_finite(value: Vec3) -> bool {
+    value.x.is_finite() && value.y.is_finite() && value.z.is_finite()
+}
+
+fn validate_mesh_layout_for_export(mesh: &Mesh) -> Result<(), String> {
+    if mesh.normals.len() != mesh.vertices.len() {
+        return Err(format!(
+            "mesh normal count {} does not match vertex count {}",
+            mesh.normals.len(),
+            mesh.vertices.len()
+        ));
+    }
+    if !mesh.vertex_groups.is_empty() && mesh.vertex_groups.len() != mesh.vertices.len() {
+        return Err(format!(
+            "mesh vertex group count {} does not match vertex count {}",
+            mesh.vertex_groups.len(),
+            mesh.vertices.len()
+        ));
+    }
+    if mesh.face_groups.len() != mesh.faces.len() {
+        return Err(format!(
+            "mesh face group count {} does not match face count {}",
+            mesh.face_groups.len(),
+            mesh.faces.len()
+        ));
+    }
+    if !mesh.face_materials.is_empty() && mesh.face_materials.len() != mesh.faces.len() {
+        return Err(format!(
+            "mesh face material count {} does not match face count {}",
+            mesh.face_materials.len(),
+            mesh.faces.len()
+        ));
+    }
+    validate_mesh_sections_for_export(mesh)
+}
+
+fn validate_mesh_sections_for_export(mesh: &Mesh) -> Result<(), String> {
+    let mut vertex_cursor = 0;
+    let mut face_cursor = 0;
+    for (index, section) in mesh.sections.iter().enumerate() {
+        if section.key.is_empty() {
+            return Err(format!("mesh section {index} has an empty key"));
+        }
+        if section.vertex_start != vertex_cursor {
+            return Err(format!(
+                "mesh section {index} starts at vertex {} but expected {vertex_cursor}",
+                section.vertex_start
+            ));
+        }
+        if section.vertex_end < section.vertex_start || section.vertex_end > mesh.vertices.len() {
+            return Err(format!("mesh section {index} has an invalid vertex range"));
+        }
+        if section.face_start != face_cursor {
+            return Err(format!(
+                "mesh section {index} starts at face {} but expected {face_cursor}",
+                section.face_start
+            ));
+        }
+        if section.face_end < section.face_start || section.face_end > mesh.faces.len() {
+            return Err(format!("mesh section {index} has an invalid face range"));
+        }
+        vertex_cursor = section.vertex_end;
+        face_cursor = section.face_end;
+    }
+    if !mesh.sections.is_empty()
+        && (vertex_cursor != mesh.vertices.len() || face_cursor != mesh.faces.len())
+    {
+        return Err("mesh sections do not cover the full exported mesh".to_string());
+    }
+    Ok(())
 }
 
 pub(crate) fn export_stl_facet_context_json(

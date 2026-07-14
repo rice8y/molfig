@@ -1,3 +1,4 @@
+#[cfg(test)]
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1365,11 +1366,6 @@ pub(crate) fn atomic_structure_build_count_for_test() -> usize {
     ATOMIC_STRUCTURE_BUILD_COUNT.with(std::cell::Cell::get)
 }
 
-pub(crate) struct GeometryExpansion<'a> {
-    pub(crate) molecule: Cow<'a, Molecule>,
-    pub(crate) assembly_operators: Vec<UnitOperator>,
-}
-
 impl Molecule {
     pub fn atomic_structure(&self) -> AtomicStructure {
         AtomicStructure::from_molecule(self)
@@ -1379,34 +1375,15 @@ impl Molecule {
         self.atomic_structure().carbohydrates
     }
 
+    #[cfg(test)]
     pub(crate) fn expanded_for_geometry(&self) -> Cow<'_, Molecule> {
-        self.expanded_for_geometry_with_operator_snapshot(false)
-            .molecule
-    }
-
-    pub(crate) fn expanded_for_geometry_with_operator_snapshot(
-        &self,
-        capture_operators: bool,
-    ) -> GeometryExpansion<'_> {
-        #[cfg(test)]
         GEOMETRY_EXPANSION_COUNT.with(|count| count.set(count.get() + 1));
-
         if self.selected_assembly.is_none() {
-            return GeometryExpansion {
-                molecule: Cow::Borrowed(self),
-                assembly_operators: Vec::new(),
-            };
+            return Cow::Borrowed(self);
         }
-
-        #[cfg(test)]
         OWNED_GEOMETRY_EXPANSION_COUNT.with(|count| count.set(count.get() + 1));
 
         let structure = self.atomic_structure();
-        let assembly_operators = if capture_operators {
-            unique_assembly_unit_operators(&structure.units)
-        } else {
-            Vec::new()
-        };
         let mut atoms = Vec::new();
         let mut expanded_indices = Vec::<(usize, usize)>::new();
         for unit in &structure.units {
@@ -1440,120 +1417,7 @@ impl Molecule {
         molecule.coarse_spheres = coarse_spheres;
         molecule.coarse_gaussians = coarse_gaussians;
         molecule.selected_assembly = None;
-        GeometryExpansion {
-            molecule: Cow::Owned(molecule),
-            assembly_operators,
-        }
-    }
-
-    pub(crate) fn unexpanded_for_geometry_with_operator_snapshot(
-        &self,
-        capture_operators: bool,
-    ) -> GeometryExpansion<'_> {
-        let assembly_operators = if capture_operators && self.selected_assembly.is_some() {
-            unique_assembly_unit_operators(&self.atomic_structure().units)
-        } else {
-            Vec::new()
-        };
-        GeometryExpansion {
-            molecule: Cow::Borrowed(self),
-            assembly_operators,
-        }
-    }
-
-    pub(crate) fn identity_assembly_subset_for_geometry(&self) -> Option<Molecule> {
-        let assembly = self.selected_assembly.as_ref()?;
-        let generators = if assembly.generators.is_empty() {
-            vec![AssemblyGenerator::from_transforms(
-                &assembly.id,
-                assembly.asym_ids.clone(),
-                0,
-                assembly.transforms.clone(),
-                vec![Vec::new(); assembly.transforms.len()],
-            )]
-        } else {
-            assembly.generators.clone()
-        };
-        let mut operator_offset = 0usize;
-        let mut asym_ids = BTreeSet::new();
-        for generator in generators {
-            let operators = generator.operators_for_assembly(&assembly.id, operator_offset);
-            operator_offset += operators.len();
-            if operators.len() != 1 || !operators[0].transform.is_identity() {
-                return None;
-            }
-            asym_ids.extend(generator.asym_ids);
-        }
-        if asym_ids.is_empty() {
-            return None;
-        }
-
-        let mut atom_index_map = vec![None; self.atoms.len()];
-        let mut atoms = Vec::new();
-        for (source_index, atom) in self.atoms.iter().enumerate() {
-            if asym_ids.contains(&atom.chain) || asym_ids.contains(&atom.auth_chain) {
-                atom_index_map[source_index] = Some(atoms.len());
-                atoms.push(atom.clone());
-            }
-        }
-        if atoms.len() == self.atoms.len() {
-            let mut molecule = self.clone();
-            molecule.selected_assembly = None;
-            return Some(molecule);
-        }
-
-        let mut bonds = Vec::new();
-        let mut bond_metadata = Vec::new();
-        for (bond, metadata) in self.bonds.iter().zip(&self.bond_metadata) {
-            let (Some(a), Some(b)) = (
-                atom_index_map.get(bond.a).copied().flatten(),
-                atom_index_map.get(bond.b).copied().flatten(),
-            ) else {
-                continue;
-            };
-            bonds.push(Bond { a, b });
-            bond_metadata.push(metadata.clone());
-        }
-
-        let mut molecule = self.clone();
-        molecule.atoms = atoms;
-        molecule.bonds = bonds;
-        molecule.bond_metadata = bond_metadata;
-        molecule.index_pair_bonds = None;
-        molecule.coarse_spheres = self
-            .coarse_spheres
-            .iter()
-            .filter(|sphere| asym_ids.contains(&sphere.asym_id))
-            .cloned()
-            .collect();
-        molecule.coarse_gaussians = self
-            .coarse_gaussians
-            .iter()
-            .filter(|gaussian| asym_ids.contains(&gaussian.asym_id))
-            .cloned()
-            .collect();
-        molecule.helices = self
-            .helices
-            .iter()
-            .filter(|range| asym_ids.contains(&range.chain))
-            .cloned()
-            .collect();
-        molecule.sheets = self
-            .sheets
-            .iter()
-            .filter(|range| asym_ids.contains(&range.chain))
-            .cloned()
-            .collect();
-        molecule.selected_assembly = None;
-        Some(molecule)
-    }
-
-    pub(crate) fn identity_assembly_trace_subset_for_geometry(&self) -> Option<Molecule> {
-        let mut molecule = self.identity_assembly_subset_for_geometry()?;
-        molecule.bonds.clear();
-        molecule.bond_metadata.clear();
-        molecule.index_pair_bonds = None;
-        Some(molecule)
+        Cow::Owned(molecule)
     }
 
     pub(crate) fn refresh_topology_metadata(&mut self) {
@@ -1676,24 +1540,6 @@ impl Molecule {
     }
 }
 
-fn unique_assembly_unit_operators(units: &[StructureUnit]) -> Vec<UnitOperator> {
-    let mut operators = Vec::new();
-    for unit in units {
-        let operator = &unit.operator;
-        if operators.iter().any(|existing: &UnitOperator| {
-            existing.name == operator.name
-                && existing.instance_id == operator.instance_id
-                && existing.assembly_id == operator.assembly_id
-                && existing.oper_id == operator.oper_id
-                && existing.oper_list_ids == operator.oper_list_ids
-        }) {
-            continue;
-        }
-        operators.push(operator.clone());
-    }
-    operators
-}
-
 fn molstar_bond_site_export_value_order(order: i8, flags: BondFlags) -> Option<&'static str> {
     let mut value_order = match order {
         1 => Some("sing"),
@@ -1739,9 +1585,11 @@ pub use carbohydrates::{
     Carbohydrates, PartialCarbohydrateElement,
 };
 
+#[cfg(test)]
 mod expansion;
 mod topology;
 
+#[cfg(test)]
 use expansion::{expanded_bonds_from_units, expanded_coarse_for_geometry};
 #[allow(unused_imports)]
 pub(crate) use topology::intra_bond_order_from_table;
@@ -1913,7 +1761,7 @@ impl AtomicStructure {
             .get_terminal_link_indices(unit_id, source_atom_index)
     }
 
-    pub(super) fn unit_element_index(
+    pub(crate) fn unit_element_index(
         &self,
         unit_id: usize,
         source_atom_index: usize,
@@ -1924,7 +1772,7 @@ impl AtomicStructure {
             .position(|element| *element == source_atom_index)
     }
 
-    pub(super) fn inter_unit_bond_exists_exact(
+    pub(crate) fn inter_unit_bond_exists_exact(
         &self,
         unit_a: usize,
         index_a: Option<usize>,
@@ -4029,6 +3877,17 @@ impl Boundary {
         Boundary::from_spheres(spheres, EposQuality::Fine)
     }
 
+    pub(crate) fn from_structure_spheres(spheres: &[BoundingSphere]) -> Boundary {
+        Boundary::from_spheres(
+            spheres,
+            if spheres.len() > 500 {
+                EposQuality::Coarse
+            } else {
+                EposQuality::Fine
+            },
+        )
+    }
+
     fn from_spheres(spheres: &[BoundingSphere], quality: EposQuality) -> Boundary {
         if spheres.is_empty() {
             return Boundary::default();
@@ -5060,14 +4919,7 @@ fn structure_boundary(units: &[StructureUnit]) -> Boundary {
         .iter()
         .map(|unit| unit.props.boundary.sphere.clone())
         .collect::<Vec<_>>();
-    Boundary::from_spheres(
-        &spheres,
-        if units.len() > 500 {
-            EposQuality::Coarse
-        } else {
-            EposQuality::Fine
-        },
-    )
+    Boundary::from_structure_spheres(&spheres)
 }
 
 fn structure_principal_axes(units: &[StructureUnit]) -> PrincipalAxes {

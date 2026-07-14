@@ -5,11 +5,11 @@ use crate::chemistry::{vdw_radius, vdw_radius64};
 use crate::json::{json_escape, json_string_array};
 use crate::model::{
     get_saccharide_shape, is_common_protein_cap, is_non_polymer_residue_component_type,
-    is_polymer_name, is_saccharide_component_type_name, AtomicStructure, BondFlags, BondSource,
-    Boundary, BoundingSphere, Face, GeometryExpansion, Mesh, MeshMaterial, Molecule, MoleculeType,
-    NucleotideAtoms, NucleotideBaseKind, PolymerType, PrincipalAxes, SaccharideShape,
-    SecondaryRange, SecondaryStructureType, StructureUnit, TraceResidue, Transform, UnitKind,
-    UnitOperator, Vec3,
+    is_polymer_name, is_saccharide_component_type_name, Atom, AtomicStructure, BondFlags,
+    BondSource, Boundary, BoundingSphere, CoarseGaussian, CoarseSphere, Face, Mesh, MeshMaterial,
+    Molecule, MoleculeType, NucleotideAtoms, NucleotideBaseKind, PolymerType, PrincipalAxes,
+    SaccharideShape, SecondaryRange, SecondaryStructureType, StructureUnit, TraceResidue,
+    Transform, UnitKind, UnitOperator, Vec3,
 };
 use crate::options::{
     ColorTheme, ExportPrimitivesQuality, MeshOptions, PolymerProfile, Representation, VisualQuality,
@@ -59,14 +59,15 @@ pub(crate) fn build_mesh(molecule: &Molecule, options: &MeshOptions) -> Mesh {
 }
 
 pub(crate) fn render_materials(molecule: &Molecule, options: &MeshOptions) -> Vec<MeshMaterial> {
-    let geometry = geometry_for_render(molecule, options, false).molecule;
-    let options = resolved_mesh_options(&geometry, options);
-    let structure = geometry.atomic_structure();
+    let structure = molecule.atomic_structure();
+    let geometry = GeometryView::new(molecule, &structure, options);
+    let options = resolved_mesh_options_for_geometry(&geometry, options);
     let objects = build_semantic_render_objects_resolved_limited(
-        &geometry,
+        molecule,
         &options,
         None,
         Some(&structure),
+        Some(&geometry),
         |_| {},
     );
     let cylinder_radial_segments = molstar_export_cylinder_radial_segments(
@@ -116,35 +117,43 @@ pub(crate) fn build_mesh_with_visible_bounding_sphere_and_operator_snapshot(
     options: &MeshOptions,
     capture_operators: bool,
 ) -> (Mesh, Option<BoundingSphere>, Vec<UnitOperator>) {
-    let expansion = geometry_for_render(molecule, options, capture_operators);
-    let geometry = expansion.molecule;
-    let options = resolved_mesh_options(&geometry, options);
-    let structure = geometry.atomic_structure();
+    let structure = molecule.atomic_structure();
+    let geometry = GeometryView::new(molecule, &structure, options);
+    let options = resolved_mesh_options_for_geometry(&geometry, options);
     let objects = build_semantic_render_objects_resolved_limited(
-        &geometry,
+        molecule,
         &options,
         None,
         Some(&structure),
+        Some(&geometry),
         |_| {},
     );
     let effective_representation = effective_representation(&structure, options.representation);
-    let structure_sphere =
-        molstar_visible_renderable_bounding_sphere_with_structure(&geometry, &options, &structure);
+    let structure_sphere = molstar_visible_renderable_bounding_sphere_for_geometry(
+        molecule, &options, &structure, &geometry,
+    );
     let (mesh, mesh_slice_sphere, _) =
         flatten_semantic_render_objects_with_visible_bounding_sphere_and_stats(
             &objects,
-            &geometry,
+            molecule,
             &options,
             structure_sphere.is_none(),
         );
     let visible_bounding_sphere = if effective_representation == Representation::Cartoon {
-        molstar_viewer_cartoon_scene_bounding_sphere(&geometry, &options, &structure, &mesh)
-            .or(structure_sphere)
-            .or(mesh_slice_sphere)
+        molstar_viewer_cartoon_scene_bounding_sphere_for_geometry(
+            molecule, &options, &structure, &geometry, &mesh,
+        )
+        .or(structure_sphere)
+        .or(mesh_slice_sphere)
     } else {
         structure_sphere.or(mesh_slice_sphere)
     };
-    (mesh, visible_bounding_sphere, expansion.assembly_operators)
+    let assembly_operators = if capture_operators {
+        geometry.assembly_operators()
+    } else {
+        Vec::new()
+    };
+    (mesh, visible_bounding_sphere, assembly_operators)
 }
 
 pub(crate) struct RenderSummaries {
@@ -199,21 +208,23 @@ struct RenderObjectMeshStats {
 }
 
 pub(crate) fn render_summaries_json(molecule: &Molecule, options: &MeshOptions) -> RenderSummaries {
-    let geometry = geometry_for_render(molecule, options, false).molecule;
-    let options = resolved_mesh_options(&geometry, options);
-    let structure = geometry.atomic_structure();
+    let structure = molecule.atomic_structure();
+    let geometry = GeometryView::new(molecule, &structure, options);
+    let options = resolved_mesh_options_for_geometry(&geometry, options);
     let objects = build_semantic_render_objects_resolved_limited(
-        &geometry,
+        molecule,
         &options,
         None,
         Some(&structure),
+        Some(&geometry),
         |_| {},
     );
     let object_stats = render_object_mesh_stats_from_estimates(&objects, &options);
+    let geometry_snapshot = GeometryInfoSnapshot::from_geometry(&geometry);
     render_summaries_json_from_resolved(
         &options,
         structure,
-        GeometryInfoSnapshot::from_molecule(&geometry),
+        geometry_snapshot,
         &objects,
         &object_stats,
     )
@@ -223,38 +234,47 @@ pub(crate) fn build_render_scene_with_summaries(
     molecule: &Molecule,
     options: &MeshOptions,
 ) -> RenderScene {
-    let expansion = geometry_for_render(molecule, options, options.include_operator_metadata);
-    let geometry = expansion.molecule;
-    let options = resolved_mesh_options(&geometry, options);
-    let structure = geometry.atomic_structure();
+    let structure = molecule.atomic_structure();
+    let geometry = GeometryView::new(molecule, &structure, options);
+    let options = resolved_mesh_options_for_geometry(&geometry, options);
     let objects = build_semantic_render_objects_resolved_limited(
-        &geometry,
+        molecule,
         &options,
         None,
         Some(&structure),
+        Some(&geometry),
         |_| {},
     );
-    let structure_sphere =
-        molstar_visible_renderable_bounding_sphere_with_structure(&geometry, &options, &structure);
+    let structure_sphere = molstar_visible_renderable_bounding_sphere_for_geometry(
+        molecule, &options, &structure, &geometry,
+    );
     let effective_representation = effective_representation(&structure, options.representation);
     let (mesh, mesh_slice_sphere, object_stats) =
         flatten_semantic_render_objects_with_visible_bounding_sphere_and_stats(
             &objects,
-            &geometry,
+            molecule,
             &options,
             structure_sphere.is_none(),
         );
     let visible_bounding_sphere = if effective_representation == Representation::Cartoon {
-        molstar_viewer_cartoon_scene_bounding_sphere(&geometry, &options, &structure, &mesh)
-            .or(structure_sphere)
-            .or(mesh_slice_sphere)
+        molstar_viewer_cartoon_scene_bounding_sphere_for_geometry(
+            molecule, &options, &structure, &geometry, &mesh,
+        )
+        .or(structure_sphere)
+        .or(mesh_slice_sphere)
     } else {
         structure_sphere.or(mesh_slice_sphere)
     };
+    let assembly_operators = if options.include_operator_metadata {
+        geometry.assembly_operators()
+    } else {
+        Vec::new()
+    };
+    let geometry_snapshot = GeometryInfoSnapshot::from_geometry(&geometry);
     let summaries = render_summaries_json_from_resolved(
         &options,
         structure,
-        GeometryInfoSnapshot::from_molecule(&geometry),
+        geometry_snapshot,
         &objects,
         &object_stats,
     );
@@ -262,7 +282,7 @@ pub(crate) fn build_render_scene_with_summaries(
         mesh,
         visible_bounding_sphere,
         summaries,
-        assembly_operators: expansion.assembly_operators,
+        assembly_operators,
     }
 }
 
@@ -271,8 +291,11 @@ pub(crate) fn visible_renderable_bounding_sphere_for_export_with_structure(
     options: &MeshOptions,
     structure: &AtomicStructure,
 ) -> Option<BoundingSphere> {
-    let options = resolved_mesh_options(molecule, options);
-    molstar_visible_renderable_bounding_sphere_with_structure(molecule, &options, structure)
+    let geometry = GeometryView::new(molecule, structure, options);
+    let options = resolved_mesh_options_for_geometry(&geometry, options);
+    molstar_visible_renderable_bounding_sphere_for_geometry(
+        molecule, &options, structure, &geometry,
+    )
 }
 
 pub(crate) fn visible_renderable_bounding_sphere_report_for_export_with_structure(
@@ -280,9 +303,14 @@ pub(crate) fn visible_renderable_bounding_sphere_report_for_export_with_structur
     options: &MeshOptions,
     structure: &AtomicStructure,
 ) -> String {
-    let options = resolved_mesh_options(molecule, options);
-    let components =
-        molstar_visible_renderable_component_spheres_with_structure(molecule, &options, structure);
+    let geometry = GeometryView::new(molecule, structure, options);
+    let options = resolved_mesh_options_for_geometry(&geometry, options);
+    let components = molstar_visible_renderable_component_spheres_with_structure_mode(
+        molecule,
+        &options,
+        structure,
+        geometry.virtualize_assembly,
+    );
     let scene = (!components.is_empty()).then(|| {
         let spheres = components
             .iter()
@@ -341,28 +369,437 @@ fn resolved_mesh_options(molecule: &Molecule, options: &MeshOptions) -> MeshOpti
     resolved
 }
 
-fn geometry_for_render<'a>(
-    molecule: &'a Molecule,
+fn resolved_mesh_options_for_geometry(
+    geometry: &GeometryView<'_>,
     options: &MeshOptions,
-    capture_operators: bool,
-) -> GeometryExpansion<'a> {
-    if molecule.selected_assembly.is_some()
-        && options.representation == Representation::MolecularSurface
+) -> MeshOptions {
+    let coarse_count = geometry.coarse_sphere_count() + geometry.coarse_gaussian_count();
+    let element_count = geometry.atom_count() + coarse_count;
+    let mut resolved = options.resolved_for_quality(
+        element_count,
+        geometry.atom_count() == 0 && coarse_count > 0,
+    );
+    if resolved.representation == Representation::MolecularSurface
+        && resolved.theme_global_name.is_none()
+        && resolved.color_theme == ColorTheme::ChainId
     {
-        return molecule.unexpanded_for_geometry_with_operator_snapshot(capture_operators);
+        resolved.color_theme = ColorTheme::EntityId;
     }
-    if molecule.selected_assembly.is_some()
-        && matches!(
-            options.representation,
-            Representation::Default | Representation::Auto
-        )
-    {
-        let structure = molecule.atomic_structure();
-        if molstar_structure_size(&structure) == MolstarStructureSize::Huge {
-            return molecule.unexpanded_for_geometry_with_operator_snapshot(capture_operators);
+    resolved
+}
+
+#[derive(Clone, Copy)]
+struct GeometryAtomInstance {
+    source_index: usize,
+    unit_index: usize,
+}
+
+#[derive(Clone, Copy)]
+struct GeometryBondInstance {
+    a: usize,
+    b: usize,
+    source_index: usize,
+}
+
+#[derive(Clone, Copy)]
+struct GeometryCoarseInstance {
+    source_index: usize,
+    unit_index: usize,
+}
+
+#[derive(Clone, Copy)]
+struct GeometryAtom<'a> {
+    index: usize,
+    source_index: usize,
+    atom: &'a Atom,
+    position: Vec3,
+    operator: Option<&'a UnitOperator>,
+}
+
+impl<'a> GeometryAtom<'a> {
+    fn operator_name(&self) -> &'a str {
+        self.operator
+            .map(|operator| operator.name.as_str())
+            .unwrap_or(&self.atom.operator_name)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct GeometryBond {
+    a: usize,
+    b: usize,
+    source_index: usize,
+}
+
+#[derive(Clone, Copy)]
+struct GeometryCoarseSphere<'a> {
+    sphere: &'a CoarseSphere,
+    position: Vec3,
+}
+
+#[derive(Clone, Copy)]
+struct GeometryCoarseGaussian<'a> {
+    gaussian: &'a CoarseGaussian,
+    position: Vec3,
+}
+
+struct GeometryView<'a> {
+    molecule: &'a Molecule,
+    structure: &'a AtomicStructure,
+    atom_instances: Vec<GeometryAtomInstance>,
+    bond_instances: Vec<GeometryBondInstance>,
+    coarse_sphere_instances: Vec<GeometryCoarseInstance>,
+    coarse_gaussian_instances: Vec<GeometryCoarseInstance>,
+    first_atom_instance_by_source: Vec<Option<usize>>,
+    virtualize_assembly: bool,
+}
+
+impl<'a> GeometryView<'a> {
+    fn new(molecule: &'a Molecule, structure: &'a AtomicStructure, options: &MeshOptions) -> Self {
+        let virtualize_assembly = molecule.selected_assembly.is_some()
+            && options.representation != Representation::MolecularSurface
+            && !(matches!(
+                options.representation,
+                Representation::Default | Representation::Auto
+            ) && molstar_structure_size(structure) == MolstarStructureSize::Huge);
+        if !virtualize_assembly {
+            return Self {
+                molecule,
+                structure,
+                atom_instances: Vec::new(),
+                bond_instances: Vec::new(),
+                coarse_sphere_instances: Vec::new(),
+                coarse_gaussian_instances: Vec::new(),
+                first_atom_instance_by_source: Vec::new(),
+                virtualize_assembly,
+            };
+        }
+
+        let mut atom_instances = Vec::with_capacity(structure.element_count);
+        let mut coarse_sphere_instances = Vec::new();
+        let mut coarse_gaussian_instances = Vec::new();
+        for (unit_index, unit) in structure.units.iter().enumerate() {
+            let target = match unit.kind {
+                UnitKind::Atomic => &mut atom_instances,
+                UnitKind::Spheres => &mut coarse_sphere_instances,
+                UnitKind::Gaussians => &mut coarse_gaussian_instances,
+            };
+            target.extend(
+                unit.elements
+                    .iter()
+                    .copied()
+                    .map(|source_index| GeometryAtomInstance {
+                        source_index,
+                        unit_index,
+                    }),
+            );
+        }
+
+        // Keep the legacy expanded-bond ordering without cloning BondMetadata.
+        let mut source_instance_offsets = vec![0usize; molecule.atoms.len() + 1];
+        for instance in &atom_instances {
+            if instance.source_index < molecule.atoms.len() {
+                source_instance_offsets[instance.source_index + 1] += 1;
+            }
+        }
+        for source_index in 0..molecule.atoms.len() {
+            source_instance_offsets[source_index + 1] += source_instance_offsets[source_index];
+        }
+        let mut source_instance_cursor = source_instance_offsets[..molecule.atoms.len()].to_vec();
+        let mut source_instances = vec![0usize; atom_instances.len()];
+        for (index, instance) in atom_instances.iter().enumerate() {
+            let Some(cursor) = source_instance_cursor.get_mut(instance.source_index) else {
+                continue;
+            };
+            source_instances[*cursor] = index;
+            *cursor += 1;
+        }
+        let first_atom_instance_by_source = (0..molecule.atoms.len())
+            .map(|source_index| {
+                let start = source_instance_offsets[source_index];
+                let end = source_instance_offsets[source_index + 1];
+                (start < end).then_some(source_instances[start])
+            })
+            .collect();
+        let mut bond_instances = Vec::new();
+        for (source_index, bond) in molecule.bonds.iter().enumerate() {
+            let Some(a_end_index) = bond.a.checked_add(1) else {
+                continue;
+            };
+            let Some(b_end_index) = bond.b.checked_add(1) else {
+                continue;
+            };
+            let Some((&a_start, &a_end)) = source_instance_offsets
+                .get(bond.a)
+                .zip(source_instance_offsets.get(a_end_index))
+            else {
+                continue;
+            };
+            let Some((&b_start, &b_end)) = source_instance_offsets
+                .get(bond.b)
+                .zip(source_instance_offsets.get(b_end_index))
+            else {
+                continue;
+            };
+            let a_instances = &source_instances[a_start..a_end];
+            let b_instances = &source_instances[b_start..b_end];
+            for &a in a_instances {
+                let a_instance = atom_instances[a];
+                let a_unit = &structure.units[a_instance.unit_index];
+                for &b in b_instances {
+                    let b_instance = atom_instances[b];
+                    let b_unit = &structure.units[b_instance.unit_index];
+                    if a_unit.id == b_unit.id
+                        || structure.inter_unit_bond_exists_exact(
+                            a_unit.id,
+                            structure.unit_element_index(a_unit.id, a_instance.source_index),
+                            b_unit.id,
+                            structure.unit_element_index(b_unit.id, b_instance.source_index),
+                            source_index,
+                        )
+                    {
+                        bond_instances.push(GeometryBondInstance { a, b, source_index });
+                    }
+                }
+            }
+        }
+
+        Self {
+            molecule,
+            structure,
+            atom_instances,
+            bond_instances,
+            coarse_sphere_instances: coarse_sphere_instances
+                .into_iter()
+                .map(|instance| GeometryCoarseInstance {
+                    source_index: instance.source_index,
+                    unit_index: instance.unit_index,
+                })
+                .collect(),
+            coarse_gaussian_instances: coarse_gaussian_instances
+                .into_iter()
+                .map(|instance| GeometryCoarseInstance {
+                    source_index: instance.source_index,
+                    unit_index: instance.unit_index,
+                })
+                .collect(),
+            first_atom_instance_by_source,
+            virtualize_assembly,
         }
     }
-    molecule.expanded_for_geometry_with_operator_snapshot(capture_operators)
+
+    fn atom_count(&self) -> usize {
+        if self.virtualize_assembly {
+            self.atom_instances.len()
+        } else {
+            self.molecule.atoms.len()
+        }
+    }
+
+    fn atom(&self, index: usize) -> Option<GeometryAtom<'_>> {
+        if self.virtualize_assembly {
+            let instance = *self.atom_instances.get(index)?;
+            let atom = self.molecule.atoms.get(instance.source_index)?;
+            let operator = &self.structure.units.get(instance.unit_index)?.operator;
+            Some(GeometryAtom {
+                index,
+                source_index: instance.source_index,
+                atom,
+                position: operator.transform.apply(atom.position),
+                operator: Some(operator),
+            })
+        } else {
+            let atom = self.molecule.atoms.get(index)?;
+            Some(GeometryAtom {
+                index,
+                source_index: index,
+                atom,
+                position: atom.position,
+                operator: None,
+            })
+        }
+    }
+
+    fn atoms(&self) -> impl Iterator<Item = GeometryAtom<'_>> {
+        (0..self.atom_count()).filter_map(|index| self.atom(index))
+    }
+
+    fn first_atom_for_source(&self, source_index: usize) -> Option<GeometryAtom<'_>> {
+        if self.virtualize_assembly {
+            self.first_atom_instance_by_source
+                .get(source_index)
+                .copied()
+                .flatten()
+                .and_then(|index| self.atom(index))
+        } else {
+            self.atom(source_index)
+        }
+    }
+
+    fn atom_for_source_in_same_unit(
+        &self,
+        source_index: usize,
+        reference_index: usize,
+    ) -> Option<GeometryAtom<'_>> {
+        if !self.virtualize_assembly {
+            return self.atom(source_index);
+        }
+        let unit_index = self.atom_instances.get(reference_index)?.unit_index;
+        let index = self.atom_instances.iter().position(|instance| {
+            instance.source_index == source_index && instance.unit_index == unit_index
+        })?;
+        self.atom(index)
+    }
+
+    fn bond_count(&self) -> usize {
+        if self.virtualize_assembly {
+            self.bond_instances.len()
+        } else {
+            self.molecule.bonds.len()
+        }
+    }
+
+    fn bond(&self, index: usize) -> Option<GeometryBond> {
+        if self.virtualize_assembly {
+            let bond = *self.bond_instances.get(index)?;
+            Some(GeometryBond {
+                a: bond.a,
+                b: bond.b,
+                source_index: bond.source_index,
+            })
+        } else {
+            let bond = self.molecule.bonds.get(index)?;
+            Some(GeometryBond {
+                a: bond.a,
+                b: bond.b,
+                source_index: index,
+            })
+        }
+    }
+
+    fn bonds(&self) -> impl Iterator<Item = GeometryBond> + '_ {
+        (0..self.bond_count()).filter_map(|index| self.bond(index))
+    }
+
+    fn coarse_sphere_count(&self) -> usize {
+        if self.virtualize_assembly {
+            self.coarse_sphere_instances.len()
+        } else {
+            self.molecule.coarse_spheres.len()
+        }
+    }
+
+    fn coarse_sphere(&self, index: usize) -> Option<GeometryCoarseSphere<'_>> {
+        if self.virtualize_assembly {
+            let instance = *self.coarse_sphere_instances.get(index)?;
+            let sphere = self.molecule.coarse_spheres.get(instance.source_index)?;
+            let operator = &self.structure.units.get(instance.unit_index)?.operator;
+            Some(GeometryCoarseSphere {
+                sphere,
+                position: operator.transform.apply(sphere.position),
+            })
+        } else {
+            let sphere = self.molecule.coarse_spheres.get(index)?;
+            Some(GeometryCoarseSphere {
+                sphere,
+                position: sphere.position,
+            })
+        }
+    }
+
+    fn coarse_spheres(&self) -> impl Iterator<Item = GeometryCoarseSphere<'_>> {
+        (0..self.coarse_sphere_count()).filter_map(|index| self.coarse_sphere(index))
+    }
+
+    fn coarse_gaussian_count(&self) -> usize {
+        if self.virtualize_assembly {
+            self.coarse_gaussian_instances.len()
+        } else {
+            self.molecule.coarse_gaussians.len()
+        }
+    }
+
+    fn coarse_gaussian(&self, index: usize) -> Option<GeometryCoarseGaussian<'_>> {
+        if self.virtualize_assembly {
+            let instance = *self.coarse_gaussian_instances.get(index)?;
+            let gaussian = self.molecule.coarse_gaussians.get(instance.source_index)?;
+            let operator = &self.structure.units.get(instance.unit_index)?.operator;
+            Some(GeometryCoarseGaussian {
+                gaussian,
+                position: operator.transform.apply(gaussian.position),
+            })
+        } else {
+            let gaussian = self.molecule.coarse_gaussians.get(index)?;
+            Some(GeometryCoarseGaussian {
+                gaussian,
+                position: gaussian.position,
+            })
+        }
+    }
+
+    fn coarse_gaussians(&self) -> impl Iterator<Item = GeometryCoarseGaussian<'_>> {
+        (0..self.coarse_gaussian_count()).filter_map(|index| self.coarse_gaussian(index))
+    }
+
+    fn atom_selected(&self, mask: &[bool], geometry_index: usize) -> bool {
+        self.atom(geometry_index)
+            .and_then(|atom| mask.get(atom.source_index))
+            .copied()
+            .unwrap_or(false)
+    }
+
+    fn bounds(&self) -> Option<(Vec3, Vec3)> {
+        let mut bounds = None::<(Vec3, Vec3)>;
+        let mut include = |point: Vec3| {
+            bounds = Some(match bounds {
+                Some((min, max)) => (min.min(point), max.max(point)),
+                None => (point, point),
+            });
+        };
+        for atom in self.atoms() {
+            include(atom.position);
+        }
+        for instance in self.coarse_spheres() {
+            let radius = Vec3::new(
+                instance.sphere.radius,
+                instance.sphere.radius,
+                instance.sphere.radius,
+            );
+            include(instance.position - radius);
+            include(instance.position + radius);
+        }
+        for instance in self.coarse_gaussians() {
+            let gaussian = instance.gaussian;
+            let extent = Vec3::new(
+                gaussian.covariance[0][0].abs().sqrt().max(0.1),
+                gaussian.covariance[1][1].abs().sqrt().max(0.1),
+                gaussian.covariance[2][2].abs().sqrt().max(0.1),
+            ) * gaussian.weight.abs().sqrt().max(0.1);
+            include(instance.position - extent);
+            include(instance.position + extent);
+        }
+        bounds
+    }
+
+    fn assembly_operators(&self) -> Vec<UnitOperator> {
+        if self.molecule.selected_assembly.is_none() {
+            return Vec::new();
+        }
+        let mut operators = Vec::new();
+        for unit in &self.structure.units {
+            if operators.iter().any(|existing: &UnitOperator| {
+                existing.name == unit.operator.name
+                    && existing.instance_id == unit.operator.instance_id
+                    && existing.assembly_id == unit.operator.assembly_id
+                    && existing.oper_id == unit.operator.oper_id
+                    && existing.oper_list_ids == unit.operator.oper_list_ids
+            }) {
+                continue;
+            }
+            operators.push(unit.operator.clone());
+        }
+        operators
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -704,19 +1141,20 @@ pub(crate) fn build_render_objects(
 
 #[cfg(test)]
 pub(crate) fn render_object_summary_json(molecule: &Molecule, options: &MeshOptions) -> String {
-    let geometry = geometry_for_render(molecule, options, false).molecule;
-    let options = resolved_mesh_options(&geometry, options);
-    let structure = geometry.atomic_structure();
+    let structure = molecule.atomic_structure();
+    let geometry = GeometryView::new(molecule, &structure, options);
+    let options = resolved_mesh_options_for_geometry(&geometry, options);
     let objects = build_semantic_render_objects_resolved_limited(
-        &geometry,
+        molecule,
         &options,
         None,
         Some(&structure),
+        Some(&geometry),
         |_| {},
     );
     let (_, _, object_stats) =
         flatten_semantic_render_objects_with_visible_bounding_sphere_and_stats(
-            &objects, &geometry, &options, false,
+            &objects, molecule, &options, false,
         );
     render_object_summary_json_from_resolved(&options, &objects, &object_stats)
 }
@@ -743,83 +1181,50 @@ fn render_summaries_json_from_resolved(
 }
 
 impl GeometryInfoSnapshot {
-    fn from_molecule(molecule: &Molecule) -> Self {
+    fn from_geometry(geometry: &GeometryView<'_>) -> Self {
         Self {
-            atom_count: molecule.atoms.len(),
-            coarse_sphere_count: molecule.coarse_spheres.len(),
-            coarse_gaussian_count: molecule.coarse_gaussians.len(),
-            bond_count: molecule.bonds.len(),
-            bond_metadata: BondMetadataSnapshot::from_molecule(molecule),
-            bounds: info_bounds_molecule(molecule),
+            atom_count: geometry.atom_count(),
+            coarse_sphere_count: geometry.coarse_sphere_count(),
+            coarse_gaussian_count: geometry.coarse_gaussian_count(),
+            bond_count: geometry.bond_count(),
+            bond_metadata: BondMetadataSnapshot::from_geometry(geometry),
+            bounds: geometry.bounds(),
         }
     }
 }
 
 impl BondMetadataSnapshot {
-    fn from_molecule(molecule: &Molecule) -> Self {
-        let count_source = |source: BondSource| {
-            molecule
-                .bond_metadata
-                .iter()
-                .filter(|metadata| metadata.source == source)
-                .count()
+    fn from_geometry(geometry: &GeometryView<'_>) -> Self {
+        let mut snapshot = Self {
+            rings: geometry.molecule.resonance.ring_count,
+            aromatic_rings: geometry.molecule.resonance.aromatic_ring_count,
+            delocalized_bonds: geometry.molecule.resonance.delocalized_bond_count,
+            ..Self::default()
         };
-        let count_flag = |flag: BondFlags| {
-            molecule
-                .bond_metadata
-                .iter()
-                .filter(|metadata| metadata.flags.contains(flag))
-                .count()
-        };
-        Self {
-            count: molecule.bond_metadata.len(),
-            computed: count_source(BondSource::Computed),
-            pdb_conect: count_source(BondSource::PdbConect),
-            struct_conn: count_source(BondSource::StructConn),
-            index_pair: count_source(BondSource::IndexPair),
-            chem_comp: count_source(BondSource::ChemComp),
-            covalent: count_flag(BondFlags::COVALENT),
-            metallic_coordination: count_flag(BondFlags::METALLIC_COORDINATION),
-            hydrogen_bond: count_flag(BondFlags::HYDROGEN_BOND),
-            disulfide: count_flag(BondFlags::DISULFIDE),
-            aromatic: count_flag(BondFlags::AROMATIC),
-            computed_flag: count_flag(BondFlags::COMPUTED),
-            resonance: count_flag(BondFlags::RESONANCE),
-            rings: molecule.resonance.ring_count,
-            aromatic_rings: molecule.resonance.aromatic_ring_count,
-            delocalized_bonds: molecule.resonance.delocalized_bond_count,
+        for metadata in geometry
+            .bonds()
+            .filter_map(|bond| geometry.molecule.bond_metadata.get(bond.source_index))
+        {
+            snapshot.count += 1;
+            match metadata.source {
+                BondSource::Computed => snapshot.computed += 1,
+                BondSource::PdbConect => snapshot.pdb_conect += 1,
+                BondSource::StructConn => snapshot.struct_conn += 1,
+                BondSource::IndexPair => snapshot.index_pair += 1,
+                BondSource::ChemComp => snapshot.chem_comp += 1,
+            }
+            snapshot.covalent += usize::from(metadata.flags.contains(BondFlags::COVALENT));
+            snapshot.metallic_coordination +=
+                usize::from(metadata.flags.contains(BondFlags::METALLIC_COORDINATION));
+            snapshot.hydrogen_bond +=
+                usize::from(metadata.flags.contains(BondFlags::HYDROGEN_BOND));
+            snapshot.disulfide += usize::from(metadata.flags.contains(BondFlags::DISULFIDE));
+            snapshot.aromatic += usize::from(metadata.flags.contains(BondFlags::AROMATIC));
+            snapshot.computed_flag += usize::from(metadata.flags.contains(BondFlags::COMPUTED));
+            snapshot.resonance += usize::from(metadata.flags.contains(BondFlags::RESONANCE));
         }
+        snapshot
     }
-}
-
-fn info_bounds_molecule(molecule: &Molecule) -> Option<(Vec3, Vec3)> {
-    let mut points = molecule
-        .atoms
-        .iter()
-        .map(|atom| atom.position)
-        .collect::<Vec<_>>();
-    for sphere in &molecule.coarse_spheres {
-        let radius = Vec3::new(sphere.radius, sphere.radius, sphere.radius);
-        points.push(sphere.position - radius);
-        points.push(sphere.position + radius);
-    }
-    for gaussian in &molecule.coarse_gaussians {
-        let extent = Vec3::new(
-            gaussian.covariance[0][0].abs().sqrt().max(0.1),
-            gaussian.covariance[1][1].abs().sqrt().max(0.1),
-            gaussian.covariance[2][2].abs().sqrt().max(0.1),
-        ) * gaussian.weight.abs().sqrt().max(0.1);
-        points.push(gaussian.position - extent);
-        points.push(gaussian.position + extent);
-    }
-    let first = points.first().copied()?;
-    let mut min = first;
-    let mut max = first;
-    for point in &points[1..] {
-        min = min.min(*point);
-        max = max.max(*point);
-    }
-    Some((min, max))
 }
 
 fn render_object_summary_json_from_resolved(
@@ -977,14 +1382,15 @@ fn is_polymer_semantic_visual(visual: &str) -> bool {
 
 #[cfg(test)]
 pub(crate) fn representation_summary_json(molecule: &Molecule, options: &MeshOptions) -> String {
-    let geometry = geometry_for_render(molecule, options, false).molecule;
-    let options = resolved_mesh_options(&geometry, options);
-    let structure = geometry.atomic_structure();
+    let structure = molecule.atomic_structure();
+    let geometry = GeometryView::new(molecule, &structure, options);
+    let options = resolved_mesh_options_for_geometry(&geometry, options);
     let objects = build_semantic_render_objects_resolved_limited(
-        &geometry,
+        molecule,
         &options,
         None,
         Some(&structure),
+        Some(&geometry),
         |_| {},
     );
     representation_summary_json_from_resolved(&options, &structure, &objects)
@@ -1061,9 +1467,10 @@ pub(crate) fn render_object_span_summary_json(
     molecule: &Molecule,
     options: &MeshOptions,
 ) -> String {
-    let geometry = geometry_for_render(molecule, options, false).molecule;
-    let options = resolved_mesh_options(&geometry, options);
-    let objects = build_semantic_render_objects_resolved(&geometry, &options);
+    let structure = molecule.atomic_structure();
+    let geometry = GeometryView::new(molecule, &structure, options);
+    let options = resolved_mesh_options_for_geometry(&geometry, options);
+    let objects = build_semantic_render_objects_resolved(molecule, &options);
     let cylinder_radial_segments = molstar_export_cylinder_radial_segments(
         objects
             .iter()
@@ -1177,19 +1584,17 @@ pub(crate) fn render_object_stl_facet_context_json_timed(
     mut checkpoint: impl FnMut(&str),
 ) -> String {
     checkpoint("begin-render-stl-facet-context");
-    let geometry = molecule
-        .identity_assembly_trace_subset_for_geometry()
-        .map(std::borrow::Cow::Owned)
-        .unwrap_or_else(|| molecule.expanded_for_geometry());
+    let structure = molecule.atomic_structure();
     checkpoint("expand-geometry");
-    let options = resolved_mesh_options(&geometry, options);
+    let geometry = GeometryView::new(molecule, &structure, options);
+    let options = resolved_mesh_options_for_geometry(&geometry, options);
     checkpoint("resolve-geometry-options");
     render_object_stl_facet_context_from_resolved_geometry_json_timed(
-        &geometry,
+        molecule,
         &options,
         stl_facet,
         vertex_offset,
-        None,
+        Some(&structure),
         checkpoint,
     )
 }
@@ -1203,7 +1608,14 @@ pub(crate) fn render_object_stl_facet_context_for_geometry_json_timed(
     mut checkpoint: impl FnMut(&str),
 ) -> String {
     checkpoint("begin-render-stl-facet-context");
-    let options = resolved_mesh_options(molecule, options);
+    let structure_storage = structure.is_none().then(|| molecule.atomic_structure());
+    let structure = structure.or(structure_storage.as_ref());
+    let geometry = GeometryView::new(
+        molecule,
+        structure.expect("facet context structure must be available"),
+        options,
+    );
+    let options = resolved_mesh_options_for_geometry(&geometry, options);
     checkpoint("resolve-geometry-options");
     render_object_stl_facet_context_from_resolved_geometry_json_timed(
         molecule,
@@ -1580,7 +1992,9 @@ fn polymer_trace_iterator_reference_json_with_options(
     use_helix_orientation: bool,
 ) -> String {
     let structure = molecule.atomic_structure();
-    let mut trace = backbone_residues(molecule, &structure);
+    let options = MeshOptions::default();
+    let geometry = GeometryView::new(molecule, &structure, &options);
+    let mut trace = backbone_residues(&geometry, &structure);
     apply_polymer_trace_terminal_flags(&structure, &mut trace);
     apply_cyclic_polymer_trace_flags(&structure, &mut trace);
     apply_polymer_trace_secondary_flags(&structure, &mut trace);
@@ -3110,7 +3524,7 @@ fn build_semantic_render_objects_resolved(
     molecule: &Molecule,
     options: &MeshOptions,
 ) -> Vec<SemanticRenderObject> {
-    build_semantic_render_objects_resolved_limited(molecule, options, None, None, |_| {})
+    build_semantic_render_objects_resolved_limited(molecule, options, None, None, None, |_| {})
 }
 
 fn build_semantic_render_objects_resolved_until_face_timed(
@@ -3125,6 +3539,7 @@ fn build_semantic_render_objects_resolved_until_face_timed(
         options,
         Some(face_index),
         structure,
+        None,
         checkpoint,
     )
 }
@@ -3134,18 +3549,22 @@ fn build_semantic_render_objects_resolved_limited(
     options: &MeshOptions,
     target_face_index: Option<usize>,
     prebuilt_structure: Option<&AtomicStructure>,
+    prebuilt_geometry: Option<&GeometryView<'_>>,
     mut checkpoint: impl FnMut(&str),
 ) -> Vec<SemanticRenderObject> {
-    let effective_structure_storage = if prebuilt_structure.is_none()
-        && matches!(
-            options.representation,
-            Representation::Default | Representation::Auto
-        ) {
+    let effective_structure_storage = if prebuilt_structure.is_none() {
         Some(molecule.atomic_structure())
     } else {
         None
     };
     let effective_structure = prebuilt_structure.or(effective_structure_storage.as_ref());
+    let structure = effective_structure.expect("geometry structure must be available");
+    let geometry_storage = prebuilt_geometry
+        .is_none()
+        .then(|| GeometryView::new(molecule, structure, options));
+    let geometry = prebuilt_geometry
+        .or(geometry_storage.as_ref())
+        .expect("geometry view must be available");
     let effective_representation = effective_structure
         .map_or(options.representation, |structure| {
             effective_representation(structure, options.representation)
@@ -3158,7 +3577,8 @@ fn build_semantic_render_objects_resolved_limited(
         target_face_index
     };
     let center = if options.center {
-        bounds_molecule(molecule)
+        geometry
+            .bounds()
             .map(|(min, max)| Vec3 {
                 x: (min.x + max.x) * 0.5,
                 y: (min.y + max.y) * 0.5,
@@ -3185,9 +3605,9 @@ fn build_semantic_render_objects_resolved_limited(
             };
             checkpoint("atomic-structure-for-representation");
             let mut trace = if target_face_index.is_some() {
-                backbone_residues_from_atoms(molecule)
+                backbone_residues_from_atoms(geometry)
             } else {
-                backbone_residues(molecule, structure)
+                backbone_residues(geometry, structure)
             };
             checkpoint("backbone-residues");
             if target_face_index.is_none() {
@@ -3577,7 +3997,7 @@ fn build_semantic_render_objects_resolved_limited(
                 if has_ligand_component(structure) {
                     let ligand_mask = molstar_ligand_atom_mask(molecule, structure);
                     add_molstar_component_semantic_objects(
-                        molecule,
+                        geometry,
                         options,
                         center,
                         representation,
@@ -3593,7 +4013,7 @@ fn build_semantic_render_objects_resolved_limited(
                 let non_standard_mask = molstar_non_standard_atom_mask(molecule, structure);
                 if non_standard_mask.iter().any(|selected| *selected) {
                     add_molstar_component_semantic_objects(
-                        molecule,
+                        geometry,
                         options,
                         center,
                         representation,
@@ -3610,7 +4030,7 @@ fn build_semantic_render_objects_resolved_limited(
                     let branched = branched_mask
                         .get_or_insert_with(|| molstar_branched_atom_mask(molecule, structure));
                     add_molstar_component_semantic_objects(
-                        molecule,
+                        geometry,
                         options,
                         center,
                         representation,
@@ -3674,7 +4094,7 @@ fn build_semantic_render_objects_resolved_limited(
                         selected.clone()
                     };
                     add_molstar_component_semantic_objects(
-                        molecule,
+                        geometry,
                         options,
                         center,
                         representation,
@@ -3690,7 +4110,7 @@ fn build_semantic_render_objects_resolved_limited(
                 if has_ion_component(structure) {
                     let ion_mask = molstar_ion_atom_mask(structure);
                     add_molstar_component_semantic_objects(
-                        molecule,
+                        geometry,
                         options,
                         center,
                         representation,
@@ -3715,7 +4135,7 @@ fn build_semantic_render_objects_resolved_limited(
                         selected.clone()
                     };
                     add_molstar_component_semantic_objects(
-                        molecule,
+                        geometry,
                         options,
                         center,
                         representation,
@@ -3807,7 +4227,7 @@ fn build_semantic_render_objects_resolved_limited(
         Representation::Spacefill | Representation::BallAndStick => {
             if effective_representation == Representation::Spacefill {
                 group_id = 0;
-                let entity_materials = molstar_entity_materials(molecule);
+                let entity_materials = molstar_entity_materials_for_geometry(geometry);
                 let structure_storage;
                 let structure = match effective_structure {
                     Some(structure) => structure,
@@ -3818,7 +4238,9 @@ fn build_semantic_render_objects_resolved_limited(
                 };
                 let size_factor = molstar_spacefill_size_factor(structure);
                 let water_mask = molstar_water_atom_mask(structure);
-                for (atom_index, atom) in molecule.atoms.iter().enumerate() {
+                for geometry_atom in geometry.atoms() {
+                    let atom_index = geometry_atom.index;
+                    let atom = geometry_atom.atom;
                     push_semantic(
                         &mut objects,
                         &mut group_id,
@@ -3833,11 +4255,14 @@ fn build_semantic_render_objects_resolved_limited(
                         .with_atom_index(atom_index)
                         .with_material(molstar_illustrative_atom_material(
                             atom,
-                            water_mask.get(atom_index).copied().unwrap_or(false),
+                            water_mask
+                                .get(geometry_atom.source_index)
+                                .copied()
+                                .unwrap_or(false),
                             &entity_materials,
                         )),
                         RenderObject::Sphere {
-                            center: atom.position - center,
+                            center: geometry_atom.position - center,
                             radius: molstar_spacefill_atom_radius(atom, options) * size_factor,
                         },
                     );
@@ -3847,7 +4272,7 @@ fn build_semantic_render_objects_resolved_limited(
                 }
             } else {
                 add_ball_and_stick_semantic_objects(
-                    molecule,
+                    geometry,
                     options,
                     center,
                     representation,
@@ -3868,7 +4293,7 @@ fn build_semantic_render_objects_resolved_limited(
         Representation::Cartoon | Representation::Spacefill
     ) {
         add_coarse_semantic_objects(
-            molecule,
+            geometry,
             center,
             representation,
             effective_representation == Representation::Spacefill,
@@ -3882,7 +4307,7 @@ fn build_semantic_render_objects_resolved_limited(
     if effective_representation == Representation::Cartoon {
         objects.sort_by_key(|object| viewer_cartoon_canvas_export_order(object.tag));
     }
-    apply_molstar_default_materials(&mut objects, molecule, options, effective_structure);
+    apply_molstar_default_materials(&mut objects, geometry, options, effective_structure);
     center_molecular_surface_meshes(&mut objects, center);
     objects
 }
@@ -3995,16 +4420,17 @@ const MOLSTAR_MANY_DISTINCT_COLORS: [u32; 25] = [
 
 fn apply_molstar_default_materials(
     objects: &mut [SemanticRenderObject],
-    molecule: &Molecule,
+    geometry: &GeometryView<'_>,
     options: &MeshOptions,
     structure: Option<&AtomicStructure>,
 ) {
+    let molecule = geometry.molecule;
     let viewer_annotation_theme = molstar_viewer_annotation_theme(molecule, options);
     if viewer_annotation_theme.is_none()
         && options.theme_global_name.is_none()
         && options.color_theme == ColorTheme::ChainId
     {
-        let chain_materials = molstar_chain_materials(molecule);
+        let chain_materials = molstar_chain_materials_for_geometry(geometry);
         for object in objects {
             if let RenderObject::SurfaceMesh {
                 mesh,
@@ -4019,8 +4445,8 @@ fn apply_molstar_default_materials(
                         let group = mesh.vertex_groups.get(face.a).copied();
                         let key = group
                             .and_then(|group| group_atoms.get(group))
-                            .and_then(|atom_index| molecule.atoms.get(*atom_index))
-                            .map(molstar_atom_chain_key)
+                            .and_then(|atom_index| geometry.atom(*atom_index))
+                            .map(|atom| molstar_atom_chain_key(atom.atom))
                             .or_else(|| {
                                 group
                                     .and_then(|group| group_chains.get(group))
@@ -4044,10 +4470,10 @@ fn apply_molstar_default_materials(
     let global_theme = viewer_annotation_theme
         .or(options.theme_global_name)
         .unwrap_or(options.color_theme);
-    let chain_materials = molstar_chain_materials(molecule);
-    let entity_materials = molstar_entity_materials(molecule);
-    let operator_materials = molstar_operator_materials(molecule);
-    let has_symmetry = molstar_molecule_has_crystal_symmetry(molecule);
+    let chain_materials = molstar_chain_materials_for_geometry(geometry);
+    let entity_materials = molstar_entity_materials_for_geometry(geometry);
+    let operator_materials = molstar_operator_materials_for_geometry(geometry);
+    let has_symmetry = molstar_geometry_has_crystal_symmetry(geometry);
 
     for object in objects {
         let theme = if object.tag == "polymer" && has_symmetry {
@@ -4077,9 +4503,10 @@ fn apply_molstar_default_materials(
         {
             let group_colors = (0..mesh.group_count.max(group_atoms.len()))
                 .map(|group| {
-                    let atom = group_atoms
+                    let geometry_atom = group_atoms
                         .get(group)
-                        .and_then(|atom_index| molecule.atoms.get(*atom_index));
+                        .and_then(|atom_index| geometry.atom(*atom_index));
+                    let atom = geometry_atom.map(|atom| atom.atom);
                     let group_chain = group_chains
                         .get(group)
                         .filter(|chain| !chain.is_empty())
@@ -4094,6 +4521,7 @@ fn apply_molstar_default_materials(
                         &chain_materials,
                         &entity_materials,
                         &operator_materials,
+                        geometry_atom.map(|atom| atom.operator_name()),
                     );
                     if representation == "surface"
                         && theme == ColorTheme::EntityId
@@ -4133,7 +4561,7 @@ fn apply_molstar_default_materials(
         }
         let color = molstar_semantic_theme_color(
             object,
-            molecule,
+            geometry,
             theme,
             carbon_theme,
             &chain_materials,
@@ -4286,14 +4714,16 @@ fn molstar_component_carbon_theme(
 
 fn molstar_semantic_theme_color(
     object: &SemanticRenderObject,
-    molecule: &Molecule,
+    geometry: &GeometryView<'_>,
     theme: ColorTheme,
     carbon_theme: ColorTheme,
     chain_materials: &BTreeMap<String, MeshMaterial>,
     entity_materials: &BTreeMap<String, MeshMaterial>,
     operator_materials: &BTreeMap<String, MeshMaterial>,
 ) -> u32 {
-    let atom = molstar_semantic_theme_atom(object, molecule);
+    let molecule = geometry.molecule;
+    let geometry_atom = molstar_semantic_theme_atom(object, geometry);
+    let atom = geometry_atom.map(|atom| atom.atom);
     molstar_theme_color_for_atom(
         atom,
         object.chain.as_deref(),
@@ -4303,6 +4733,7 @@ fn molstar_semantic_theme_color(
         chain_materials,
         entity_materials,
         operator_materials,
+        geometry_atom.map(|atom| atom.operator_name()),
     )
 }
 
@@ -4316,6 +4747,7 @@ fn molstar_theme_color_for_atom(
     chain_materials: &BTreeMap<String, MeshMaterial>,
     entity_materials: &BTreeMap<String, MeshMaterial>,
     operator_materials: &BTreeMap<String, MeshMaterial>,
+    operator_name: Option<&str>,
 ) -> u32 {
     match theme {
         ColorTheme::ChainId => {
@@ -4329,8 +4761,11 @@ fn molstar_theme_color_for_atom(
             .or_else(|| entity_materials.values().next())
             .map(|material| material.color)
             .unwrap_or(0xcccccc),
-        ColorTheme::OperatorName => atom
-            .and_then(|atom| operator_materials.get(&molstar_atom_operator_key(atom)))
+        ColorTheme::OperatorName => operator_name
+            .and_then(|operator| operator_materials.get(operator))
+            .or_else(|| {
+                atom.and_then(|atom| operator_materials.get(&molstar_atom_operator_key(atom)))
+            })
             .or_else(|| operator_materials.values().next())
             .map(|material| material.color)
             .unwrap_or(0xcccccc),
@@ -4359,8 +4794,9 @@ fn molstar_theme_color_for_atom(
                     .color
                 }
                 ColorTheme::ElementSymbol => molstar_element_symbol_color(atom),
-                ColorTheme::OperatorName => operator_materials
-                    .get(&molstar_atom_operator_key(atom))
+                ColorTheme::OperatorName => operator_name
+                    .and_then(|operator| operator_materials.get(operator))
+                    .or_else(|| operator_materials.get(&molstar_atom_operator_key(atom)))
                     .or_else(|| operator_materials.values().next())
                     .map(|material| material.color)
                     .unwrap_or(0xcccccc),
@@ -4474,35 +4910,34 @@ fn molstar_interpolate_color(start: u32, end: u32, t: f32) -> u32 {
 
 fn molstar_semantic_theme_atom<'a>(
     object: &SemanticRenderObject,
-    molecule: &'a Molecule,
-) -> Option<&'a crate::model::Atom> {
+    geometry: &'a GeometryView<'a>,
+) -> Option<GeometryAtom<'a>> {
     if let Some(atom) = object
         .atom_index
-        .and_then(|atom_index| molecule.atoms.get(atom_index))
+        .and_then(|atom_index| geometry.atom(atom_index))
     {
         return Some(atom);
     }
-    let matches_location = |atom: &&crate::model::Atom| {
+    let matches_location = |atom: &GeometryAtom<'_>| {
         object
             .chain
             .as_deref()
-            .is_none_or(|chain| atom.chain == chain || atom.auth_chain == chain)
+            .is_none_or(|chain| atom.atom.chain == chain || atom.atom.auth_chain == chain)
             && object
                 .residue_start
-                .is_none_or(|seq| atom.residue_seq.parse::<i32>().ok() == Some(seq))
+                .is_none_or(|seq| atom.atom.residue_seq.parse::<i32>().ok() == Some(seq))
     };
-    let mut atoms = molecule.atoms.iter().filter(matches_location);
     if is_polymer_semantic_visual(object.visual) {
-        if let Some(atom) = atoms.clone().find(|atom| {
+        if let Some(atom) = geometry.atoms().filter(matches_location).find(|atom| {
             matches!(
-                atom.name.trim().to_ascii_uppercase().as_str(),
+                atom.atom.name.trim().to_ascii_uppercase().as_str(),
                 "CA" | "P" | "C4'" | "C4*" | "C3'" | "C3*"
             )
         }) {
             return Some(atom);
         }
     }
-    atoms.next()
+    geometry.atoms().find(matches_location)
 }
 
 fn molstar_atom_operator_key(atom: &crate::model::Atom) -> String {
@@ -4519,6 +4954,17 @@ fn molstar_molecule_has_crystal_symmetry(molecule: &Molecule) -> bool {
             let operator = molstar_atom_operator_key(atom);
             operator != "1_555" && operator != "1"
         })
+}
+
+fn molstar_geometry_has_crystal_symmetry(geometry: &GeometryView<'_>) -> bool {
+    if geometry.virtualize_assembly {
+        geometry.atoms().any(|atom| {
+            let operator = atom.operator_name();
+            operator != "1_555" && operator != "1"
+        })
+    } else {
+        molstar_molecule_has_crystal_symmetry(geometry.molecule)
+    }
 }
 
 fn molstar_chain_materials(molecule: &Molecule) -> BTreeMap<String, MeshMaterial> {
@@ -4540,6 +4986,48 @@ fn molstar_chain_materials(molecule: &Molecule) -> BTreeMap<String, MeshMaterial
         }
     }
 
+    keys.into_iter()
+        .enumerate()
+        .map(|(index, key)| {
+            (
+                key,
+                MeshMaterial::opaque(
+                    MOLSTAR_MANY_DISTINCT_COLORS[index % MOLSTAR_MANY_DISTINCT_COLORS.len()],
+                ),
+            )
+        })
+        .collect()
+}
+
+fn molstar_chain_materials_for_geometry(
+    geometry: &GeometryView<'_>,
+) -> BTreeMap<String, MeshMaterial> {
+    if !geometry.virtualize_assembly {
+        return molstar_chain_materials(geometry.molecule);
+    }
+    let mut keys = Vec::<String>::new();
+    for atom in geometry.atoms() {
+        let key = molstar_atom_chain_key(atom.atom);
+        if !keys.iter().any(|existing| existing == &key) {
+            keys.push(key);
+        }
+    }
+    for sphere in geometry.coarse_spheres() {
+        if !keys
+            .iter()
+            .any(|existing| existing == &sphere.sphere.asym_id)
+        {
+            keys.push(sphere.sphere.asym_id.clone());
+        }
+    }
+    for gaussian in geometry.coarse_gaussians() {
+        if !keys
+            .iter()
+            .any(|existing| existing == &gaussian.gaussian.asym_id)
+        {
+            keys.push(gaussian.gaussian.asym_id.clone());
+        }
+    }
     keys.into_iter()
         .enumerate()
         .map(|(index, key)| {
@@ -4584,10 +5072,77 @@ fn molstar_entity_materials(molecule: &Molecule) -> BTreeMap<String, MeshMateria
         .collect()
 }
 
+fn molstar_entity_materials_for_geometry(
+    geometry: &GeometryView<'_>,
+) -> BTreeMap<String, MeshMaterial> {
+    if !geometry.virtualize_assembly {
+        return molstar_entity_materials(geometry.molecule);
+    }
+    let mut keys = Vec::<String>::new();
+    for atom in geometry.atoms() {
+        if !keys.iter().any(|existing| existing == &atom.atom.entity_id) {
+            keys.push(atom.atom.entity_id.clone());
+        }
+    }
+    for sphere in geometry.coarse_spheres() {
+        if !keys
+            .iter()
+            .any(|existing| existing == &sphere.sphere.entity_id)
+        {
+            keys.push(sphere.sphere.entity_id.clone());
+        }
+    }
+    for gaussian in geometry.coarse_gaussians() {
+        if !keys
+            .iter()
+            .any(|existing| existing == &gaussian.gaussian.entity_id)
+        {
+            keys.push(gaussian.gaussian.entity_id.clone());
+        }
+    }
+    keys.into_iter()
+        .enumerate()
+        .map(|(index, key)| {
+            (
+                key,
+                MeshMaterial::opaque(
+                    MOLSTAR_MANY_DISTINCT_COLORS[index % MOLSTAR_MANY_DISTINCT_COLORS.len()],
+                ),
+            )
+        })
+        .collect()
+}
+
 fn molstar_operator_materials(molecule: &Molecule) -> BTreeMap<String, MeshMaterial> {
     let mut keys = Vec::<String>::new();
     for atom in &molecule.atoms {
         let key = molstar_atom_operator_key(atom);
+        if !keys.iter().any(|existing| existing == &key) {
+            keys.push(key);
+        }
+    }
+    keys.into_iter()
+        .enumerate()
+        .map(|(index, key)| {
+            (
+                key,
+                MeshMaterial::opaque(
+                    MOLSTAR_MANY_DISTINCT_COLORS[index % MOLSTAR_MANY_DISTINCT_COLORS.len()],
+                ),
+            )
+        })
+        .collect()
+}
+
+fn molstar_operator_materials_for_geometry(
+    geometry: &GeometryView<'_>,
+) -> BTreeMap<String, MeshMaterial> {
+    if !geometry.virtualize_assembly {
+        return molstar_operator_materials(geometry.molecule);
+    }
+    let mut keys = Vec::<String>::new();
+    for atom in geometry.atoms() {
+        let key = atom.operator_name().to_string();
         if !keys.iter().any(|existing| existing == &key) {
             keys.push(key);
         }
@@ -5451,8 +6006,10 @@ pub(crate) fn viewer_cartoon_component_render_objects_for_test(
     );
     let atom_mask = vec![true; molecule.atoms.len()];
     let mut objects = Vec::new();
+    let structure = molecule.atomic_structure();
+    let geometry = GeometryView::new(molecule, &structure, options);
     add_molstar_component_semantic_objects(
-        molecule,
+        &geometry,
         options,
         Vec3::default(),
         "cartoon",
@@ -7105,7 +7662,8 @@ fn add_polymer_backbone_semantic_objects(
     objects: &mut Vec<SemanticRenderObject>,
     selected: &[String],
 ) {
-    let trace = backbone_residues(molecule, structure);
+    let geometry = GeometryView::new(molecule, structure, options);
+    let trace = backbone_residues(&geometry, structure);
     if trace.is_empty() {
         return;
     }
@@ -7412,7 +7970,7 @@ fn geometry_type(object: &RenderObject) -> &'static str {
 }
 
 fn add_coarse_semantic_objects(
-    molecule: &Molecule,
+    geometry: &GeometryView<'_>,
     center: Vec3,
     representation: &'static str,
     illustrative: bool,
@@ -7420,7 +7978,8 @@ fn add_coarse_semantic_objects(
     objects: &mut Vec<SemanticRenderObject>,
 ) {
     *group_id = 0;
-    for sphere in &molecule.coarse_spheres {
+    for instance in geometry.coarse_spheres() {
+        let sphere = instance.sphere;
         let mut meta = SemanticMeta::new(
             representation,
             "coarse-sphere",
@@ -7437,13 +7996,14 @@ fn add_coarse_semantic_objects(
             group_id,
             meta,
             RenderObject::Sphere {
-                center: sphere.position - center,
+                center: instance.position - center,
                 radius: sphere.radius as f64,
             },
         );
     }
     *group_id = 0;
-    for gaussian in &molecule.coarse_gaussians {
+    for instance in geometry.coarse_gaussians() {
+        let gaussian = instance.gaussian;
         let mut meta = SemanticMeta::new(
             representation,
             "coarse-gaussian",
@@ -7460,7 +8020,7 @@ fn add_coarse_semantic_objects(
             group_id,
             meta,
             RenderObject::Ellipsoid {
-                center: gaussian.position - center,
+                center: instance.position - center,
                 axes: gaussian_axes(gaussian.covariance, gaussian.weight),
             },
         );
@@ -8629,7 +9189,7 @@ fn residue_position_cmp(
 }
 
 fn add_ball_and_stick_semantic_objects(
-    molecule: &Molecule,
+    geometry: &GeometryView<'_>,
     options: &MeshOptions,
     center: Vec3,
     representation: &'static str,
@@ -8637,8 +9197,10 @@ fn add_ball_and_stick_semantic_objects(
     objects: &mut Vec<SemanticRenderObject>,
 ) {
     *group_id = 0;
-    let chain_materials = molstar_chain_materials(molecule);
-    for (atom_index, atom) in molecule.atoms.iter().enumerate() {
+    let chain_materials = molstar_chain_materials_for_geometry(geometry);
+    for geometry_atom in geometry.atoms() {
+        let atom_index = geometry_atom.index;
+        let atom = geometry_atom.atom;
         push_semantic(
             objects,
             group_id,
@@ -8653,31 +9215,40 @@ fn add_ball_and_stick_semantic_objects(
             .with_atom_index(atom_index)
             .with_material(molstar_atom_material(atom, &chain_materials, "atom")),
             RenderObject::Sphere {
-                center: atom.position - center,
+                center: geometry_atom.position - center,
                 radius: molstar_option_atom_radius64(options),
             },
         );
     }
 
     *group_id = 0;
-    for bond in &molecule.bonds {
-        let atom_a = &molecule.atoms[bond.a];
+    for bond in geometry.bonds() {
+        let Some(atom_a) = geometry.atom(bond.a) else {
+            continue;
+        };
+        let Some(atom_b) = geometry.atom(bond.b) else {
+            continue;
+        };
         push_semantic(
             objects,
             group_id,
             SemanticMeta::new(
                 representation,
                 "bond",
-                Some(&molecule.atoms[bond.a].chain),
-                molecule.atoms[bond.a].residue_seq.parse::<i32>().ok(),
-                molecule.atoms[bond.b].residue_seq.parse::<i32>().ok(),
+                Some(&atom_a.atom.chain),
+                atom_a.atom.residue_seq.parse::<i32>().ok(),
+                atom_b.atom.residue_seq.parse::<i32>().ok(),
             )
             .with_visual("intra-bond")
             .with_atom_index(bond.a)
-            .with_material(molstar_atom_material(atom_a, &chain_materials, "bond")),
+            .with_material(molstar_atom_material(
+                atom_a.atom,
+                &chain_materials,
+                "bond",
+            )),
             RenderObject::Cylinder {
-                start: molecule.atoms[bond.a].position - center,
-                end: molecule.atoms[bond.b].position - center,
+                start: atom_a.position - center,
+                end: atom_b.position - center,
                 radius: options.bond_radius,
             },
         );
@@ -8686,7 +9257,7 @@ fn add_ball_and_stick_semantic_objects(
 
 #[allow(clippy::too_many_arguments)]
 fn add_molstar_component_semantic_objects(
-    molecule: &Molecule,
+    geometry: &GeometryView<'_>,
     options: &MeshOptions,
     center: Vec3,
     representation: &'static str,
@@ -8731,7 +9302,7 @@ fn add_molstar_component_semantic_objects(
     if line_mode {
         if let Some(visual) = bond_visual {
             add_molstar_component_bond_semantic_objects(
-                molecule,
+                geometry,
                 options,
                 center,
                 representation,
@@ -8744,7 +9315,7 @@ fn add_molstar_component_semantic_objects(
         }
         if let Some(visual) = atom_visual {
             add_molstar_component_atom_semantic_objects(
-                molecule,
+                geometry,
                 options,
                 center,
                 representation,
@@ -8760,7 +9331,7 @@ fn add_molstar_component_semantic_objects(
 
     if let Some(visual) = atom_visual {
         add_molstar_component_atom_semantic_objects(
-            molecule,
+            geometry,
             options,
             center,
             representation,
@@ -8773,7 +9344,7 @@ fn add_molstar_component_semantic_objects(
     }
     if let Some(visual) = bond_visual {
         add_molstar_component_bond_semantic_objects(
-            molecule,
+            geometry,
             options,
             center,
             representation,
@@ -8788,7 +9359,7 @@ fn add_molstar_component_semantic_objects(
 
 #[allow(clippy::too_many_arguments)]
 fn add_molstar_component_atom_semantic_objects(
-    molecule: &Molecule,
+    geometry: &GeometryView<'_>,
     options: &MeshOptions,
     center: Vec3,
     representation: &'static str,
@@ -8799,19 +9370,21 @@ fn add_molstar_component_atom_semantic_objects(
     objects: &mut Vec<SemanticRenderObject>,
 ) {
     let mut group_id = 0usize;
-    let chain_materials = molstar_chain_materials(molecule);
-    for (atom_index, atom) in molecule.atoms.iter().enumerate() {
-        if !atom_mask.get(atom_index).copied().unwrap_or(false) {
+    let chain_materials = molstar_chain_materials_for_geometry(geometry);
+    for geometry_atom in geometry.atoms() {
+        let atom_index = geometry_atom.index;
+        let atom = geometry_atom.atom;
+        if !geometry.atom_selected(atom_mask, atom_index) {
             continue;
         }
         let object = if point_mode {
             RenderObject::ExportPoint {
-                center: atom.position - center,
+                center: geometry_atom.position - center,
                 radius: molstar_line_point_radius64(atom, options),
             }
         } else {
             RenderObject::Sphere {
-                center: atom.position - center,
+                center: geometry_atom.position - center,
                 radius: molstar_ball_and_stick_atom_radius(atom, options),
             }
         };
@@ -8835,7 +9408,7 @@ fn add_molstar_component_atom_semantic_objects(
 
 #[allow(clippy::too_many_arguments)]
 fn add_molstar_component_bond_semantic_objects(
-    molecule: &Molecule,
+    geometry: &GeometryView<'_>,
     options: &MeshOptions,
     center: Vec3,
     representation: &'static str,
@@ -8846,16 +9419,15 @@ fn add_molstar_component_bond_semantic_objects(
     objects: &mut Vec<SemanticRenderObject>,
 ) {
     let mut group_id = 0usize;
-    let chain_materials = molstar_chain_materials(molecule);
+    let chain_materials = molstar_chain_materials_for_geometry(geometry);
     let mut unit_slot_half_links = BTreeSet::<(usize, usize)>::new();
     let mut directed_links = Vec::<(usize, usize)>::new();
-    for (atom_a, atom_b) in molstar_component_unit_slot_half_links(molecule, atom_mask) {
+    for (atom_a, atom_b) in molstar_component_unit_slot_half_links(geometry, atom_mask) {
         unit_slot_half_links.insert((atom_a, atom_b));
         directed_links.push((atom_a, atom_b));
     }
-    for bond in &molecule.bonds {
-        if !atom_mask.get(bond.a).copied().unwrap_or(false)
-            || !atom_mask.get(bond.b).copied().unwrap_or(false)
+    for bond in geometry.bonds() {
+        if !geometry.atom_selected(atom_mask, bond.a) || !geometry.atom_selected(atom_mask, bond.b)
         {
             continue;
         }
@@ -8869,13 +9441,13 @@ fn add_molstar_component_bond_semantic_objects(
 
     let cylinder_count = directed_links
         .iter()
-        .map(|&(a, b)| usize::from(molstar_atoms_share_aromatic_ring(molecule, a, b)) + 1)
+        .map(|&(a, b)| usize::from(molstar_atoms_share_aromatic_ring(geometry, a, b)) + 1)
         .sum();
     let radial_segments =
         molstar_component_export_cylinder_radial_segments(options, cylinder_count);
     for (atom_a, atom_b) in directed_links {
         push_molstar_component_bond_semantic_object(
-            molecule,
+            geometry,
             objects,
             &mut group_id,
             representation,
@@ -8894,7 +9466,7 @@ fn add_molstar_component_bond_semantic_objects(
 
 #[allow(clippy::too_many_arguments)]
 fn push_molstar_component_bond_semantic_object(
-    molecule: &Molecule,
+    geometry: &GeometryView<'_>,
     objects: &mut Vec<SemanticRenderObject>,
     group_id: &mut usize,
     representation: &'static str,
@@ -8908,14 +9480,16 @@ fn push_molstar_component_bond_semantic_object(
     radial_segments: usize,
     chain_materials: &BTreeMap<String, MeshMaterial>,
 ) {
-    let Some(a) = molecule.atoms.get(atom_a) else {
+    let Some(geometry_a) = geometry.atom(atom_a) else {
         return;
     };
-    let Some(b) = molecule.atoms.get(atom_b) else {
+    let Some(geometry_b) = geometry.atom(atom_b) else {
         return;
     };
-    let a_position = a.position - center;
-    let b_position = b.position - center;
+    let a = geometry_a.atom;
+    let b = geometry_b.atom;
+    let a_position = geometry_a.position - center;
+    let b_position = geometry_b.position - center;
     let meta = SemanticMeta::new(
         representation,
         component,
@@ -8953,9 +9527,9 @@ fn push_molstar_component_bond_semantic_object(
             radial_segments,
         },
     );
-    if molstar_atoms_share_aromatic_ring(molecule, atom_a, atom_b) {
+    if molstar_atoms_share_aromatic_ring(geometry, atom_a, atom_b) {
         if let Some((dash_start, dash_end)) =
-            molstar_aromatic_half_link_dash(molecule, atom_a, atom_b, center, radius)
+            molstar_aromatic_half_link_dash(geometry, atom_a, atom_b, center, radius)
         {
             push_semantic_with_group(
                 objects,
@@ -8987,28 +9561,43 @@ fn molstar_component_export_cylinder_radial_segments(
     }
 }
 
-fn molstar_atoms_share_aromatic_ring(molecule: &Molecule, a: usize, b: usize) -> bool {
-    let Some(a_rings) = molecule.resonance.element_aromatic_ring_indices.get(a) else {
+fn molstar_atoms_share_aromatic_ring(geometry: &GeometryView<'_>, a: usize, b: usize) -> bool {
+    let molecule = geometry.molecule;
+    let Some(source_a) = geometry.atom(a).map(|atom| atom.source_index) else {
         return false;
     };
-    let Some(b_rings) = molecule.resonance.element_aromatic_ring_indices.get(b) else {
+    let Some(source_b) = geometry.atom(b).map(|atom| atom.source_index) else {
+        return false;
+    };
+    let Some(a_rings) = molecule
+        .resonance
+        .element_aromatic_ring_indices
+        .get(source_a)
+    else {
+        return false;
+    };
+    let Some(b_rings) = molecule
+        .resonance
+        .element_aromatic_ring_indices
+        .get(source_b)
+    else {
         return false;
     };
     a_rings.iter().any(|ring| b_rings.contains(ring))
 }
 
 fn molstar_aromatic_half_link_dash(
-    molecule: &Molecule,
+    geometry: &GeometryView<'_>,
     atom_a: usize,
     atom_b: usize,
     center: Vec3,
     radius: f64,
 ) -> Option<(Vec3, Vec3)> {
-    let a = DVec3::from_vec3(molecule.atoms.get(atom_a)?.position);
-    let b = DVec3::from_vec3(molecule.atoms.get(atom_b)?.position);
+    let a = DVec3::from_vec3(geometry.atom(atom_a)?.position);
+    let b = DVec3::from_vec3(geometry.atom(atom_b)?.position);
     let midpoint = (a + b) * 0.5;
     let reference =
-        molstar_component_bond_reference_position(molecule, atom_a, atom_b).map(DVec3::from_vec3);
+        molstar_component_bond_reference_position(geometry, atom_a, atom_b).map(DVec3::from_vec3);
     let shift_direction = molstar_calculate_link_shift_direction(a, b, reference);
     let aromatic_offset = radius + radius * 0.3 + radius * 0.3 * 1.5;
     let shifted_start =
@@ -9028,25 +9617,29 @@ fn molstar_aromatic_half_link_dash(
 }
 
 fn molstar_component_bond_reference_position(
-    molecule: &Molecule,
+    geometry: &GeometryView<'_>,
     atom_a: usize,
     atom_b: usize,
 ) -> Option<Vec3> {
+    let molecule = geometry.molecule;
+    let source_a = geometry.atom(atom_a)?.source_index;
+    let source_b = geometry.atom(atom_b)?.source_index;
     if let Some(third) = molecule
         .resonance
         .delocalized_triplet_lookup
-        .get_third_element(atom_a, atom_b)
+        .get_third_element(source_a, source_b)
     {
-        return molecule.atoms.get(third).map(|atom| atom.position);
+        return geometry
+            .atom_for_source_in_same_unit(third, atom_a)
+            .map(|atom| atom.position);
     }
 
     let (mut a, mut b) = (atom_a, atom_b);
     if a > b {
         std::mem::swap(&mut a, &mut b);
     }
-    let neighbors = molecule
-        .bonds
-        .iter()
+    let neighbors = geometry
+        .bonds()
         .filter_map(|bond| {
             if bond.a == a {
                 Some(bond.b)
@@ -9061,21 +9654,22 @@ fn molstar_component_bond_reference_position(
         std::mem::swap(&mut a, &mut b);
     }
 
+    let source_a = geometry.atom(a)?.source_index;
     let a_rings = molecule
         .resonance
         .element_aromatic_ring_indices
-        .get(a)
+        .get(source_a)
         .filter(|rings| !rings.is_empty())
         .or_else(|| {
             molecule
                 .resonance
                 .element_ring_indices
-                .get(a)
+                .get(source_a)
                 .filter(|rings| !rings.is_empty())
         });
     let mut best = None;
     let mut best_size = 0usize;
-    for neighbor in molecule.bonds.iter().filter_map(|bond| {
+    for neighbor in geometry.bonds().filter_map(|bond| {
         if bond.a == a {
             Some(bond.b)
         } else if bond.b == a {
@@ -9088,16 +9682,17 @@ fn molstar_component_bond_reference_position(
             continue;
         }
         if let Some(a_rings) = a_rings {
+            let source_neighbor = geometry.atom(neighbor)?.source_index;
             let neighbor_rings = molecule
                 .resonance
                 .element_aromatic_ring_indices
-                .get(neighbor)
+                .get(source_neighbor)
                 .filter(|rings| !rings.is_empty())
                 .or_else(|| {
                     molecule
                         .resonance
                         .element_ring_indices
-                        .get(neighbor)
+                        .get(source_neighbor)
                         .filter(|rings| !rings.is_empty())
                 });
             let size = neighbor_rings.map_or(0, |rings| {
@@ -9108,10 +9703,10 @@ fn molstar_component_bond_reference_position(
                 best = Some(neighbor);
             }
         } else {
-            return molecule.atoms.get(neighbor).map(|atom| atom.position);
+            return geometry.atom(neighbor).map(|atom| atom.position);
         }
     }
-    best.and_then(|index| molecule.atoms.get(index).map(|atom| atom.position))
+    best.and_then(|index| geometry.atom(index).map(|atom| atom.position))
 }
 
 fn molstar_calculate_link_shift_direction(v1: DVec3, v2: DVec3, v3: Option<DVec3>) -> DVec3 {
@@ -9143,18 +9738,24 @@ struct ComponentBondEdge {
 }
 
 fn molstar_component_unit_slot_half_links(
-    molecule: &Molecule,
+    geometry: &GeometryView<'_>,
     atom_mask: &[bool],
 ) -> Vec<(usize, usize)> {
+    let molecule = geometry.molecule;
     let mut groups = Vec::<ComponentBondGroup>::new();
     let mut group_by_key = BTreeMap::<(String, String), usize>::new();
-    let mut atom_local = vec![None; molecule.atoms.len()];
+    let mut atom_local = vec![None; geometry.atom_count()];
 
-    for (atom_index, atom) in molecule.atoms.iter().enumerate() {
-        if !atom_mask.get(atom_index).copied().unwrap_or(false) {
+    for geometry_atom in geometry.atoms() {
+        let atom_index = geometry_atom.index;
+        let atom = geometry_atom.atom;
+        if !geometry.atom_selected(atom_mask, atom_index) {
             continue;
         }
-        let key = (atom.chain.clone(), atom.operator_name.clone());
+        let key = (
+            atom.chain.clone(),
+            geometry_atom.operator_name().to_string(),
+        );
         let group_index = if let Some(group_index) = group_by_key.get(&key).copied() {
             group_index
         } else {
@@ -9168,7 +9769,7 @@ fn molstar_component_unit_slot_half_links(
         atom_local[atom_index] = Some((group_index, local_index));
     }
 
-    for (bond_index, bond) in molecule.bonds.iter().enumerate() {
+    for bond in geometry.bonds() {
         let Some((group_a, local_a)) = atom_local.get(bond.a).copied().flatten() else {
             continue;
         };
@@ -9178,12 +9779,13 @@ fn molstar_component_unit_slot_half_links(
         if group_a != group_b {
             continue;
         }
-        let distance_ordered = molecule
-            .bond_metadata
-            .get(bond_index)
-            .is_some_and(|metadata| {
-                matches!(metadata.source, BondSource::ChemComp | BondSource::Computed)
-            });
+        let distance_ordered =
+            molecule
+                .bond_metadata
+                .get(bond.source_index)
+                .is_some_and(|metadata| {
+                    matches!(metadata.source, BondSource::ChemComp | BondSource::Computed)
+                });
         groups[group_a].edges.push(ComponentBondEdge {
             a: local_a,
             b: local_b,
@@ -9213,17 +9815,15 @@ fn molstar_component_unit_slot_half_links(
                         (false, true) => std::cmp::Ordering::Less,
                         (true, false) => std::cmp::Ordering::Greater,
                         (true, true) => {
-                            let distance0 = molecule
-                                .atoms
-                                .get(group.atoms[edge0.a])
-                                .zip(molecule.atoms.get(group.atoms[edge0.b]))
+                            let distance0 = geometry
+                                .atom(group.atoms[edge0.a])
+                                .zip(geometry.atom(group.atoms[edge0.b]))
                                 .map_or(f32::INFINITY, |(a, b)| {
                                     (a.position - b.position).squared_length()
                                 });
-                            let distance1 = molecule
-                                .atoms
-                                .get(group.atoms[edge1.a])
-                                .zip(molecule.atoms.get(group.atoms[edge1.b]))
+                            let distance1 = geometry
+                                .atom(group.atoms[edge1.a])
+                                .zip(geometry.atom(group.atoms[edge1.b]))
                                 .map_or(f32::INFINITY, |(a, b)| {
                                     (a.position - b.position).squared_length()
                                 });
@@ -9282,17 +9882,38 @@ fn molstar_edge_builder_directed_slots(
     slots.into_iter().flatten().collect()
 }
 
-fn molstar_viewer_cartoon_scene_bounding_sphere(
+fn molstar_viewer_cartoon_scene_bounding_sphere_for_geometry(
+    molecule: &Molecule,
+    options: &MeshOptions,
+    structure: &AtomicStructure,
+    geometry: &GeometryView<'_>,
+    mesh: &Mesh,
+) -> Option<BoundingSphere> {
+    molstar_viewer_cartoon_scene_bounding_sphere_with_mode(
+        molecule,
+        options,
+        structure,
+        mesh,
+        geometry.virtualize_assembly,
+        Some(geometry),
+    )
+}
+
+fn molstar_viewer_cartoon_scene_bounding_sphere_with_mode(
     molecule: &Molecule,
     options: &MeshOptions,
     structure: &AtomicStructure,
     mesh: &Mesh,
+    legacy_expanded_assembly: bool,
+    geometry: Option<&GeometryView<'_>>,
 ) -> Option<BoundingSphere> {
     let mut sphere_objects = Vec::new();
     let mut cylinder_objects = Vec::new();
     let mut mesh_objects = Vec::new();
     let center = if options.center {
-        bounds_molecule(molecule)
+        geometry
+            .and_then(GeometryView::bounds)
+            .or_else(|| bounds_molecule(molecule))
             .map(|(min, max)| (min + max) * 0.5)
             .unwrap_or_default()
     } else {
@@ -9310,6 +9931,7 @@ fn molstar_viewer_cartoon_scene_bounding_sphere(
         &mut sphere_objects,
         &mut cylinder_objects,
         &mut mesh_objects,
+        legacy_expanded_assembly,
     );
 
     let carbohydrate_vertices = viewer_cartoon_carbohydrate_vertices(mesh, center);
@@ -9355,6 +9977,7 @@ fn molstar_viewer_cartoon_scene_bounding_sphere(
         &mut sphere_objects,
         &mut cylinder_objects,
         &mut mesh_objects,
+        legacy_expanded_assembly,
     );
 
     for mask in [
@@ -9374,6 +9997,7 @@ fn molstar_viewer_cartoon_scene_bounding_sphere(
             &mut sphere_objects,
             &mut cylinder_objects,
             &mut mesh_objects,
+            legacy_expanded_assembly,
         );
     }
 
@@ -9426,6 +10050,7 @@ fn molstar_push_component_renderable_spheres(
     sphere_objects: &mut Vec<BoundingSphere>,
     cylinder_objects: &mut Vec<BoundingSphere>,
     mesh_objects: &mut Vec<BoundingSphere>,
+    legacy_expanded_assembly: bool,
 ) {
     for group in &structure.symmetry_groups {
         let units = group
@@ -9452,7 +10077,11 @@ fn molstar_push_component_renderable_spheres(
             let Some(atom) = molecule.atoms.get(atom_index) else {
                 continue;
             };
-            positions.push(atom.position);
+            positions.push(if legacy_expanded_assembly {
+                unit.operator.transform.apply(atom.position)
+            } else {
+                atom.position
+            });
             let radius = vdw_radius(&atom.type_symbol);
             radii.push(radius);
             max_size = max_size.max(vdw_radius64(&atom.type_symbol));
@@ -9467,7 +10096,11 @@ fn molstar_push_component_renderable_spheres(
                 &unit_sphere,
                 MOLSTAR_TRACE_SIZE_FACTOR64 * molstar_radius_scale64(options),
             );
-            mesh_objects.push(molstar_units_transform_bounding_sphere(&sphere, &units));
+            mesh_objects.push(molstar_units_transform_bounding_sphere_for_assembly_mode(
+                &sphere,
+                &units,
+                legacy_expanded_assembly,
+            ));
         }
         if ball_and_stick {
             let size_factor =
@@ -9475,11 +10108,19 @@ fn molstar_push_component_renderable_spheres(
             let geometry_sphere =
                 molstar_expand_bounding_sphere(&unit_sphere, max_size * size_factor + 0.05);
             let sphere = molstar_expand_bounding_sphere(&geometry_sphere, max_size * size_factor);
-            sphere_objects.push(molstar_units_transform_bounding_sphere(&sphere, &units));
+            sphere_objects.push(molstar_units_transform_bounding_sphere_for_assembly_mode(
+                &sphere,
+                &units,
+                legacy_expanded_assembly,
+            ));
 
             if molstar_selected_atoms_have_bond(molecule, &selected) {
                 let bond = molstar_expand_bounding_sphere(&unit_sphere, size_factor);
-                cylinder_objects.push(molstar_units_transform_bounding_sphere(&bond, &units));
+                cylinder_objects.push(molstar_units_transform_bounding_sphere_for_assembly_mode(
+                    &bond,
+                    &units,
+                    legacy_expanded_assembly,
+                ));
             }
         }
     }
@@ -9544,23 +10185,54 @@ fn molstar_translate_bounding_sphere(sphere: &BoundingSphere, translation: Vec3)
     }
 }
 
+#[cfg(test)]
 fn molstar_visible_renderable_bounding_sphere_with_structure(
     molecule: &Molecule,
     options: &MeshOptions,
     structure: &AtomicStructure,
 ) -> Option<BoundingSphere> {
-    let spheres =
-        molstar_visible_renderable_component_spheres_with_structure(molecule, options, structure)
-            .into_iter()
-            .map(|(_, sphere)| sphere)
-            .collect::<Vec<_>>();
-    (!spheres.is_empty()).then(|| Boundary::from_bounding_spheres(&spheres).sphere)
+    molstar_visible_renderable_bounding_sphere_with_structure_mode(
+        molecule, options, structure, false,
+    )
 }
 
-fn molstar_visible_renderable_component_spheres_with_structure(
+fn molstar_visible_renderable_bounding_sphere_for_geometry(
     molecule: &Molecule,
     options: &MeshOptions,
     structure: &AtomicStructure,
+    geometry: &GeometryView<'_>,
+) -> Option<BoundingSphere> {
+    molstar_visible_renderable_bounding_sphere_with_structure_mode(
+        molecule,
+        options,
+        structure,
+        geometry.virtualize_assembly,
+    )
+}
+
+fn molstar_visible_renderable_bounding_sphere_with_structure_mode(
+    molecule: &Molecule,
+    options: &MeshOptions,
+    structure: &AtomicStructure,
+    legacy_expanded_assembly: bool,
+) -> Option<BoundingSphere> {
+    let spheres = molstar_visible_renderable_component_spheres_with_structure_mode(
+        molecule,
+        options,
+        structure,
+        legacy_expanded_assembly,
+    )
+    .into_iter()
+    .map(|(_, sphere)| sphere)
+    .collect::<Vec<_>>();
+    (!spheres.is_empty()).then(|| Boundary::from_bounding_spheres(&spheres).sphere)
+}
+
+fn molstar_visible_renderable_component_spheres_with_structure_mode(
+    molecule: &Molecule,
+    options: &MeshOptions,
+    structure: &AtomicStructure,
+    legacy_expanded_assembly: bool,
 ) -> Vec<(&'static str, BoundingSphere)> {
     let selected = selected_visuals(structure, options);
     let representation = effective_representation(structure, options.representation);
@@ -9585,7 +10257,11 @@ fn molstar_visible_renderable_component_spheres_with_structure(
         let Some(unit) = units.first().copied() else {
             continue;
         };
-        let Some(unit_sphere) = molstar_unit_invariant_bounding_sphere(molecule, unit) else {
+        let Some(unit_sphere) = molstar_unit_bounding_sphere_for_assembly_mode(
+            molecule,
+            unit,
+            legacy_expanded_assembly,
+        ) else {
             continue;
         };
         if unit_sphere.radius <= 0.0 {
@@ -9599,27 +10275,30 @@ fn molstar_visible_renderable_component_spheres_with_structure(
         if has_visual("polymer-trace") && has_polymer {
             spheres.push((
                 "polymer-trace",
-                molstar_units_transform_bounding_sphere(
+                molstar_units_transform_bounding_sphere_for_assembly_mode(
                     &molstar_expand_bounding_sphere(&unit_sphere, trace_padding),
                     &units,
+                    legacy_expanded_assembly,
                 ),
             ));
         }
         if has_visual("polymer-tube") && has_polymer {
             spheres.push((
                 "polymer-tube",
-                molstar_units_transform_bounding_sphere(
+                molstar_units_transform_bounding_sphere_for_assembly_mode(
                     &molstar_expand_bounding_sphere(&unit_sphere, tube_padding),
                     &units,
+                    legacy_expanded_assembly,
                 ),
             ));
         }
         if has_visual("polymer-gap") && !unit.props.gap_elements.is_empty() {
             spheres.push((
                 "polymer-gap",
-                molstar_units_transform_bounding_sphere(
+                molstar_units_transform_bounding_sphere_for_assembly_mode(
                     &molstar_expand_bounding_sphere(&unit_sphere, trace_padding),
                     &units,
+                    legacy_expanded_assembly,
                 ),
             ));
         }
@@ -9630,9 +10309,10 @@ fn molstar_visible_renderable_component_spheres_with_structure(
         {
             spheres.push((
                 "nucleotide",
-                molstar_units_transform_bounding_sphere(
+                molstar_units_transform_bounding_sphere_for_assembly_mode(
                     &molstar_expand_bounding_sphere(&unit_sphere, trace_padding),
                     &units,
+                    legacy_expanded_assembly,
                 ),
             ));
         }
@@ -9641,9 +10321,10 @@ fn molstar_visible_renderable_component_spheres_with_structure(
         {
             spheres.push((
                 "polymer-backbone",
-                molstar_units_transform_bounding_sphere(
+                molstar_units_transform_bounding_sphere_for_assembly_mode(
                     &molstar_expand_bounding_sphere(&unit_sphere, bond_padding),
                     &units,
+                    legacy_expanded_assembly,
                 ),
             ));
         }
@@ -9654,9 +10335,10 @@ fn molstar_visible_renderable_component_spheres_with_structure(
         {
             spheres.push((
                 "bond",
-                molstar_units_transform_bounding_sphere(
+                molstar_units_transform_bounding_sphere_for_assembly_mode(
                     &molstar_expand_bounding_sphere(&unit_sphere, bond_padding),
                     &units,
+                    legacy_expanded_assembly,
                 ),
             ));
         }
@@ -9685,7 +10367,11 @@ fn molstar_visible_renderable_component_spheres_with_structure(
             };
             spheres.push((
                 "element-sphere",
-                molstar_units_transform_bounding_sphere(&renderable_sphere, &units),
+                molstar_units_transform_bounding_sphere_for_assembly_mode(
+                    &renderable_sphere,
+                    &units,
+                    legacy_expanded_assembly,
+                ),
             ));
         }
     }
@@ -9695,10 +10381,12 @@ fn molstar_visible_renderable_component_spheres_with_structure(
         || has_visual("carbohydrate-terminal-link"))
         && structure.boundary.sphere.radius > 0.0
     {
+        let boundary =
+            molstar_structure_boundary_for_assembly_mode(structure, legacy_expanded_assembly);
         spheres.push((
             "carbohydrate",
             molstar_expand_bounding_sphere(
-                &structure.boundary.sphere,
+                &boundary.sphere,
                 MOLSTAR_CARBOHYDRATE_SYMBOL_SIZE_FACTOR as f64,
             ),
         ));
@@ -9920,6 +10608,62 @@ fn molstar_unit_invariant_bounding_sphere(
         }
         UnitKind::Spheres | UnitKind::Gaussians => Some(unit.props.boundary.sphere.clone()),
     }
+}
+
+fn molstar_unit_bounding_sphere_for_assembly_mode(
+    molecule: &Molecule,
+    unit: &StructureUnit,
+    legacy_expanded_assembly: bool,
+) -> Option<BoundingSphere> {
+    if !legacy_expanded_assembly {
+        return molstar_unit_invariant_bounding_sphere(molecule, unit);
+    }
+    match unit.kind {
+        UnitKind::Atomic => {
+            let mut positions = Vec::with_capacity(unit.elements.len());
+            let mut radii = Vec::with_capacity(unit.elements.len());
+            for &element in &unit.elements {
+                let atom = molecule.atoms.get(element)?;
+                positions.push(unit.operator.transform.apply(atom.position));
+                radii.push(vdw_radius(&atom.type_symbol));
+            }
+            Some(Boundary::from_positions_and_radii(&positions, &radii).sphere)
+        }
+        UnitKind::Spheres | UnitKind::Gaussians => Some(unit.props.boundary.sphere.clone()),
+    }
+}
+
+fn molstar_units_transform_bounding_sphere_for_assembly_mode(
+    sphere: &BoundingSphere,
+    units: &[&StructureUnit],
+    legacy_expanded_assembly: bool,
+) -> BoundingSphere {
+    if legacy_expanded_assembly {
+        sphere.clone()
+    } else {
+        molstar_units_transform_bounding_sphere(sphere, units)
+    }
+}
+
+fn molstar_structure_boundary_for_assembly_mode(
+    structure: &AtomicStructure,
+    legacy_expanded_assembly: bool,
+) -> Boundary {
+    if !legacy_expanded_assembly {
+        return structure.boundary.clone();
+    }
+    let spheres = structure
+        .symmetry_groups
+        .iter()
+        .filter_map(|group| {
+            group
+                .unit_ids
+                .first()
+                .and_then(|unit_id| structure.unit_by_id(*unit_id))
+                .map(|unit| unit.props.boundary.sphere.clone())
+        })
+        .collect::<Vec<_>>();
+    Boundary::from_structure_spheres(&spheres)
 }
 
 fn molstar_units_transform_bounding_sphere(
@@ -10858,7 +11602,10 @@ impl MeshBuilderState {
     }
 }
 
-fn backbone_residues(molecule: &Molecule, structure: &AtomicStructure) -> Vec<TraceResidue> {
+fn backbone_residues(
+    geometry: &GeometryView<'_>,
+    structure: &AtomicStructure,
+) -> Vec<TraceResidue> {
     #[derive(Clone, Copy, Debug)]
     struct DerivedTraceAtoms {
         molecule_type: MoleculeType,
@@ -10893,7 +11640,7 @@ fn backbone_residues(molecule: &Molecule, structure: &AtomicStructure) -> Vec<Tr
             let seq = residue.label_seq_id.trim().parse::<i32>().ok()?;
             let atom_position = |index: Option<usize>| {
                 index
-                    .and_then(|atom_index| hierarchy.atoms.get(atom_index))
+                    .and_then(|atom_index| geometry.first_atom_for_source(atom_index))
                     .map(|atom| atom.position)
             };
             let trace = hierarchy
@@ -10936,7 +11683,9 @@ fn backbone_residues(molecule: &Molecule, structure: &AtomicStructure) -> Vec<Tr
         .collect::<Vec<_>>();
 
     let mut residues = Vec::<ResidueAtoms>::new();
-    for atom in &molecule.atoms {
+    for geometry_atom in geometry.atoms() {
+        let atom = geometry_atom.atom;
+        let position = geometry_atom.position;
         let seq = atom
             .residue_seq
             .trim()
@@ -10969,27 +11718,25 @@ fn backbone_residues(molecule: &Molecule, structure: &AtomicStructure) -> Vec<Tr
         let residue = &mut residues[index];
         let atom_name = atom.name.trim();
         let is_nucleotide = is_nucleotide_residue(&residue.residue);
-        residue
-            .nucleotide_atoms
-            .record_atom(atom_name, atom.position);
+        residue.nucleotide_atoms.record_atom(atom_name, position);
         match atom_name {
-            "CA" if !is_nucleotide => residue.trace = Some(atom.position),
+            "CA" if !is_nucleotide => residue.trace = Some(position),
             "O3'" | "O3*" if is_nucleotide => {
-                residue.trace = Some(atom.position);
-                residue.o3 = Some(atom.position);
-                residue.nucleotide_atoms.set_trace(atom.position);
+                residue.trace = Some(position);
+                residue.o3 = Some(position);
+                residue.nucleotide_atoms.set_trace(position);
             }
-            "P" if residue.trace.is_none() => residue.trace = Some(atom.position),
+            "P" if residue.trace.is_none() => residue.trace = Some(position),
             "C4'" | "C4*" => {
-                residue.c4 = Some(atom.position);
+                residue.c4 = Some(position);
                 if residue.trace.is_none() {
-                    residue.trace = Some(atom.position);
+                    residue.trace = Some(position);
                 }
             }
-            "C1'" | "C1*" => residue.c1 = Some(atom.position),
-            "C3'" | "C3*" => residue.c3 = Some(atom.position),
-            "C" => residue.carbonyl_c = Some(atom.position),
-            "O" | "OXT" => residue.carbonyl_o = Some(atom.position),
+            "C1'" | "C1*" => residue.c1 = Some(position),
+            "C3'" | "C3*" => residue.c3 = Some(position),
+            "C" => residue.carbonyl_c = Some(position),
+            "O" | "OXT" => residue.carbonyl_o = Some(position),
             _ => {}
         }
     }
@@ -11083,7 +11830,7 @@ fn backbone_residues(molecule: &Molecule, structure: &AtomicStructure) -> Vec<Tr
     out
 }
 
-fn backbone_residues_from_atoms(molecule: &Molecule) -> Vec<TraceResidue> {
+fn backbone_residues_from_atoms(geometry: &GeometryView<'_>) -> Vec<TraceResidue> {
     #[derive(Clone, Debug)]
     struct ResidueAtoms {
         chain: String,
@@ -11101,7 +11848,9 @@ fn backbone_residues_from_atoms(molecule: &Molecule) -> Vec<TraceResidue> {
     }
 
     let mut residues = Vec::<ResidueAtoms>::new();
-    for atom in &molecule.atoms {
+    for geometry_atom in geometry.atoms() {
+        let atom = geometry_atom.atom;
+        let position = geometry_atom.position;
         let seq = atom
             .residue_seq
             .trim()
@@ -11134,27 +11883,25 @@ fn backbone_residues_from_atoms(molecule: &Molecule) -> Vec<TraceResidue> {
         let residue = &mut residues[index];
         let atom_name = atom.name.trim();
         let is_nucleotide = is_nucleotide_residue(&residue.residue);
-        residue
-            .nucleotide_atoms
-            .record_atom(atom_name, atom.position);
+        residue.nucleotide_atoms.record_atom(atom_name, position);
         match atom_name {
-            "CA" if !is_nucleotide => residue.trace = Some(atom.position),
+            "CA" if !is_nucleotide => residue.trace = Some(position),
             "O3'" | "O3*" if is_nucleotide => {
-                residue.trace = Some(atom.position);
-                residue.o3 = Some(atom.position);
-                residue.nucleotide_atoms.set_trace(atom.position);
+                residue.trace = Some(position);
+                residue.o3 = Some(position);
+                residue.nucleotide_atoms.set_trace(position);
             }
-            "P" if residue.trace.is_none() => residue.trace = Some(atom.position),
+            "P" if residue.trace.is_none() => residue.trace = Some(position),
             "C4'" | "C4*" => {
-                residue.c4 = Some(atom.position);
+                residue.c4 = Some(position);
                 if residue.trace.is_none() {
-                    residue.trace = Some(atom.position);
+                    residue.trace = Some(position);
                 }
             }
-            "C1'" | "C1*" => residue.c1 = Some(atom.position),
-            "C3'" | "C3*" => residue.c3 = Some(atom.position),
-            "C" => residue.carbonyl_c = Some(atom.position),
-            "O" | "OXT" => residue.carbonyl_o = Some(atom.position),
+            "C1'" | "C1*" => residue.c1 = Some(position),
+            "C3'" | "C3*" => residue.c3 = Some(position),
+            "C" => residue.carbonyl_c = Some(position),
+            "O" | "OXT" => residue.carbonyl_o = Some(position),
             _ => {}
         }
     }
@@ -13173,6 +13920,7 @@ mod tests {
             &options,
             None,
             Some(&structure),
+            None,
             |_| {},
         );
         assert_eq!(objects.len(), 2);
@@ -13246,9 +13994,8 @@ mod tests {
             &options,
         )
         .unwrap();
-        let expansion = geometry_for_render(&molecule, &options, false);
-        let geometry = expansion.molecule;
-        let structure = geometry.atomic_structure();
+        let structure = molecule.atomic_structure();
+        let geometry = &molecule;
         assert_eq!(structure.units.len(), 2);
         assert_eq!(structure.element_count, 28);
         let (box_min, box_max) = molstar_boundary_box64(&structure.boundary);
@@ -13331,6 +14078,7 @@ mod tests {
             &resolved,
             None,
             Some(&structure),
+            None,
             |_| {},
         );
         assert_eq!(objects.len(), 1);
@@ -13386,6 +14134,7 @@ mod tests {
             &options,
             None,
             Some(&structure),
+            None,
             |_| {},
         );
         assert_eq!(objects.len(), 1);
@@ -13454,6 +14203,7 @@ mod tests {
             &options,
             None,
             Some(&structure),
+            None,
             |_| {},
         );
         assert_eq!(objects.len(), 1);
@@ -13490,6 +14240,7 @@ mod tests {
             &options,
             None,
             Some(&structure),
+            None,
             |_| {},
         );
         assert_eq!(objects.len(), 1);
@@ -13527,6 +14278,7 @@ mod tests {
             &options,
             None,
             Some(&structure),
+            None,
             |_| {},
         );
         let (mesh, _, _) = flatten_semantic_render_objects_with_visible_bounding_sphere_and_stats(
@@ -13599,6 +14351,7 @@ mod tests {
                 &options,
                 None,
                 Some(&structure),
+                None,
                 |_| {},
             );
             assert_eq!(objects.len(), 1);
@@ -13647,7 +14400,8 @@ mod tests {
             &mut objects,
             MolstarStructureSize::Huge,
         );
-        apply_molstar_default_materials(&mut objects, &molecule, &options, Some(&structure));
+        let geometry = GeometryView::new(&molecule, &structure, &options);
+        apply_molstar_default_materials(&mut objects, &geometry, &options, Some(&structure));
 
         assert_eq!(objects.len(), 1);
         let RenderObject::SurfaceMesh {

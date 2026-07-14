@@ -1,3 +1,9 @@
+/// Convert PDB, mmCIF, and BinaryCIF molecular structures into static meshes
+/// and render them in Typst documents with `maquette`.
+///
+/// Public functions accept structure bytes, inline PDB or mmCIF text, and
+/// Typst 0.15+ path values. File inputs on older Typst versions must be read
+/// with `read(..., encoding: none)` before being passed to Molfig.
 #import "@preview/maquette:0.1.1": render-obj, render-stl, render-ply, get-obj-info, get-stl-info, get-ply-info
 
 #let _plugin = plugin("molfig.wasm")
@@ -128,6 +134,37 @@
   decimate: decimate,
 ))
 
+/// Export a molecular structure as a Wavefront OBJ mesh.
+///
+/// OBJ preserves Molfig face groups, operator metadata when requested, and
+/// material identifiers for color themes.
+///
+/// - data (any): Structure bytes, inline PDB or mmCIF text, or a Typst 0.15+ path value.
+/// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, or `"bcif"`.
+/// - representation (str): Molecular representation, such as `"default"`, `"cartoon"`, `"spacefill"`, `"ball-and-stick"`, `"surface"`, `"ribbon"`, or `"backbone"`.
+/// - color-theme (str): Mol* color theme used to assign OBJ materials.
+/// - theme (dictionary): Mol* Viewer theme overrides, including `globalName`, `carbonColor`, and `symmetryColor`.
+/// - sphere-detail (int): Icosphere subdivision detail used by sphere-based visuals.
+/// - radius-scale (int, float): Global multiplier for molecular radii.
+/// - atom-radius (int, float): Base atom radius used by ball-and-stick-style visuals.
+/// - bond-radius (int, float): Base bond-cylinder radius.
+/// - infer-bonds (bool): Whether missing covalent bonds are inferred from molecular geometry.
+/// - center (bool): Whether the exported mesh is centered using the visible Mol* bounding sphere.
+/// - assembly (str): Biological assembly identifier, or `"asymmetric-unit"` to use the source asymmetric unit.
+/// - alt-loc (str): Alternate-location selector; an empty string uses the default highest-occupancy policy.
+/// - block-index (none, int): Zero-based CIF or BinaryCIF data-block index.
+/// - block-header (str): CIF or BinaryCIF data-block header to select instead of `block-index`.
+/// - ribbon-radius (int, float): Polymer tube radius for ribbon-derived geometry.
+/// - ribbon-width (int, float): Polymer ribbon width.
+/// - helix-profile (str): Helix cross-section profile: `"elliptical"`, `"rounded"`, or `"square"`.
+/// - round-cap (bool): Whether polymer segment ends use rounded caps.
+/// - sheet-arrow-factor (int, float): Width multiplier for beta-sheet arrow tips.
+/// - tubular-helices (bool): Whether helices are emitted as tubes instead of ribbons.
+/// - linear-segments (int): Longitudinal curve subdivisions.
+/// - radial-segments (int): Radial profile subdivisions.
+/// - quality (str): Geometry quality preset from `"lowest"` through `"highest"`, or `"auto"`/`"custom"`.
+/// - decimate (int, float): Molfig semantic decimation strength in the range `0` to `1`.
+/// -> bytes
 #let to-obj(
   data,
   format: "auto",
@@ -156,6 +193,36 @@
   decimate: 0,
 ) = _plugin.to_obj(_normalize-data(data), bytes(_mesh-options(format, representation, color-theme, theme, sphere-detail, radius-scale, atom-radius, bond-radius, infer-bonds, center, assembly, alt-loc, block-index, block-header, ribbon-radius, ribbon-width, helix-profile, round-cap, sheet-arrow-factor, tubular-helices, linear-segments, radial-segments, quality, decimate)))
 
+/// Export the OBJ materials for a molecular structure as a Wavefront MTL file.
+///
+/// Material order and identifiers match the corresponding `to-obj` output.
+///
+/// - data (any): Structure bytes, inline PDB or mmCIF text, or a Typst 0.15+ path value.
+/// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, or `"bcif"`.
+/// - representation (str): Molecular representation used to generate material assignments.
+/// - color-theme (str): Mol* color theme used to assign materials.
+/// - theme (dictionary): Mol* Viewer theme overrides, including `globalName`, `carbonColor`, and `symmetryColor`.
+/// - sphere-detail (int): Icosphere subdivision detail used by sphere-based visuals.
+/// - radius-scale (int, float): Global multiplier for molecular radii.
+/// - atom-radius (int, float): Base atom radius used by ball-and-stick-style visuals.
+/// - bond-radius (int, float): Base bond-cylinder radius.
+/// - infer-bonds (bool): Whether missing covalent bonds are inferred from molecular geometry.
+/// - center (bool): Whether the associated mesh is centered.
+/// - assembly (str): Biological assembly identifier, or `"asymmetric-unit"` to use the source asymmetric unit.
+/// - alt-loc (str): Alternate-location selector; an empty string uses the default highest-occupancy policy.
+/// - block-index (none, int): Zero-based CIF or BinaryCIF data-block index.
+/// - block-header (str): CIF or BinaryCIF data-block header to select instead of `block-index`.
+/// - ribbon-radius (int, float): Polymer tube radius for ribbon-derived geometry.
+/// - ribbon-width (int, float): Polymer ribbon width.
+/// - helix-profile (str): Helix cross-section profile: `"elliptical"`, `"rounded"`, or `"square"`.
+/// - round-cap (bool): Whether polymer segment ends use rounded caps.
+/// - sheet-arrow-factor (int, float): Width multiplier for beta-sheet arrow tips.
+/// - tubular-helices (bool): Whether helices are emitted as tubes instead of ribbons.
+/// - linear-segments (int): Longitudinal curve subdivisions.
+/// - radial-segments (int): Radial profile subdivisions.
+/// - quality (str): Geometry quality preset from `"lowest"` through `"highest"`, or `"auto"`/`"custom"`.
+/// - decimate (int, float): Molfig semantic decimation strength in the range `0` to `1`.
+/// -> bytes
 #let to-mtl(
   data,
   format: "auto",
@@ -184,6 +251,37 @@
   decimate: 0,
 ) = _plugin.to_mtl(_normalize-data(data), bytes(_mesh-options(format, representation, color-theme, theme, sphere-detail, radius-scale, atom-radius, bond-radius, infer-bonds, center, assembly, alt-loc, block-index, block-header, ribbon-radius, ribbon-width, helix-profile, round-cap, sheet-arrow-factor, tubular-helices, linear-segments, radial-segments, quality, decimate)))
 
+/// Export a molecular structure as a binary STL triangle mesh.
+///
+/// STL contains geometry only; color themes and face groups cannot be
+/// represented by the format.
+///
+/// - data (any): Structure bytes, inline PDB or mmCIF text, or a Typst 0.15+ path value.
+/// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, or `"bcif"`.
+/// - representation (str): Molecular representation used to construct the mesh.
+/// - color-theme (str): Color theme used during semantic construction; STL does not store its colors.
+/// - theme (dictionary): Mol* Viewer theme overrides used during semantic construction.
+/// - sphere-detail (int): Icosphere subdivision detail used by sphere-based visuals.
+/// - radius-scale (int, float): Global multiplier for molecular radii.
+/// - atom-radius (int, float): Base atom radius used by ball-and-stick-style visuals.
+/// - bond-radius (int, float): Base bond-cylinder radius.
+/// - infer-bonds (bool): Whether missing covalent bonds are inferred from molecular geometry.
+/// - center (bool): Whether the exported mesh is centered using the visible Mol* bounding sphere.
+/// - assembly (str): Biological assembly identifier, or `"asymmetric-unit"` to use the source asymmetric unit.
+/// - alt-loc (str): Alternate-location selector; an empty string uses the default highest-occupancy policy.
+/// - block-index (none, int): Zero-based CIF or BinaryCIF data-block index.
+/// - block-header (str): CIF or BinaryCIF data-block header to select instead of `block-index`.
+/// - ribbon-radius (int, float): Polymer tube radius for ribbon-derived geometry.
+/// - ribbon-width (int, float): Polymer ribbon width.
+/// - helix-profile (str): Helix cross-section profile: `"elliptical"`, `"rounded"`, or `"square"`.
+/// - round-cap (bool): Whether polymer segment ends use rounded caps.
+/// - sheet-arrow-factor (int, float): Width multiplier for beta-sheet arrow tips.
+/// - tubular-helices (bool): Whether helices are emitted as tubes instead of ribbons.
+/// - linear-segments (int): Longitudinal curve subdivisions.
+/// - radial-segments (int): Radial profile subdivisions.
+/// - quality (str): Geometry quality preset from `"lowest"` through `"highest"`, or `"auto"`/`"custom"`.
+/// - decimate (int, float): Molfig semantic decimation strength in the range `0` to `1`.
+/// -> bytes
 #let to-stl(
   data,
   format: "auto",
@@ -212,6 +310,36 @@
   decimate: 0,
 ) = _plugin.to_stl(_normalize-data(data), bytes(_mesh-options(format, representation, color-theme, theme, sphere-detail, radius-scale, atom-radius, bond-radius, infer-bonds, center, assembly, alt-loc, block-index, block-header, ribbon-radius, ribbon-width, helix-profile, round-cap, sheet-arrow-factor, tubular-helices, linear-segments, radial-segments, quality, decimate)))
 
+/// Export a molecular structure as an ASCII PLY triangle mesh.
+///
+/// PLY preserves Molfig face-group values but does not carry OBJ materials.
+///
+/// - data (any): Structure bytes, inline PDB or mmCIF text, or a Typst 0.15+ path value.
+/// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, or `"bcif"`.
+/// - representation (str): Molecular representation used to construct the mesh.
+/// - color-theme (str): Color theme used during semantic construction; PLY does not store its colors.
+/// - theme (dictionary): Mol* Viewer theme overrides used during semantic construction.
+/// - sphere-detail (int): Icosphere subdivision detail used by sphere-based visuals.
+/// - radius-scale (int, float): Global multiplier for molecular radii.
+/// - atom-radius (int, float): Base atom radius used by ball-and-stick-style visuals.
+/// - bond-radius (int, float): Base bond-cylinder radius.
+/// - infer-bonds (bool): Whether missing covalent bonds are inferred from molecular geometry.
+/// - center (bool): Whether the exported mesh is centered using the visible Mol* bounding sphere.
+/// - assembly (str): Biological assembly identifier, or `"asymmetric-unit"` to use the source asymmetric unit.
+/// - alt-loc (str): Alternate-location selector; an empty string uses the default highest-occupancy policy.
+/// - block-index (none, int): Zero-based CIF or BinaryCIF data-block index.
+/// - block-header (str): CIF or BinaryCIF data-block header to select instead of `block-index`.
+/// - ribbon-radius (int, float): Polymer tube radius for ribbon-derived geometry.
+/// - ribbon-width (int, float): Polymer ribbon width.
+/// - helix-profile (str): Helix cross-section profile: `"elliptical"`, `"rounded"`, or `"square"`.
+/// - round-cap (bool): Whether polymer segment ends use rounded caps.
+/// - sheet-arrow-factor (int, float): Width multiplier for beta-sheet arrow tips.
+/// - tubular-helices (bool): Whether helices are emitted as tubes instead of ribbons.
+/// - linear-segments (int): Longitudinal curve subdivisions.
+/// - radial-segments (int): Radial profile subdivisions.
+/// - quality (str): Geometry quality preset from `"lowest"` through `"highest"`, or `"auto"`/`"custom"`.
+/// - decimate (int, float): Molfig semantic decimation strength in the range `0` to `1`.
+/// -> bytes
 #let to-ply(
   data,
   format: "auto",
@@ -240,6 +368,37 @@
   decimate: 0,
 ) = _plugin.to_ply(_normalize-data(data), bytes(_mesh-options(format, representation, color-theme, theme, sphere-detail, radius-scale, atom-radius, bond-radius, infer-bonds, center, assembly, alt-loc, block-index, block-header, ribbon-radius, ribbon-width, helix-profile, round-cap, sheet-arrow-factor, tubular-helices, linear-segments, radial-segments, quality, decimate)))
 
+/// Inspect molecular, Model/Structure/Unit, representation, and mesh-planning metadata.
+///
+/// This performs Molfig's parsing and semantic representation work without
+/// sending a mesh to `maquette` for document rendering.
+///
+/// - data (any): Structure bytes, inline PDB or mmCIF text, or a Typst 0.15+ path value.
+/// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, or `"bcif"`.
+/// - representation (str): Molecular representation whose semantic metadata is inspected.
+/// - color-theme (str): Mol* color theme used during semantic construction.
+/// - theme (dictionary): Mol* Viewer theme overrides, including `globalName`, `carbonColor`, and `symmetryColor`.
+/// - sphere-detail (int): Icosphere subdivision detail used by sphere-based visuals.
+/// - radius-scale (int, float): Global multiplier for molecular radii.
+/// - atom-radius (int, float): Base atom radius used by ball-and-stick-style visuals.
+/// - bond-radius (int, float): Base bond-cylinder radius.
+/// - infer-bonds (bool): Whether missing covalent bonds are inferred from molecular geometry.
+/// - center (bool): Whether geometry bounds and export planning use centered coordinates.
+/// - assembly (str): Biological assembly identifier, or `"asymmetric-unit"` to use the source asymmetric unit.
+/// - alt-loc (str): Alternate-location selector; an empty string uses the default highest-occupancy policy.
+/// - block-index (none, int): Zero-based CIF or BinaryCIF data-block index.
+/// - block-header (str): CIF or BinaryCIF data-block header to select instead of `block-index`.
+/// - ribbon-radius (int, float): Polymer tube radius for ribbon-derived geometry.
+/// - ribbon-width (int, float): Polymer ribbon width.
+/// - helix-profile (str): Helix cross-section profile: `"elliptical"`, `"rounded"`, or `"square"`.
+/// - round-cap (bool): Whether polymer segment ends use rounded caps.
+/// - sheet-arrow-factor (int, float): Width multiplier for beta-sheet arrow tips.
+/// - tubular-helices (bool): Whether helices are emitted as tubes instead of ribbons.
+/// - linear-segments (int): Longitudinal curve subdivisions.
+/// - radial-segments (int): Radial profile subdivisions.
+/// - quality (str): Geometry quality preset from `"lowest"` through `"highest"`, or `"auto"`/`"custom"`.
+/// - decimate (int, float): Molfig semantic decimation strength in the range `0` to `1`.
+/// -> dictionary
 #let info(
   data,
   format: "auto",
@@ -268,6 +427,42 @@
   decimate: 0,
 ) = json(_plugin.info(_normalize-data(data), bytes(_mesh-options(format, representation, color-theme, theme, sphere-detail, radius-scale, atom-radius, bond-radius, infer-bonds, center, assembly, alt-loc, block-index, block-header, ribbon-radius, ribbon-width, helix-profile, round-cap, sheet-arrow-factor, tubular-helices, linear-segments, radial-segments, quality, decimate))))
 
+/// Convert a molecular structure and render it as Typst content with `maquette`.
+///
+/// OBJ materials generated from the selected color theme are merged into
+/// `config.materials`; user-provided entries take precedence.
+///
+/// - data (any): Structure bytes, inline PDB or mmCIF text, or a Typst 0.15+ path value.
+/// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, or `"bcif"`.
+/// - mesh-format (str): Intermediate mesh format: `"obj"`, `"stl"`, or `"ply"`.
+/// - representation (str): Molecular representation, such as `"default"`, `"cartoon"`, `"spacefill"`, `"ball-and-stick"`, `"surface"`, `"ribbon"`, or `"backbone"`.
+/// - color-theme (str): Mol* color theme used to assign OBJ materials.
+/// - theme (dictionary): Mol* Viewer theme overrides, including `globalName`, `carbonColor`, and `symmetryColor`.
+/// - sphere-detail (int): Icosphere subdivision detail used by sphere-based visuals.
+/// - radius-scale (int, float): Global multiplier for molecular radii.
+/// - atom-radius (int, float): Base atom radius used by ball-and-stick-style visuals.
+/// - bond-radius (int, float): Base bond-cylinder radius.
+/// - infer-bonds (bool): Whether missing covalent bonds are inferred from molecular geometry.
+/// - center (bool): Whether the mesh is centered using the visible Mol* bounding sphere.
+/// - assembly (str): Biological assembly identifier, or `"asymmetric-unit"` to use the source asymmetric unit.
+/// - alt-loc (str): Alternate-location selector; an empty string uses the default highest-occupancy policy.
+/// - block-index (none, int): Zero-based CIF or BinaryCIF data-block index.
+/// - block-header (str): CIF or BinaryCIF data-block header to select instead of `block-index`.
+/// - ribbon-radius (int, float): Polymer tube radius for ribbon-derived geometry.
+/// - ribbon-width (int, float): Polymer ribbon width.
+/// - helix-profile (str): Helix cross-section profile: `"elliptical"`, `"rounded"`, or `"square"`.
+/// - round-cap (bool): Whether polymer segment ends use rounded caps.
+/// - sheet-arrow-factor (int, float): Width multiplier for beta-sheet arrow tips.
+/// - tubular-helices (bool): Whether helices are emitted as tubes instead of ribbons.
+/// - linear-segments (int): Longitudinal curve subdivisions.
+/// - radial-segments (int): Radial profile subdivisions.
+/// - quality (str): Geometry quality preset from `"lowest"` through `"highest"`, or `"auto"`/`"custom"`.
+/// - decimate (auto, int, float): Molfig semantic decimation strength; `auto` consumes numeric `config.decimate`.
+/// - config (dictionary): Configuration forwarded to the selected `maquette` renderer after Molfig-specific normalization.
+/// - width (auto, relative): Requested output width.
+/// - height (auto, relative): Requested output height.
+/// - output-format (str): Rendered image format, normally `"png"` or `"svg"`.
+/// -> content
 #let render(
   data,
   format: "auto",
@@ -315,6 +510,42 @@
   _render-mesh(object.mesh, mesh-format, _strip-maquette-decimate(config, semantic-decimate), object.materials, width, height, output-format)
 }
 
+/// Build a rendered molecular object together with its mesh and semantic metadata.
+///
+/// The returned dictionary contains `kind`, `format`, `mesh_format`, `mesh`,
+/// `materials`, `info`, and rendered `content` fields.
+///
+/// - data (any): Structure bytes, inline PDB or mmCIF text, or a Typst 0.15+ path value.
+/// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, or `"bcif"`.
+/// - mesh-format (str): Intermediate mesh format: `"obj"`, `"stl"`, or `"ply"`.
+/// - representation (str): Molecular representation, such as `"default"`, `"cartoon"`, `"spacefill"`, `"ball-and-stick"`, `"surface"`, `"ribbon"`, or `"backbone"`.
+/// - color-theme (str): Mol* color theme used to assign OBJ materials.
+/// - theme (dictionary): Mol* Viewer theme overrides, including `globalName`, `carbonColor`, and `symmetryColor`.
+/// - sphere-detail (int): Icosphere subdivision detail used by sphere-based visuals.
+/// - radius-scale (int, float): Global multiplier for molecular radii.
+/// - atom-radius (int, float): Base atom radius used by ball-and-stick-style visuals.
+/// - bond-radius (int, float): Base bond-cylinder radius.
+/// - infer-bonds (bool): Whether missing covalent bonds are inferred from molecular geometry.
+/// - center (bool): Whether the mesh is centered using the visible Mol* bounding sphere.
+/// - assembly (str): Biological assembly identifier, or `"asymmetric-unit"` to use the source asymmetric unit.
+/// - alt-loc (str): Alternate-location selector; an empty string uses the default highest-occupancy policy.
+/// - block-index (none, int): Zero-based CIF or BinaryCIF data-block index.
+/// - block-header (str): CIF or BinaryCIF data-block header to select instead of `block-index`.
+/// - ribbon-radius (int, float): Polymer tube radius for ribbon-derived geometry.
+/// - ribbon-width (int, float): Polymer ribbon width.
+/// - helix-profile (str): Helix cross-section profile: `"elliptical"`, `"rounded"`, or `"square"`.
+/// - round-cap (bool): Whether polymer segment ends use rounded caps.
+/// - sheet-arrow-factor (int, float): Width multiplier for beta-sheet arrow tips.
+/// - tubular-helices (bool): Whether helices are emitted as tubes instead of ribbons.
+/// - linear-segments (int): Longitudinal curve subdivisions.
+/// - radial-segments (int): Radial profile subdivisions.
+/// - quality (str): Geometry quality preset from `"lowest"` through `"highest"`, or `"auto"`/`"custom"`.
+/// - decimate (auto, int, float): Molfig semantic decimation strength; `auto` consumes numeric `config.decimate`.
+/// - config (dictionary): Configuration forwarded to the selected `maquette` renderer after Molfig-specific normalization.
+/// - width (auto, relative): Requested output width.
+/// - height (auto, relative): Requested output height.
+/// - output-format (str): Rendered image format, normally `"png"` or `"svg"`.
+/// -> dictionary
 #let render-object(
   data,
   format: "auto",
@@ -388,6 +619,14 @@
   )
 }
 
+/// Generate a mesh and inspect it with `maquette`'s format-specific metadata helper.
+///
+/// - data (any): Structure bytes, inline PDB or mmCIF text, or a Typst 0.15+ path value.
+/// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, or `"bcif"`.
+/// - mesh-format (str): Mesh format inspected by `maquette`: `"obj"`, `"stl"`, or `"ply"`.
+/// - config (dictionary): Camera and projection configuration used by `maquette` while computing mesh metadata.
+/// - mesh-args (arguments): Additional named Molfig mesh options accepted by the selected export function.
+/// -> dictionary
 #let mesh-info(data, format: "auto", mesh-format: "obj", config: (:), ..mesh-args) = {
   let options = mesh-args.named()
   let raw = if mesh-format == "obj" {
