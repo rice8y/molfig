@@ -142,14 +142,14 @@
 /// - data (any): Structure bytes, inline PDB or mmCIF text, or a Typst 0.15+ path value.
 /// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, or `"bcif"`.
 /// - representation (str): Molecular representation, such as `"default"`, `"cartoon"`, `"spacefill"`, `"ball-and-stick"`, `"surface"`, `"ribbon"`, or `"backbone"`.
-/// - color-theme (str): Mol* color theme used to assign OBJ materials.
-/// - theme (dictionary): Mol* Viewer theme overrides, including `globalName`, `carbonColor`, and `symmetryColor`.
+/// - color-theme (str): Mol\* color theme used to assign OBJ materials.
+/// - theme (dictionary): Mol\* Viewer theme overrides, including `globalName`, `carbonColor`, and `symmetryColor`.
 /// - sphere-detail (int): Icosphere subdivision detail used by sphere-based visuals.
 /// - radius-scale (int, float): Global multiplier for molecular radii.
 /// - atom-radius (int, float): Base atom radius used by ball-and-stick-style visuals.
 /// - bond-radius (int, float): Base bond-cylinder radius.
 /// - infer-bonds (bool): Whether missing covalent bonds are inferred from molecular geometry.
-/// - center (bool): Whether the exported mesh is centered using the visible Mol* bounding sphere.
+/// - center (bool): Whether the exported mesh is centered using the visible Mol\* bounding sphere.
 /// - assembly (str): Biological assembly identifier, or `"asymmetric-unit"` to use the source asymmetric unit.
 /// - alt-loc (str): Alternate-location selector; an empty string uses the default highest-occupancy policy.
 /// - block-index (none, int): Zero-based CIF or BinaryCIF data-block index.
@@ -200,8 +200,8 @@
 /// - data (any): Structure bytes, inline PDB or mmCIF text, or a Typst 0.15+ path value.
 /// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, or `"bcif"`.
 /// - representation (str): Molecular representation used to generate material assignments.
-/// - color-theme (str): Mol* color theme used to assign materials.
-/// - theme (dictionary): Mol* Viewer theme overrides, including `globalName`, `carbonColor`, and `symmetryColor`.
+/// - color-theme (str): Mol\* color theme used to assign materials.
+/// - theme (dictionary): Mol\* Viewer theme overrides, including `globalName`, `carbonColor`, and `symmetryColor`.
 /// - sphere-detail (int): Icosphere subdivision detail used by sphere-based visuals.
 /// - radius-scale (int, float): Global multiplier for molecular radii.
 /// - atom-radius (int, float): Base atom radius used by ball-and-stick-style visuals.
@@ -260,13 +260,13 @@
 /// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, or `"bcif"`.
 /// - representation (str): Molecular representation used to construct the mesh.
 /// - color-theme (str): Color theme used during semantic construction; STL does not store its colors.
-/// - theme (dictionary): Mol* Viewer theme overrides used during semantic construction.
+/// - theme (dictionary): Mol\* Viewer theme overrides used during semantic construction.
 /// - sphere-detail (int): Icosphere subdivision detail used by sphere-based visuals.
 /// - radius-scale (int, float): Global multiplier for molecular radii.
 /// - atom-radius (int, float): Base atom radius used by ball-and-stick-style visuals.
 /// - bond-radius (int, float): Base bond-cylinder radius.
 /// - infer-bonds (bool): Whether missing covalent bonds are inferred from molecular geometry.
-/// - center (bool): Whether the exported mesh is centered using the visible Mol* bounding sphere.
+/// - center (bool): Whether the exported mesh is centered using the visible Mol\* bounding sphere.
 /// - assembly (str): Biological assembly identifier, or `"asymmetric-unit"` to use the source asymmetric unit.
 /// - alt-loc (str): Alternate-location selector; an empty string uses the default highest-occupancy policy.
 /// - block-index (none, int): Zero-based CIF or BinaryCIF data-block index.
@@ -318,13 +318,13 @@
 /// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, or `"bcif"`.
 /// - representation (str): Molecular representation used to construct the mesh.
 /// - color-theme (str): Color theme used during semantic construction; PLY does not store its colors.
-/// - theme (dictionary): Mol* Viewer theme overrides used during semantic construction.
+/// - theme (dictionary): Mol\* Viewer theme overrides used during semantic construction.
 /// - sphere-detail (int): Icosphere subdivision detail used by sphere-based visuals.
 /// - radius-scale (int, float): Global multiplier for molecular radii.
 /// - atom-radius (int, float): Base atom radius used by ball-and-stick-style visuals.
 /// - bond-radius (int, float): Base bond-cylinder radius.
 /// - infer-bonds (bool): Whether missing covalent bonds are inferred from molecular geometry.
-/// - center (bool): Whether the exported mesh is centered using the visible Mol* bounding sphere.
+/// - center (bool): Whether the exported mesh is centered using the visible Mol\* bounding sphere.
 /// - assembly (str): Biological assembly identifier, or `"asymmetric-unit"` to use the source asymmetric unit.
 /// - alt-loc (str): Alternate-location selector; an empty string uses the default highest-occupancy policy.
 /// - block-index (none, int): Zero-based CIF or BinaryCIF data-block index.
@@ -376,8 +376,8 @@
 /// - data (any): Structure bytes, inline PDB or mmCIF text, or a Typst 0.15+ path value.
 /// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, or `"bcif"`.
 /// - representation (str): Molecular representation whose semantic metadata is inspected.
-/// - color-theme (str): Mol* color theme used during semantic construction.
-/// - theme (dictionary): Mol* Viewer theme overrides, including `globalName`, `carbonColor`, and `symmetryColor`.
+/// - color-theme (str): Mol\* color theme used during semantic construction.
+/// - theme (dictionary): Mol\* Viewer theme overrides, including `globalName`, `carbonColor`, and `symmetryColor`.
 /// - sphere-detail (int): Icosphere subdivision detail used by sphere-based visuals.
 /// - radius-scale (int, float): Global multiplier for molecular radii.
 /// - atom-radius (int, float): Base atom radius used by ball-and-stick-style visuals.
@@ -436,14 +436,14 @@
 /// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, or `"bcif"`.
 /// - mesh-format (str): Intermediate mesh format: `"obj"`, `"stl"`, or `"ply"`.
 /// - representation (str): Molecular representation, such as `"default"`, `"cartoon"`, `"spacefill"`, `"ball-and-stick"`, `"surface"`, `"ribbon"`, or `"backbone"`.
-/// - color-theme (str): Mol* color theme used to assign OBJ materials.
-/// - theme (dictionary): Mol* Viewer theme overrides, including `globalName`, `carbonColor`, and `symmetryColor`.
+/// - color-theme (str): Mol\* color theme used to assign OBJ materials.
+/// - theme (dictionary): Mol\* Viewer theme overrides, including `globalName`, `carbonColor`, and `symmetryColor`.
 /// - sphere-detail (int): Icosphere subdivision detail used by sphere-based visuals.
 /// - radius-scale (int, float): Global multiplier for molecular radii.
 /// - atom-radius (int, float): Base atom radius used by ball-and-stick-style visuals.
 /// - bond-radius (int, float): Base bond-cylinder radius.
 /// - infer-bonds (bool): Whether missing covalent bonds are inferred from molecular geometry.
-/// - center (bool): Whether the mesh is centered using the visible Mol* bounding sphere.
+/// - center (bool): Whether the mesh is centered using the visible Mol\* bounding sphere.
 /// - assembly (str): Biological assembly identifier, or `"asymmetric-unit"` to use the source asymmetric unit.
 /// - alt-loc (str): Alternate-location selector; an empty string uses the default highest-occupancy policy.
 /// - block-index (none, int): Zero-based CIF or BinaryCIF data-block index.
@@ -519,14 +519,14 @@
 /// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, or `"bcif"`.
 /// - mesh-format (str): Intermediate mesh format: `"obj"`, `"stl"`, or `"ply"`.
 /// - representation (str): Molecular representation, such as `"default"`, `"cartoon"`, `"spacefill"`, `"ball-and-stick"`, `"surface"`, `"ribbon"`, or `"backbone"`.
-/// - color-theme (str): Mol* color theme used to assign OBJ materials.
-/// - theme (dictionary): Mol* Viewer theme overrides, including `globalName`, `carbonColor`, and `symmetryColor`.
+/// - color-theme (str): Mol\* color theme used to assign OBJ materials.
+/// - theme (dictionary): Mol\* Viewer theme overrides, including `globalName`, `carbonColor`, and `symmetryColor`.
 /// - sphere-detail (int): Icosphere subdivision detail used by sphere-based visuals.
 /// - radius-scale (int, float): Global multiplier for molecular radii.
 /// - atom-radius (int, float): Base atom radius used by ball-and-stick-style visuals.
 /// - bond-radius (int, float): Base bond-cylinder radius.
 /// - infer-bonds (bool): Whether missing covalent bonds are inferred from molecular geometry.
-/// - center (bool): Whether the mesh is centered using the visible Mol* bounding sphere.
+/// - center (bool): Whether the mesh is centered using the visible Mol\* bounding sphere.
 /// - assembly (str): Biological assembly identifier, or `"asymmetric-unit"` to use the source asymmetric unit.
 /// - alt-loc (str): Alternate-location selector; an empty string uses the default highest-occupancy policy.
 /// - block-index (none, int): Zero-based CIF or BinaryCIF data-block index.
