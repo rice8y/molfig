@@ -1,6 +1,14 @@
 target/
 .DS_Store
 
+.bin/
+.cache/
+.typage/
+public/
+molfig-docs/
+.vercel
+.env*
+
 # Internal parity/review notes. Public docs live under package/docs/.
 dev-docs/
 package/docs/*.md
