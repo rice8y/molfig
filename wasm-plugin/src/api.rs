@@ -1,9 +1,7 @@
-use std::borrow::Cow;
-
 use crate::export::{
-    export_maquette_material_map_json, export_maquette_material_map_json_from_obj,
-    export_mtl_from_materials, export_obj_with_metadata, export_ply_with_metadata,
-    export_stl_facet_context_json, export_stl_with_metadata, ExportMetadata,
+    export_maquette_material_map_json_from_materials, export_maquette_material_map_json_from_obj,
+    export_mtl_from_materials, export_obj_with_metadata_checked, export_ply_with_metadata_checked,
+    export_stl_facet_context_json, export_stl_with_metadata_checked, ExportMetadata,
     ExportOperatorMetadata, ExportVec3,
 };
 use crate::json::{json_escape, json_string_array};
@@ -31,10 +29,11 @@ pub fn convert_to_obj(data: &[u8], options_json: &[u8]) -> Result<Vec<u8>, Strin
     let molecule = parse_molecule_with_options(data, &options)?;
     let (mesh, export_center, assembly_operators) =
         build_mesh_for_obj_export_with_operator_snapshot(&molecule, &options);
-    validate_mesh_for_export(&mesh)?;
     let mut metadata = export_metadata_for_molecule(&molecule, &options, &assembly_operators);
     metadata.vertex_offset = export_center.negated();
-    Ok(export_obj_with_metadata(&mesh, &metadata).into_bytes())
+    Ok(export_obj_with_metadata_checked(&mesh, &metadata)?
+        .text
+        .into_bytes())
 }
 
 pub fn convert_to_obj_bundle(data: &[u8], options_json: &[u8]) -> Result<Vec<u8>, String> {
@@ -42,12 +41,11 @@ pub fn convert_to_obj_bundle(data: &[u8], options_json: &[u8]) -> Result<Vec<u8>
     let molecule = parse_molecule_with_options(data, &options)?;
     let (mesh, export_center, assembly_operators) =
         build_mesh_for_obj_export_with_operator_snapshot(&molecule, &options);
-    validate_mesh_for_export(&mesh)?;
     let mut metadata = export_metadata_for_molecule(&molecule, &options, &assembly_operators);
     metadata.vertex_offset = export_center.negated();
-    let materials_json = export_maquette_material_map_json(&mesh);
-    let obj = export_obj_with_metadata(&mesh, &metadata);
-    obj_bundle(&materials_json, obj)
+    let exported = export_obj_with_metadata_checked(&mesh, &metadata)?;
+    let materials_json = export_maquette_material_map_json_from_materials(&exported.materials);
+    obj_bundle(&materials_json, exported.text)
 }
 
 pub fn convert_to_mtl(data: &[u8], options_json: &[u8]) -> Result<Vec<u8>, String> {
@@ -100,12 +98,11 @@ pub fn convert_to_stl(data: &[u8], options_json: &[u8]) -> Result<Vec<u8>, Strin
     let options = MeshOptions::from_json(options_json)?;
     let molecule = parse_molecule_with_options(data, &options)?;
     let (mesh, export_center) = build_mesh_for_obj_export(&molecule, &options);
-    validate_mesh_for_export(&mesh)?;
     let metadata = ExportMetadata {
         vertex_offset: export_center.negated(),
         ..ExportMetadata::default()
     };
-    Ok(export_stl_with_metadata(&mesh, &metadata))
+    export_stl_with_metadata_checked(&mesh, &metadata)
 }
 
 pub fn convert_to_ply(data: &[u8], options_json: &[u8]) -> Result<Vec<u8>, String> {
@@ -113,9 +110,8 @@ pub fn convert_to_ply(data: &[u8], options_json: &[u8]) -> Result<Vec<u8>, Strin
     let molecule = parse_molecule_with_options(data, &options)?;
     let (mesh, assembly_operators) =
         build_mesh_for_export_with_operator_snapshot(&molecule, &options);
-    validate_mesh_for_export(&mesh)?;
     let metadata = export_metadata_for_molecule(&molecule, &options, &assembly_operators);
-    Ok(export_ply_with_metadata(&mesh, &metadata).into_bytes())
+    Ok(export_ply_with_metadata_checked(&mesh, &metadata)?.into_bytes())
 }
 
 pub fn convert_to_render_object_bundle(
@@ -138,16 +134,16 @@ pub fn convert_to_render_object_bundle(
 
     match mesh_format {
         RenderObjectMeshFormat::Obj => {
-            validate_mesh_for_export(&scene.mesh)?;
             let mut metadata =
                 export_metadata_for_molecule(&molecule, &options, &scene.assembly_operators);
             metadata.vertex_offset = export_center.negated();
-            let materials_json = export_maquette_material_map_json(&scene.mesh);
-            let obj = export_obj_with_metadata(&scene.mesh, &metadata).into_bytes();
+            let exported = export_obj_with_metadata_checked(&scene.mesh, &metadata)?;
+            let materials_json =
+                export_maquette_material_map_json_from_materials(&exported.materials);
+            let obj = exported.text.into_bytes();
             render_object_bundle(&materials_json, &info_json, obj)
         }
         RenderObjectMeshFormat::Stl => {
-            validate_mesh_for_export(&scene.mesh)?;
             let metadata = ExportMetadata {
                 vertex_offset: export_center.negated(),
                 ..ExportMetadata::default()
@@ -155,20 +151,19 @@ pub fn convert_to_render_object_bundle(
             render_object_bundle(
                 "{}",
                 &info_json,
-                export_stl_with_metadata(&scene.mesh, &metadata),
+                export_stl_with_metadata_checked(&scene.mesh, &metadata)?,
             )
         }
         RenderObjectMeshFormat::Ply => {
             if options.center {
                 center_mesh_on_export_center(&mut scene.mesh, export_center.to_vec3());
             }
-            validate_mesh_for_export(&scene.mesh)?;
             let metadata =
                 export_metadata_for_molecule(&molecule, &options, &scene.assembly_operators);
             render_object_bundle(
                 "{}",
                 &info_json,
-                export_ply_with_metadata(&scene.mesh, &metadata).into_bytes(),
+                export_ply_with_metadata_checked(&scene.mesh, &metadata)?.into_bytes(),
             )
         }
     }
@@ -267,13 +262,13 @@ pub fn stl_export_facet_context_timed(
     checkpoint("parse-molecule");
     let mut geometry_options = options.clone();
     geometry_options.center = false;
-    let geometry = export_context_geometry(&molecule);
+    let geometry = &molecule;
     checkpoint("export-context-geometry");
     let structure = geometry.atomic_structure();
     checkpoint("atomic-structure-for-export-context");
     let visible_sphere_report = options.center.then(|| {
         visible_renderable_bounding_sphere_report_for_export_with_structure(
-            &geometry,
+            geometry,
             &geometry_options,
             &structure,
         )
@@ -283,7 +278,7 @@ pub fn stl_export_facet_context_timed(
     }
     let (export_center, export_box) = if options.center {
         if let Some(sphere) = visible_renderable_bounding_sphere_for_export_with_structure(
-            &geometry,
+            geometry,
             &geometry_options,
             &structure,
         ) {
@@ -294,7 +289,7 @@ pub fn stl_export_facet_context_timed(
                 Some(export_box),
             )
         } else {
-            let (mesh, export_center) = build_mesh_for_obj_export(&geometry, &options);
+            let (mesh, export_center) = build_mesh_for_obj_export(geometry, &options);
             checkpoint("build-export-mesh");
             validate_mesh_for_export(&mesh)?;
             checkpoint("validate-export-mesh");
@@ -308,7 +303,7 @@ pub fn stl_export_facet_context_timed(
     };
     let vertex_offset = export_center.negated();
     let context = render_object_stl_facet_context_for_geometry_json_timed(
-        &geometry,
+        geometry,
         &geometry_options,
         facet_index,
         [vertex_offset.x, vertex_offset.y, vertex_offset.z],
@@ -316,7 +311,7 @@ pub fn stl_export_facet_context_timed(
         |label| checkpoint(label),
     );
     checkpoint("build-flat-export-mesh-context");
-    let (flat_mesh, flat_export_center) = build_mesh_for_obj_export(&geometry, &options);
+    let (flat_mesh, flat_export_center) = build_mesh_for_obj_export(geometry, &options);
     let flat_context = export_stl_facet_context_json(&flat_mesh, flat_export_center, facet_index);
     checkpoint("render-flat-export-facet-context");
     let center_source = if options.center {
@@ -372,17 +367,6 @@ pub fn stl_facet_semantic_context_with_vertex_offset_timed(
         checkpoint,
     );
     Ok(context)
-}
-
-fn export_context_geometry(molecule: &Molecule) -> Cow<'_, Molecule> {
-    if let Some(molecule) = molecule.identity_assembly_subset_for_geometry() {
-        return Cow::Owned(molecule);
-    }
-    if molecule.selected_assembly.is_some() {
-        molecule.expanded_for_geometry()
-    } else {
-        Cow::Borrowed(molecule)
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -680,96 +664,7 @@ fn option_vec3_array_json(values: [Option<ExportVec3>; 3]) -> String {
 }
 
 pub(crate) fn validate_mesh_for_export(mesh: &Mesh) -> Result<(), String> {
-    for (index, vertex) in mesh.vertices.iter().enumerate() {
-        if !vec3_is_finite(*vertex) {
-            return Err(format!("mesh vertex {index} contains NaN or infinity"));
-        }
-    }
-    for (index, normal) in mesh.normals.iter().enumerate() {
-        if !vec3_is_finite(*normal) {
-            return Err(format!("mesh normal {index} contains NaN or infinity"));
-        }
-    }
-    if mesh.normals.len() != mesh.vertices.len() {
-        return Err(format!(
-            "mesh normal count {} does not match vertex count {}",
-            mesh.normals.len(),
-            mesh.vertices.len()
-        ));
-    }
-    for (index, face) in mesh.faces.iter().enumerate() {
-        if face.a >= mesh.vertices.len()
-            || face.b >= mesh.vertices.len()
-            || face.c >= mesh.vertices.len()
-        {
-            return Err(format!(
-                "mesh face {index} references an out-of-range vertex"
-            ));
-        }
-    }
-    if !mesh.vertex_groups.is_empty() && mesh.vertex_groups.len() != mesh.vertices.len() {
-        return Err(format!(
-            "mesh vertex group count {} does not match vertex count {}",
-            mesh.vertex_groups.len(),
-            mesh.vertices.len()
-        ));
-    }
-    if mesh.face_groups.len() != mesh.faces.len() {
-        return Err(format!(
-            "mesh face group count {} does not match face count {}",
-            mesh.face_groups.len(),
-            mesh.faces.len()
-        ));
-    }
-    if !mesh.face_materials.is_empty() && mesh.face_materials.len() != mesh.faces.len() {
-        return Err(format!(
-            "mesh face material count {} does not match face count {}",
-            mesh.face_materials.len(),
-            mesh.faces.len()
-        ));
-    }
-    validate_mesh_sections_for_export(mesh)?;
-    Ok(())
-}
-
-fn vec3_is_finite(value: Vec3) -> bool {
-    value.x.is_finite() && value.y.is_finite() && value.z.is_finite()
-}
-
-fn validate_mesh_sections_for_export(mesh: &Mesh) -> Result<(), String> {
-    let mut vertex_cursor = 0;
-    let mut face_cursor = 0;
-    for (index, section) in mesh.sections.iter().enumerate() {
-        if section.key.is_empty() {
-            return Err(format!("mesh section {index} has an empty key"));
-        }
-        if section.vertex_start != vertex_cursor {
-            return Err(format!(
-                "mesh section {index} starts at vertex {} but expected {vertex_cursor}",
-                section.vertex_start
-            ));
-        }
-        if section.vertex_end < section.vertex_start || section.vertex_end > mesh.vertices.len() {
-            return Err(format!("mesh section {index} has an invalid vertex range"));
-        }
-        if section.face_start != face_cursor {
-            return Err(format!(
-                "mesh section {index} starts at face {} but expected {face_cursor}",
-                section.face_start
-            ));
-        }
-        if section.face_end < section.face_start || section.face_end > mesh.faces.len() {
-            return Err(format!("mesh section {index} has an invalid face range"));
-        }
-        vertex_cursor = section.vertex_end;
-        face_cursor = section.face_end;
-    }
-    if !mesh.sections.is_empty()
-        && (vertex_cursor != mesh.vertices.len() || face_cursor != mesh.faces.len())
-    {
-        return Err("mesh sections do not cover the full exported mesh".to_string());
-    }
-    Ok(())
+    crate::export::validate_mesh_for_export(mesh)
 }
 
 fn export_metadata_for_molecule(

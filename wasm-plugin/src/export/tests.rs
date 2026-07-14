@@ -1,6 +1,8 @@
 use super::{
-    export_maquette_material_map_json, export_maquette_material_map_json_from_obj, export_mtl,
-    export_mtl_from_materials, export_obj, export_obj_with_metadata, export_stl_with_metadata,
+    export_maquette_material_map_json, export_maquette_material_map_json_from_materials,
+    export_maquette_material_map_json_from_obj, export_mtl, export_mtl_from_materials, export_obj,
+    export_obj_with_metadata, export_obj_with_metadata_checked, export_ply_with_metadata,
+    export_ply_with_metadata_checked, export_stl_with_metadata, export_stl_with_metadata_checked,
     molstar_float, molstar_float64, molstar_material_id, molstar_obj_vertex_transform,
     molstar_triangle_normal, ExportMetadata, ExportVec3,
 };
@@ -247,6 +249,77 @@ fn direct_maquette_material_map_matches_obj_parse_contract() {
         direct,
         "{\"0x1b9e771\":\"#1b9e77\",\"0xff26180.6\":\"#ff2618\"}"
     );
+}
+
+#[test]
+fn checked_serializers_preserve_output_and_collect_obj_materials_during_face_write() {
+    let first = MeshMaterial::opaque(0x1b9e77);
+    let second = MeshMaterial::with_alpha_tenths(0xff2618, 6);
+    let mesh = Mesh {
+        vertices: vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(1.0, 1.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        ],
+        normals: vec![Vec3::new(0.0, 0.0, 1.0); 4],
+        faces: vec![
+            Face { a: 0, b: 1, c: 2 },
+            Face { a: 0, b: 2, c: 3 },
+            Face { a: 1, b: 2, c: 3 },
+        ],
+        vertex_groups: vec![0; 4],
+        face_groups: vec![0; 3],
+        face_materials: vec![first, first, second],
+        sections: Vec::new(),
+        group_count: 1,
+    };
+    let metadata = ExportMetadata::default();
+
+    let obj = export_obj_with_metadata_checked(&mesh, &metadata).unwrap();
+    assert_eq!(obj.text, export_obj_with_metadata(&mesh, &metadata));
+    assert_eq!(obj.materials, vec![first, second]);
+    assert_eq!(
+        export_maquette_material_map_json_from_materials(&obj.materials),
+        export_maquette_material_map_json_from_obj(obj.text.as_bytes()).unwrap()
+    );
+    assert_eq!(
+        export_ply_with_metadata_checked(&mesh, &metadata).unwrap(),
+        export_ply_with_metadata(&mesh, &metadata)
+    );
+    assert_eq!(
+        export_stl_with_metadata_checked(&mesh, &metadata).unwrap(),
+        export_stl_with_metadata(&mesh, &metadata)
+    );
+}
+
+#[test]
+fn checked_serializers_reject_invalid_geometry_during_serialization() {
+    let mesh = Mesh {
+        vertices: vec![
+            Vec3::new(f32::NAN, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        ],
+        normals: vec![Vec3::new(0.0, 0.0, 1.0); 3],
+        faces: vec![Face { a: 0, b: 1, c: 2 }],
+        vertex_groups: vec![0; 3],
+        face_groups: vec![0],
+        face_materials: Vec::new(),
+        sections: Vec::new(),
+        group_count: 1,
+    };
+    let metadata = ExportMetadata::default();
+
+    for error in [
+        export_obj_with_metadata_checked(&mesh, &metadata)
+            .unwrap_err()
+            .to_string(),
+        export_ply_with_metadata_checked(&mesh, &metadata).unwrap_err(),
+        export_stl_with_metadata_checked(&mesh, &metadata).unwrap_err(),
+    ] {
+        assert_eq!(error, "mesh vertex 0 contains NaN or infinity");
+    }
 }
 
 fn stl_f32(stl: &[u8], offset: usize) -> f32 {
