@@ -3,7 +3,7 @@ set -euo pipefail
 
 typst_version="${TYPST_VERSION:-0.15.0}"
 typage_version="${TYPAGE_VERSION:-0.1.5}"
-starter_version="${TYPST_DOCS_STARTER_VERSION:-0.1.2}"
+starter_version="${TYPST_DOCS_STARTER_VERSION:-0.1.3}"
 starter="${TYPST_DOCS_STARTER:-github:rice8y/typage-starter-typst-docs#v${starter_version}}"
 docs_root="${TYPAGE_DOCS_ROOT:-molfig-docs}"
 

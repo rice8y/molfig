@@ -19,9 +19,15 @@ if [ ! -d "$docs_root" ]; then
   exit 1
 fi
 
-echo "[build] replacing starter package with molfig package"
+echo "[build] replacing starter package with top-level files from molfig package"
 rm -rf "${docs_root}/package"
-cp -R package "${docs_root}/package"
+mkdir -p "${docs_root}/package"
+
+find package \
+  -mindepth 1 \
+  -maxdepth 1 \
+  -type f \
+  -exec cp -p {} "${docs_root}/package/" \;
 
 export PATH="$repo_root/.bin:$HOME/.cargo/bin:/rust/bin:$PATH"
 
