@@ -8,12 +8,12 @@
 
 #let _plugin = plugin("molfig.wasm")
 
-#let v15-or-later() = {
+#let _v15-or-later() = {
   sys.version >= version(0, 15, 0)
 }
 
 #let _is-path(value) = {
-  v15-or-later() and str(type(value)) == "path"
+  _v15-or-later() and str(type(value)) == "path"
 }
 
 #let _normalize-data(data) = {
