@@ -126,6 +126,17 @@ Bundled example structure files under [`package/examples/data`](package/examples
 
 See [`NOTICE.md`](NOTICE.md) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for the full distribution notice.
 
+## Benchmarks
+
+The [`benchmarks`](benchmarks) suite compiles the published PDB, mmCIF, and BinaryCIF examples in isolated Typst processes. It measures Molfig's OBJ export pipeline by default and can include maquette rendering with `--mode render`. The runner provides pinned Nix builds of Typst 0.14.0, 0.14.1, 0.14.2, and 0.15.0 with a common hyperfine 1.20.0. The default shell uses Typst 0.15.0. The Molfig version defaults to `package/typst.toml` and can be changed without editing the benchmark source:
+
+```sh
+nix develop ./benchmarks --command \
+  benchmarks/run.sh --version "$VERSION"
+```
+
+See [`benchmarks/README.md`](benchmarks/README.md) for case selection and runner options.
+
 ## Development
 
 ```sh
