@@ -135,6 +135,8 @@ nix develop ./benchmarks --command \
   benchmarks/run.sh --version "$VERSION"
 ```
 
+Pass `--baseline-version` together with `--version` to compare two Molfig releases on the same workload and receive hyperfine's relative performance summary.
+
 See [`benchmarks/README.md`](benchmarks/README.md) for case selection and runner options.
 
 ## Development

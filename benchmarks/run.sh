@@ -45,6 +45,7 @@ default_version="$(awk '
 ' "$manifest")"
 
 version="${MOLFIG_VERSION:-$default_version}"
+baseline_version="${MOLFIG_BASELINE_VERSION:-}"
 namespace="${MOLFIG_NAMESPACE:-preview}"
 mode="${MOLFIG_BENCH_MODE:-export}"
 warmup="${MOLFIG_BENCH_WARMUP:-1}"
@@ -65,15 +66,17 @@ usage() {
 Usage: benchmarks/run.sh [options] [case ...]
 
 Options:
-  --version VERSION       Molfig package version (default: package/typst.toml)
-  --namespace NAMESPACE   Typst package namespace: preview or local (default: preview)
-  --mode MODE             export or render (default: export)
-  --warmup COUNT          Hyperfine warmup runs (default: 1)
-  --runs COUNT            Hyperfine measured runs (default: 5)
-  -h, --help              Show this help
+  --version VERSION           Candidate Molfig package version (default: package/typst.toml)
+  --baseline-version VERSION  Baseline Molfig package version to compare
+  --namespace NAMESPACE       Typst package namespace: preview or local (default: preview)
+  --mode MODE                 export or render (default: export)
+  --warmup COUNT              Hyperfine warmup runs (default: 1)
+  --runs COUNT                Hyperfine measured runs (default: 5)
+  -h, --help                  Show this help
 
-The same settings can be supplied through MOLFIG_VERSION, MOLFIG_NAMESPACE,
-MOLFIG_BENCH_MODE, MOLFIG_BENCH_WARMUP, and MOLFIG_BENCH_RUNS.
+The same settings can be supplied through MOLFIG_VERSION,
+MOLFIG_BASELINE_VERSION, MOLFIG_NAMESPACE, MOLFIG_BENCH_MODE,
+MOLFIG_BENCH_WARMUP, and MOLFIG_BENCH_RUNS.
 EOF
 }
 
@@ -81,6 +84,10 @@ while (($# > 0)); do
   case "$1" in
     --version)
       version="$2"
+      shift 2
+      ;;
+    --baseline-version)
+      baseline_version="$2"
       shift 2
       ;;
     --namespace)
@@ -125,6 +132,11 @@ if [[ "$mode" != "export" && "$mode" != "render" ]]; then
   exit 2
 fi
 
+if [[ -n "$baseline_version" && "$baseline_version" == "$version" ]]; then
+  echo "Baseline and candidate Molfig versions must differ: $version" >&2
+  exit 2
+fi
+
 if ((${#selected_cases[@]} == 0)); then
   selected_cases=("${all_cases[@]}")
 fi
@@ -152,21 +164,12 @@ hyperfine_args=(
   --style basic
 )
 
-for selected in "${selected_cases[@]}"; do
-  output="$output_dir/$selected-$mode.pdf"
-  printf -v command \
-    'typst compile --root %q --input %q --input %q --input %q --input %q %q %q' \
-    "$repo_root" \
-    "molfig-version=$version" \
-    "molfig-namespace=$namespace" \
-    "case=$selected" \
-    "mode=$mode" \
-    "$benchmark_source" \
-    "$output"
-  hyperfine_args+=(--command-name "$selected" "$command")
-done
-
-echo "Molfig @$namespace version: $version"
+if [[ -n "$baseline_version" ]]; then
+  echo "Molfig @$namespace baseline version: $baseline_version"
+  echo "Molfig @$namespace candidate version: $version"
+else
+  echo "Molfig @$namespace version: $version"
+fi
 echo "Nixpkgs revision: ${MOLFIG_BENCH_NIXPKGS_REV:-unknown}"
 echo "$(nix --version)"
 echo "$typst_version"
@@ -174,4 +177,50 @@ echo "$hyperfine_version"
 echo "System: $(uname -sm)"
 echo "Benchmark mode: $mode"
 echo "Warmup runs: $warmup; measured runs: $runs"
-hyperfine "${hyperfine_args[@]}"
+
+benchmark_index=0
+for selected in "${selected_cases[@]}"; do
+  benchmark_index=$((benchmark_index + 1))
+  if [[ -n "$baseline_version" ]]; then
+    baseline_slug="${baseline_version//[^A-Za-z0-9._-]/_}"
+    candidate_slug="${version//[^A-Za-z0-9._-]/_}"
+    baseline_output="$output_dir/$selected-$mode-molfig-$baseline_slug.pdf"
+    candidate_output="$output_dir/$selected-$mode-molfig-$candidate_slug.pdf"
+    printf -v baseline_command \
+      'typst compile --root %q --input %q --input %q --input %q --input %q %q %q' \
+      "$repo_root" \
+      "molfig-version=$baseline_version" \
+      "molfig-namespace=$namespace" \
+      "case=$selected" \
+      "mode=$mode" \
+      "$benchmark_source" \
+      "$baseline_output"
+    printf -v candidate_command \
+      'typst compile --root %q --input %q --input %q --input %q --input %q %q %q' \
+      "$repo_root" \
+      "molfig-version=$version" \
+      "molfig-namespace=$namespace" \
+      "case=$selected" \
+      "mode=$mode" \
+      "$benchmark_source" \
+      "$candidate_output"
+    echo
+    echo "Case $benchmark_index: $selected"
+    hyperfine "${hyperfine_args[@]}" \
+      --command-name "molfig-$baseline_version (baseline)" "$baseline_command" \
+      --command-name "molfig-$version (candidate)" "$candidate_command"
+  else
+    output="$output_dir/$selected-$mode.pdf"
+    printf -v command \
+      'typst compile --root %q --input %q --input %q --input %q --input %q %q %q' \
+      "$repo_root" \
+      "molfig-version=$version" \
+      "molfig-namespace=$namespace" \
+      "case=$selected" \
+      "mode=$mode" \
+      "$benchmark_source" \
+      "$output"
+    hyperfine "${hyperfine_args[@]}" --command-name "$selected" "$command" \
+      | sed "s/^Benchmark 1: /Benchmark $benchmark_index: /"
+  fi
+done
