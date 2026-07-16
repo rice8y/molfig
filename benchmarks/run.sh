@@ -152,7 +152,18 @@ hyperfine_args=(
   --style basic
 )
 
+echo "Molfig @$namespace version: $version"
+echo "Nixpkgs revision: ${MOLFIG_BENCH_NIXPKGS_REV:-unknown}"
+echo "$(nix --version)"
+echo "$typst_version"
+echo "$hyperfine_version"
+echo "System: $(uname -sm)"
+echo "Benchmark mode: $mode"
+echo "Warmup runs: $warmup; measured runs: $runs"
+
+benchmark_index=0
 for selected in "${selected_cases[@]}"; do
+  benchmark_index=$((benchmark_index + 1))
   output="$output_dir/$selected-$mode.pdf"
   printf -v command \
     'typst compile --root %q --input %q --input %q --input %q --input %q %q %q' \
@@ -163,15 +174,6 @@ for selected in "${selected_cases[@]}"; do
     "mode=$mode" \
     "$benchmark_source" \
     "$output"
-  hyperfine_args+=(--command-name "$selected" "$command")
+  hyperfine "${hyperfine_args[@]}" --command-name "$selected" "$command" \
+    | sed "s/^Benchmark 1: /Benchmark $benchmark_index: /"
 done
-
-echo "Molfig @$namespace version: $version"
-echo "Nixpkgs revision: ${MOLFIG_BENCH_NIXPKGS_REV:-unknown}"
-echo "$(nix --version)"
-echo "$typst_version"
-echo "$hyperfine_version"
-echo "System: $(uname -sm)"
-echo "Benchmark mode: $mode"
-echo "Warmup runs: $warmup; measured runs: $runs"
-hyperfine "${hyperfine_args[@]}"

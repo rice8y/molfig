@@ -4,6 +4,8 @@ This suite measures complete Typst compiler processes against the molecular stru
 
 The default `export` mode measures parsing, Model/Structure/Unit construction, mesh generation, and OBJ serialization without maquette rendering. The optional `render` mode additionally measures OBJ material handling, maquette rasterization, and PDF assembly.
 
+Each workload runs in an independent hyperfine process and is numbered by the runner in selection order. Results therefore report per-case timing statistics without a relative summary between molecular structures of different sizes, formats, or representations.
+
 Run every case with Typst 0.15.0 and the Molfig version declared in `package/typst.toml`:
 
 ```sh
