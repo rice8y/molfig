@@ -5,7 +5,7 @@
 // PDB archive data files are available under CC0 1.0.
 // Literature status: To be published.
 
-#import "@preview/molfig:0.1.2"
+#import "@preview/molfig:0.1.4"
 #set page(width: auto, height: auto, margin: 3mm)
 
 #let data = read("data/9Z4O.pdb", encoding: none)

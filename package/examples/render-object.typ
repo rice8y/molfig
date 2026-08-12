@@ -7,7 +7,7 @@
 // Primary citation: Volk, D.E. et al. (2000) Biochemistry 39: 14040-14053.
 // Article DOI: https://doi.org/10.1021/bi001669l
 
-#import "@preview/molfig:0.1.2"
+#import "@preview/molfig:0.1.4"
 
 #set page(width: 100mm, height: auto, margin: 4mm)
 #set text(font: "New Computer Modern", size: 9pt)

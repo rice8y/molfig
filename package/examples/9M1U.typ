@@ -6,7 +6,7 @@
 // Primary citation: Zhang, X. et al. (2026), EMBO J.
 // Article DOI: https://doi.org/10.1038/s44318-026-00823-y
 
-#import "@preview/molfig:0.1.2"
+#import "@preview/molfig:0.1.4"
 #set page(width: auto, height: auto, margin: 0mm)
 
 #let data = read("data/9M1U.pdb", encoding: none)
