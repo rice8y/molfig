@@ -3,7 +3,7 @@
 // PDB IDs: 1CRN, 1FYY, 9M1U, 9Q12, 9R1O, and 9Z4O.
 // PDB archive data files are available under CC0 1.0.
 
-#import "@preview/molfig:0.1.2"
+#import "@preview/molfig:0.1.4"
 
 #set page(
   paper: "a4",
