@@ -4,7 +4,7 @@
 /// Public functions accept structure bytes, inline PDB or mmCIF text, and
 /// Typst 0.15+ path values. File inputs on older Typst versions must be read
 /// with `read(..., encoding: none)` before being passed to Molfig.
-#import "@preview/maquette:0.1.1": render-obj, render-stl, render-ply, get-obj-info, get-stl-info, get-ply-info
+#import "@preview/maquette:0.1.3": render-obj, render-stl, render-ply, get-obj-info, get-stl-info, get-ply-info
 
 #let _plugin = plugin("molfig.wasm")
 
