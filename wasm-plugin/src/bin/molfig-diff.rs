@@ -411,6 +411,6 @@ fn json_string(value: &str) -> String {
 }
 
 fn usage() -> String {
-    "usage: molfig-diff [--json] [--timings] [--generated-in <path>|--generated-out <path>] [--stl-first-diff-only] [--skip-stl-delta-scan] [--no-stl-semantic-context] [--stl-facet-range start..end] <obj|ply|stl> <input.pdb|cif|bcif> <options.json> <reference-export>\n       molfig-diff [--timings] --stl-facet-context <facet> [--stl-vertex-offset x,y,z] stl <input.pdb|cif|bcif> <options.json>\n       molfig-diff [--timings] --stl-export-facet-context <facet> stl <input.pdb|cif|bcif> <options.json>"
+    "usage: molfig-diff [--json] [--timings] [--generated-in <path>|--generated-out <path>] [--stl-first-diff-only] [--skip-stl-delta-scan] [--no-stl-semantic-context] [--stl-facet-range start..end] <obj|ply|stl> <input.pdb|cif|bcif|xyz> <options.json> <reference-export>\n       molfig-diff [--timings] --stl-facet-context <facet> [--stl-vertex-offset x,y,z] stl <input.pdb|cif|bcif|xyz> <options.json>\n       molfig-diff [--timings] --stl-export-facet-context <facet> stl <input.pdb|cif|bcif|xyz> <options.json>"
         .to_string()
 }

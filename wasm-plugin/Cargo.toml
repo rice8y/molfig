@@ -2,7 +2,7 @@
 name = "molfig"
 version = "0.1.3"
 edition = "2021"
-description = "PDB/mmCIF to OBJ/STL/PLY converter for Typst and maquette"
+description = "PDB/mmCIF/BinaryCIF/XYZ to OBJ/STL/PLY converter for Typst and maquette"
 license = "MIT"
 
 [lib]

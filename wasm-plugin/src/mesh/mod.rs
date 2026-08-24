@@ -4271,14 +4271,36 @@ fn build_semantic_render_objects_resolved_limited(
                     }
                 }
             } else {
-                add_ball_and_stick_semantic_objects(
-                    geometry,
-                    options,
-                    center,
-                    representation,
-                    &mut group_id,
-                    &mut objects,
-                );
+                if matches!(
+                    options.representation,
+                    Representation::Default | Representation::Auto
+                ) {
+                    let atom_mask = vec![true; geometry.atom_count()];
+                    let selected = if options.visuals.is_empty() {
+                        ball_and_stick_default_visuals(structure)
+                    } else {
+                        selected_visuals(structure, options)
+                    };
+                    add_molstar_component_semantic_objects(
+                        geometry,
+                        options,
+                        center,
+                        representation,
+                        "all",
+                        &atom_mask,
+                        &selected,
+                        &mut objects,
+                    );
+                } else {
+                    add_ball_and_stick_semantic_objects(
+                        geometry,
+                        options,
+                        center,
+                        representation,
+                        &mut group_id,
+                        &mut objects,
+                    );
+                }
                 if semantic_objects_cover_target_face(&objects, options, target_face_index) {
                     return objects;
                 }
@@ -9441,7 +9463,10 @@ fn add_molstar_component_bond_semantic_objects(
 
     let cylinder_count = directed_links
         .iter()
-        .map(|&(a, b)| usize::from(molstar_atoms_share_aromatic_ring(geometry, a, b)) + 1)
+        .map(|&(a, b)| {
+            let aromatic_ring_count = molstar_shared_aromatic_ring_count(geometry, a, b);
+            1 + usize::from(aromatic_ring_count > 0) + usize::from(aromatic_ring_count == 2)
+        })
         .sum();
     let radial_segments =
         molstar_component_export_cylinder_radial_segments(options, cylinder_count);
@@ -9527,10 +9552,16 @@ fn push_molstar_component_bond_semantic_object(
             radial_segments,
         },
     );
-    if molstar_atoms_share_aromatic_ring(geometry, atom_a, atom_b) {
-        if let Some((dash_start, dash_end)) =
-            molstar_aromatic_half_link_dash(geometry, atom_a, atom_b, center, radius)
-        {
+    let aromatic_ring_count = molstar_shared_aromatic_ring_count(geometry, atom_a, atom_b);
+    if aromatic_ring_count > 0 {
+        let dash_count = if aromatic_ring_count == 2 { 2 } else { 1 };
+        for dash_index in 0..dash_count {
+            let shift_sign = if dash_index == 0 { 1.0 } else { -1.0 };
+            let Some((dash_start, dash_end)) = molstar_aromatic_half_link_dash(
+                geometry, atom_a, atom_b, center, radius, shift_sign,
+            ) else {
+                continue;
+            };
             push_semantic_with_group(
                 objects,
                 *group_id,
@@ -9561,29 +9592,29 @@ fn molstar_component_export_cylinder_radial_segments(
     }
 }
 
-fn molstar_atoms_share_aromatic_ring(geometry: &GeometryView<'_>, a: usize, b: usize) -> bool {
+fn molstar_shared_aromatic_ring_count(geometry: &GeometryView<'_>, a: usize, b: usize) -> usize {
     let molecule = geometry.molecule;
     let Some(source_a) = geometry.atom(a).map(|atom| atom.source_index) else {
-        return false;
+        return 0;
     };
     let Some(source_b) = geometry.atom(b).map(|atom| atom.source_index) else {
-        return false;
+        return 0;
     };
     let Some(a_rings) = molecule
         .resonance
         .element_aromatic_ring_indices
         .get(source_a)
     else {
-        return false;
+        return 0;
     };
     let Some(b_rings) = molecule
         .resonance
         .element_aromatic_ring_indices
         .get(source_b)
     else {
-        return false;
+        return 0;
     };
-    a_rings.iter().any(|ring| b_rings.contains(ring))
+    a_rings.iter().filter(|ring| b_rings.contains(ring)).count()
 }
 
 fn molstar_aromatic_half_link_dash(
@@ -9592,6 +9623,7 @@ fn molstar_aromatic_half_link_dash(
     atom_b: usize,
     center: Vec3,
     radius: f64,
+    shift_sign: f64,
 ) -> Option<(Vec3, Vec3)> {
     let a = DVec3::from_vec3(geometry.atom(atom_a)?.position);
     let b = DVec3::from_vec3(geometry.atom(atom_b)?.position);
@@ -9600,9 +9632,9 @@ fn molstar_aromatic_half_link_dash(
         molstar_component_bond_reference_position(geometry, atom_a, atom_b).map(DVec3::from_vec3);
     let shift_direction = molstar_calculate_link_shift_direction(a, b, reference);
     let aromatic_offset = radius + radius * 0.3 + radius * 0.3 * 1.5;
-    let shifted_start =
-        a + (b - a).normalized() * (radius * 0.5) - shift_direction * aromatic_offset;
-    let shifted_end = midpoint - shift_direction * aromatic_offset;
+    let shift = shift_direction * (aromatic_offset * shift_sign);
+    let shifted_start = a + (b - a).normalized() * (radius * 0.5) - shift;
+    let shifted_end = midpoint - shift;
 
     // CylindersBuilder.addFixedCountDashes(..., segmentCount = 2) emits one
     // capped segment from 1/2.5 to 2/2.5 of the shifted half-link.
@@ -9734,7 +9766,14 @@ struct ComponentBondGroup {
 struct ComponentBondEdge {
     a: usize,
     b: usize,
-    distance_ordered: bool,
+    order: ComponentBondOrder,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ComponentBondOrder {
+    Stable,
+    Distance,
+    SpatialGrid,
 }
 
 fn molstar_component_unit_slot_half_links(
@@ -9779,17 +9818,20 @@ fn molstar_component_unit_slot_half_links(
         if group_a != group_b {
             continue;
         }
-        let distance_ordered =
-            molecule
-                .bond_metadata
-                .get(bond.source_index)
-                .is_some_and(|metadata| {
-                    matches!(metadata.source, BondSource::ChemComp | BondSource::Computed)
-                });
+        let order = molecule.bond_metadata.get(bond.source_index).map_or(
+            ComponentBondOrder::Stable,
+            |metadata| match metadata.source {
+                BondSource::Computed if molecule.source_data.kind == "xyz" => {
+                    ComponentBondOrder::SpatialGrid
+                }
+                BondSource::ChemComp | BondSource::Computed => ComponentBondOrder::Distance,
+                _ => ComponentBondOrder::Stable,
+            },
+        );
         groups[group_a].edges.push(ComponentBondEdge {
             a: local_a,
             b: local_b,
-            distance_ordered,
+            order,
         });
     }
 
@@ -9802,6 +9844,7 @@ fn molstar_component_unit_slot_half_links(
                 }
             }
             group.edges.sort_by_key(|edge| edge.a);
+            let spatial_grid_keys = molstar_grid_lookup_cell_keys(geometry, &group.atoms);
             let mut start = 0;
             while start < group.edges.len() {
                 let a = group.edges[start].a;
@@ -9809,26 +9852,35 @@ fn molstar_component_unit_slot_half_links(
                 while end < group.edges.len() && group.edges[end].a == a {
                     end += 1;
                 }
-                group.edges[start..end].sort_by(|edge0, edge1| {
-                    match (edge0.distance_ordered, edge1.distance_ordered) {
-                        (false, false) => std::cmp::Ordering::Equal,
-                        (false, true) => std::cmp::Ordering::Less,
-                        (true, false) => std::cmp::Ordering::Greater,
-                        (true, true) => {
-                            let distance0 = geometry
-                                .atom(group.atoms[edge0.a])
-                                .zip(geometry.atom(group.atoms[edge0.b]))
-                                .map_or(f32::INFINITY, |(a, b)| {
-                                    (a.position - b.position).squared_length()
-                                });
-                            let distance1 = geometry
-                                .atom(group.atoms[edge1.a])
-                                .zip(geometry.atom(group.atoms[edge1.b]))
-                                .map_or(f32::INFINITY, |(a, b)| {
-                                    (a.position - b.position).squared_length()
-                                });
-                            distance0.total_cmp(&distance1).then(edge0.b.cmp(&edge1.b))
-                        }
+                group.edges[start..end].sort_by(|edge0, edge1| match (edge0.order, edge1.order) {
+                    (ComponentBondOrder::Stable, ComponentBondOrder::Stable) => {
+                        std::cmp::Ordering::Equal
+                    }
+                    (ComponentBondOrder::Stable, _) => std::cmp::Ordering::Less,
+                    (_, ComponentBondOrder::Stable) => std::cmp::Ordering::Greater,
+                    (ComponentBondOrder::SpatialGrid, ComponentBondOrder::SpatialGrid) => {
+                        spatial_grid_keys[edge0.b].cmp(&spatial_grid_keys[edge1.b])
+                    }
+                    (ComponentBondOrder::SpatialGrid, ComponentBondOrder::Distance) => {
+                        std::cmp::Ordering::Less
+                    }
+                    (ComponentBondOrder::Distance, ComponentBondOrder::SpatialGrid) => {
+                        std::cmp::Ordering::Greater
+                    }
+                    (ComponentBondOrder::Distance, ComponentBondOrder::Distance) => {
+                        let distance0 = geometry
+                            .atom(group.atoms[edge0.a])
+                            .zip(geometry.atom(group.atoms[edge0.b]))
+                            .map_or(f32::INFINITY, |(a, b)| {
+                                (a.position - b.position).squared_length()
+                            });
+                        let distance1 = geometry
+                            .atom(group.atoms[edge1.a])
+                            .zip(geometry.atom(group.atoms[edge1.b]))
+                            .map_or(f32::INFINITY, |(a, b)| {
+                                (a.position - b.position).squared_length()
+                            });
+                        distance0.total_cmp(&distance1).then(edge0.b.cmp(&edge1.b))
                     }
                 });
                 start = end;
@@ -10126,6 +10178,70 @@ fn molstar_push_component_renderable_spheres(
     }
 }
 
+fn molstar_grid_lookup_cell_keys(
+    geometry: &GeometryView<'_>,
+    atoms: &[usize],
+) -> Vec<(i32, i32, i32, usize)> {
+    let positions = atoms
+        .iter()
+        .filter_map(|&atom_index| geometry.atom(atom_index).map(|atom| atom.position))
+        .collect::<Vec<_>>();
+    let radii = atoms
+        .iter()
+        .filter_map(|&atom_index| {
+            geometry
+                .atom(atom_index)
+                .map(|atom| vdw_radius(&atom.atom.type_symbol))
+        })
+        .collect::<Vec<_>>();
+    if positions.len() != atoms.len() || radii.len() != atoms.len() || atoms.is_empty() {
+        return (0..atoms.len()).map(|index| (0, 0, 0, index)).collect();
+    }
+
+    // GridLookup3D uses an expanded boundary and targets 32 elements per cell.
+    // Its query walks cells in x/y/z order and keeps atom order inside a cell.
+    let boundary = Boundary::from_positions_and_radii(&positions, &radii);
+    let min = boundary.box_min - Vec3::new(0.5, 0.5, 0.5);
+    let span = boundary.box_max - boundary.box_min + Vec3::new(1.0, 1.0, 1.0);
+    let volume_cells = atoms.len().div_ceil(32).max(1) as f64;
+    let span_volume = (span.x as f64) * (span.y as f64) * (span.z as f64);
+    let scale = if span_volume > 0.0 {
+        (volume_cells / span_volume).cbrt()
+    } else {
+        1.0
+    };
+    let size = [
+        ((span.x as f64 * scale).ceil() as i32).max(1),
+        ((span.y as f64 * scale).ceil() as i32).max(1),
+        ((span.z as f64 * scale).ceil() as i32).max(1),
+    ];
+    let delta = [
+        span.x as f64 / size[0] as f64,
+        span.y as f64 / size[1] as f64,
+        span.z as f64 / size[2] as f64,
+    ];
+
+    positions
+        .iter()
+        .enumerate()
+        .map(|(index, position)| {
+            let cell = |value: f32, origin: f32, step: f64| {
+                if step > 0.0 {
+                    (((value - origin) as f64 / step).floor() as i32).max(0)
+                } else {
+                    0
+                }
+            };
+            (
+                cell(position.x, min.x, delta[0]),
+                cell(position.y, min.y, delta[1]),
+                cell(position.z, min.z, delta[2]),
+                index,
+            )
+        })
+        .collect()
+}
+
 fn molstar_selected_atoms_have_bond(molecule: &Molecule, selected: &[usize]) -> bool {
     let selected = selected.iter().copied().collect::<BTreeSet<_>>();
     molecule
@@ -10247,7 +10363,11 @@ fn molstar_visible_renderable_component_spheres_with_structure_mode(
 
     let trace_padding = molstar_cartoon_uniform_trace_radius64(options);
     let tube_padding = molstar_trace_radius64(options);
-    let bond_padding = MOLSTAR_BACKBONE_SIZE_FACTOR64 * molstar_radius_scale64(options);
+    let bond_padding = if representation == Representation::BallAndStick {
+        MOLSTAR_BALL_AND_STICK_SIZE_FACTOR64
+    } else {
+        MOLSTAR_BACKBONE_SIZE_FACTOR64
+    } * molstar_radius_scale64(options);
     for group in &structure.symmetry_groups {
         let units = group
             .unit_ids
@@ -10351,20 +10471,21 @@ fn molstar_visible_renderable_component_spheres_with_structure_mode(
                     Representation::Spacefill | Representation::BallAndStick
                 ))
         {
+            let representation_size_factor = match representation {
+                Representation::Spacefill => molstar_spacefill_size_factor(structure),
+                Representation::BallAndStick => MOLSTAR_BALL_AND_STICK_SIZE_FACTOR64,
+                _ => 1.0,
+            };
             let physical_radius = unit_max_theme_size(molecule, unit)
                 * molstar_radius_scale64(options)
-                * if representation == Representation::Spacefill {
-                    molstar_spacefill_size_factor(structure)
-                } else {
-                    1.0
-                };
+                * representation_size_factor;
             let geometry_sphere =
                 molstar_expand_bounding_sphere(&unit_sphere, physical_radius + 0.05);
-            let renderable_sphere = if representation == Representation::Spacefill {
-                molstar_expand_bounding_sphere(&geometry_sphere, physical_radius)
-            } else {
-                geometry_sphere
-            };
+            // Spheres.createValues expands the visual's geometry boundary by the
+            // size-theme padding a second time for both spacefill and
+            // ball-and-stick impostors.
+            let renderable_sphere =
+                molstar_expand_bounding_sphere(&geometry_sphere, physical_radius);
             spheres.push((
                 "element-sphere",
                 molstar_units_transform_bounding_sphere_for_assembly_mode(

@@ -4,6 +4,7 @@ pub enum InputFormat {
     Pdb,
     Cif,
     BinaryCif,
+    Xyz,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -152,9 +153,10 @@ impl MeshOptions {
                 "pdb" => InputFormat::Pdb,
                 "cif" | "mmcif" => InputFormat::Cif,
                 "bcif" | "binarycif" | "binary-cif" => InputFormat::BinaryCif,
+                "xyz" => InputFormat::Xyz,
                 other => {
                     return Err(format!(
-                        "unsupported format: {other}; expected one of \"auto\", \"pdb\", \"cif\", \"mmcif\", \"bcif\", \"binarycif\", or \"binary-cif\""
+                        "unsupported format: {other}; expected one of \"auto\", \"pdb\", \"cif\", \"mmcif\", \"bcif\", \"binarycif\", \"binary-cif\", or \"xyz\""
                     ))
                 }
             };
@@ -578,8 +580,7 @@ fn apply_semantic_decimate(options: &mut MeshOptions) {
     options.probe_positions = decimated_count(options.probe_positions, 12, strength, 0.55);
 
     let resolution_factor = 1.0 + 2.0 * strength + 3.0 * strength * strength;
-    options.surface_resolution =
-        (options.surface_resolution * resolution_factor).clamp(0.1, 20.0);
+    options.surface_resolution = (options.surface_resolution * resolution_factor).clamp(0.1, 20.0);
     options.molecular_surface_resolution =
         (options.molecular_surface_resolution * resolution_factor as f64).clamp(0.01, 20.0);
 

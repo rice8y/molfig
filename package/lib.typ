@@ -1,7 +1,7 @@
-/// Convert PDB, mmCIF, and BinaryCIF molecular structures into static meshes
+/// Convert PDB, mmCIF, BinaryCIF, and XYZ molecular structures into static meshes
 /// and render them in Typst documents with `maquette`.
 ///
-/// Public functions accept structure bytes, inline PDB or mmCIF text, and
+/// Public functions accept structure bytes, inline PDB, mmCIF, or XYZ text, and
 /// Typst 0.15+ path values. File inputs on older Typst versions must be read
 /// with `read(..., encoding: none)` before being passed to Molfig.
 #import "@preview/maquette:0.1.3": render-obj, render-stl, render-ply, get-obj-info, get-stl-info, get-ply-info
@@ -92,9 +92,9 @@
 
 #let _render-mesh(mesh, mesh-format, config, materials, width, height, output-format) = {
   let render-config = if mesh-format == "obj" {
-    json.encode(_merge-materials(config, materials))
+    _merge-materials(config, materials)
   } else {
-    json.encode(config)
+    config
   }
   if mesh-format == "obj" {
     render-obj(mesh, render-config, width: width, height: height, format: output-format)
@@ -139,8 +139,8 @@
 /// OBJ preserves Molfig face groups, operator metadata when requested, and
 /// material identifiers for color themes.
 ///
-/// - data (any): Structure bytes, inline PDB or mmCIF text, or a Typst 0.15+ path value.
-/// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, or `"bcif"`.
+/// - data (any): Structure bytes, inline PDB, mmCIF, or XYZ text, or a Typst 0.15+ path value.
+/// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, `"bcif"`, or `"xyz"`.
 /// - representation (str): Molecular representation, such as `"default"`, `"cartoon"`, `"spacefill"`, `"ball-and-stick"`, `"surface"`, `"ribbon"`, or `"backbone"`.
 /// - color-theme (str): Mol\* color theme used to assign OBJ materials.
 /// - theme (dictionary): Mol\* Viewer theme overrides, including `globalName`, `carbonColor`, and `symmetryColor`.
@@ -197,8 +197,8 @@
 ///
 /// Material order and identifiers match the corresponding `to-obj` output.
 ///
-/// - data (any): Structure bytes, inline PDB or mmCIF text, or a Typst 0.15+ path value.
-/// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, or `"bcif"`.
+/// - data (any): Structure bytes, inline PDB, mmCIF, or XYZ text, or a Typst 0.15+ path value.
+/// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, `"bcif"`, or `"xyz"`.
 /// - representation (str): Molecular representation used to generate material assignments.
 /// - color-theme (str): Mol\* color theme used to assign materials.
 /// - theme (dictionary): Mol\* Viewer theme overrides, including `globalName`, `carbonColor`, and `symmetryColor`.
@@ -256,8 +256,8 @@
 /// STL contains geometry only; color themes and face groups cannot be
 /// represented by the format.
 ///
-/// - data (any): Structure bytes, inline PDB or mmCIF text, or a Typst 0.15+ path value.
-/// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, or `"bcif"`.
+/// - data (any): Structure bytes, inline PDB, mmCIF, or XYZ text, or a Typst 0.15+ path value.
+/// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, `"bcif"`, or `"xyz"`.
 /// - representation (str): Molecular representation used to construct the mesh.
 /// - color-theme (str): Color theme used during semantic construction; STL does not store its colors.
 /// - theme (dictionary): Mol\* Viewer theme overrides used during semantic construction.
@@ -314,8 +314,8 @@
 ///
 /// PLY preserves Molfig face-group values but does not carry OBJ materials.
 ///
-/// - data (any): Structure bytes, inline PDB or mmCIF text, or a Typst 0.15+ path value.
-/// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, or `"bcif"`.
+/// - data (any): Structure bytes, inline PDB, mmCIF, or XYZ text, or a Typst 0.15+ path value.
+/// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, `"bcif"`, or `"xyz"`.
 /// - representation (str): Molecular representation used to construct the mesh.
 /// - color-theme (str): Color theme used during semantic construction; PLY does not store its colors.
 /// - theme (dictionary): Mol\* Viewer theme overrides used during semantic construction.
@@ -373,8 +373,8 @@
 /// This performs Molfig's parsing and semantic representation work without
 /// sending a mesh to `maquette` for document rendering.
 ///
-/// - data (any): Structure bytes, inline PDB or mmCIF text, or a Typst 0.15+ path value.
-/// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, or `"bcif"`.
+/// - data (any): Structure bytes, inline PDB, mmCIF, or XYZ text, or a Typst 0.15+ path value.
+/// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, `"bcif"`, or `"xyz"`.
 /// - representation (str): Molecular representation whose semantic metadata is inspected.
 /// - color-theme (str): Mol\* color theme used during semantic construction.
 /// - theme (dictionary): Mol\* Viewer theme overrides, including `globalName`, `carbonColor`, and `symmetryColor`.
@@ -432,8 +432,8 @@
 /// OBJ materials generated from the selected color theme are merged into
 /// `config.materials`; user-provided entries take precedence.
 ///
-/// - data (any): Structure bytes, inline PDB or mmCIF text, or a Typst 0.15+ path value.
-/// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, or `"bcif"`.
+/// - data (any): Structure bytes, inline PDB, mmCIF, or XYZ text, or a Typst 0.15+ path value.
+/// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, `"bcif"`, or `"xyz"`.
 /// - mesh-format (str): Intermediate mesh format: `"obj"`, `"stl"`, or `"ply"`.
 /// - representation (str): Molecular representation, such as `"default"`, `"cartoon"`, `"spacefill"`, `"ball-and-stick"`, `"surface"`, `"ribbon"`, or `"backbone"`.
 /// - color-theme (str): Mol\* color theme used to assign OBJ materials.
@@ -515,8 +515,8 @@
 /// The returned dictionary contains `kind`, `format`, `mesh_format`, `mesh`,
 /// `materials`, `info`, and rendered `content` fields.
 ///
-/// - data (any): Structure bytes, inline PDB or mmCIF text, or a Typst 0.15+ path value.
-/// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, or `"bcif"`.
+/// - data (any): Structure bytes, inline PDB, mmCIF, or XYZ text, or a Typst 0.15+ path value.
+/// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, `"bcif"`, or `"xyz"`.
 /// - mesh-format (str): Intermediate mesh format: `"obj"`, `"stl"`, or `"ply"`.
 /// - representation (str): Molecular representation, such as `"default"`, `"cartoon"`, `"spacefill"`, `"ball-and-stick"`, `"surface"`, `"ribbon"`, or `"backbone"`.
 /// - color-theme (str): Mol\* color theme used to assign OBJ materials.
@@ -621,8 +621,8 @@
 
 /// Generate a mesh and inspect it with `maquette`'s format-specific metadata helper.
 ///
-/// - data (any): Structure bytes, inline PDB or mmCIF text, or a Typst 0.15+ path value.
-/// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, or `"bcif"`.
+/// - data (any): Structure bytes, inline PDB, mmCIF, or XYZ text, or a Typst 0.15+ path value.
+/// - format (str): Input format: `"auto"`, `"pdb"`, `"cif"`, `"mmcif"`, `"bcif"`, or `"xyz"`.
 /// - mesh-format (str): Mesh format inspected by `maquette`: `"obj"`, `"stl"`, or `"ply"`.
 /// - config (dictionary): Camera and projection configuration used by `maquette` while computing mesh metadata.
 /// - mesh-args (arguments): Additional named Molfig mesh options accepted by the selected export function.
@@ -640,11 +640,11 @@
   }
 
   let info = if mesh-format == "obj" {
-    get-obj-info(raw, json.encode(config))
+    get-obj-info(raw, config)
   } else if mesh-format == "stl" {
-    get-stl-info(raw, json.encode(config))
+    get-stl-info(raw, config)
   } else {
-    get-ply-info(raw, json.encode(config))
+    get-ply-info(raw, config)
   }
 
   if type(info) == dictionary {
