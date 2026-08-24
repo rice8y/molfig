@@ -9,7 +9,7 @@
   insertion codes;
 - `struct_sheet_range` sheet metadata with boundary insertion codes;
 - `pdbx_struct_assembly*` categories with two operators for assembly expansion;
-- `struct_conn` covalent links for deterministic smoke tests.
+- `struct_conn` covalent links for deterministic contract tests.
 
 Regenerate it from the repository root with:
 
@@ -29,9 +29,9 @@ suite checks that each counterpart preserves atoms, bonds, coarse spheres,
 coarse gaussians, and all text-fixture categories.
 
 `water.bcif` is the smallest BinaryCIF fixture that mirrors `../cif/water.cif`.
-It is useful for minimal `format: "bcif"` smoke tests before the
+It is useful for minimal `format: "bcif"` contract tests before the
 assembly/altLoc path is enabled.
 
 `ihm-only.bcif` is a coarse-only BinaryCIF fixture with one
 `_ihm_sphere_obj_site` row and one `_ihm_gaussian_obj_site` row. It is used by
-the Typst API smoke tests to verify IHM parsing without any `_atom_site` rows.
+the Typst API contract tests to verify IHM parsing without any `_atom_site` rows.

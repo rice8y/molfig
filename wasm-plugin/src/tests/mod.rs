@@ -208,6 +208,347 @@ fn parses_cif_atoms() {
 }
 
 #[test]
+fn parses_xyz_atoms_and_auto_detects_the_format() {
+    let xyz = b"3\nwater\nO 0.000 0.000 0.000\nH 0.957 0.000 0.000\nH -0.239 0.927 0.000\n";
+    for format in [InputFormat::Xyz, InputFormat::Auto] {
+        let molecule = parse_molecule(xyz, format).unwrap();
+        assert_eq!(molecule.source_data.kind, "xyz");
+        assert_eq!(molecule.atoms.len(), 3);
+        assert_eq!(molecule.atoms[1].name, "H");
+        assert_eq!(molecule.atoms[2].name, "H");
+        assert_eq!(molecule.bonds.len(), 2);
+        assert!(molecule.bonds.iter().all(|bond| bond.a == 0));
+    }
+
+    let default_obj = String::from_utf8(
+        convert_to_obj(
+            xyz,
+            br#"{"format":"xyz","representation":"default","sphere-detail":1,"quality":"custom","export-primitives-quality":"low"}"#,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(default_obj.contains("\nv "));
+    assert!(default_obj.contains("\nf "));
+
+    let trajectory = parse_molecule(
+        b"1\nfirst frame\nH 0 0 0\n1\nsecond frame\nH 20 0 0\n",
+        InputFormat::Xyz,
+    )
+    .unwrap();
+    let structure = trajectory.atomic_structure();
+    assert_eq!(structure.models.len(), 2);
+    assert_eq!(structure.models[0].model_num, 0);
+    assert_eq!(structure.models[1].model_num, 1);
+    assert_eq!(structure.element_count, 1);
+    assert!(trajectory.bonds.is_empty());
+}
+
+#[test]
+fn pubchem_xyz_corpus_matches_source_composition_bounds_and_connectivity() {
+    let cases = [
+        (
+            "../package/examples/data/ethanol.xyz",
+            9,
+            8,
+            &[
+                (0, 1),
+                (0, 8),
+                (1, 2),
+                (1, 3),
+                (1, 4),
+                (2, 5),
+                (2, 6),
+                (2, 7),
+            ][..],
+            0,
+            0,
+            &[("C", 2), ("H", 6), ("O", 1)][..],
+            [-1.1712, -1.2120, -0.8946],
+            [2.1050, 0.9307, 0.8886],
+        ),
+        (
+            "../package/examples/data/benzene.xyz",
+            12,
+            12,
+            &[
+                (0, 1),
+                (0, 2),
+                (0, 6),
+                (1, 3),
+                (1, 7),
+                (2, 4),
+                (2, 8),
+                (3, 5),
+                (3, 9),
+                (4, 5),
+                (4, 10),
+                (5, 11),
+            ][..],
+            1,
+            6,
+            &[("C", 6), ("H", 6)][..],
+            [-2.1577, -2.4809, -0.0001],
+            [2.1577, 2.4808, 0.0001],
+        ),
+        (
+            "../package/examples/data/aspirin.xyz",
+            21,
+            21,
+            &[
+                (0, 4),
+                (0, 11),
+                (1, 10),
+                (1, 20),
+                (2, 10),
+                (3, 11),
+                (4, 5),
+                (4, 6),
+                (5, 7),
+                (5, 10),
+                (6, 8),
+                (6, 13),
+                (7, 9),
+                (7, 14),
+                (8, 9),
+                (8, 15),
+                (9, 16),
+                (11, 12),
+                (12, 17),
+                (12, 18),
+                (12, 19),
+            ][..],
+            1,
+            6,
+            &[("C", 9), ("H", 8), ("O", 4)][..],
+            [-3.8374, -3.5916, -1.4821],
+            [4.2045, 2.8872, 0.8685],
+        ),
+        (
+            "../package/examples/data/caffeine.xyz",
+            24,
+            25,
+            &[
+                (0, 8),
+                (1, 9),
+                (2, 7),
+                (2, 9),
+                (2, 11),
+                (3, 6),
+                (3, 10),
+                (3, 12),
+                (4, 8),
+                (4, 9),
+                (4, 13),
+                (5, 7),
+                (5, 10),
+                (6, 7),
+                (6, 8),
+                (10, 14),
+                (11, 15),
+                (11, 16),
+                (11, 17),
+                (12, 18),
+                (12, 19),
+                (12, 20),
+                (13, 21),
+                (13, 22),
+                (13, 23),
+            ][..],
+            2,
+            10,
+            &[("C", 8), ("H", 10), ("N", 4), ("O", 2)][..],
+            [-3.1271, -3.1973, -0.8992],
+            [4.1992, 3.1651, 0.9004],
+        ),
+    ];
+
+    for (
+        fixture,
+        atom_count,
+        source_bond_count,
+        source_bonds,
+        ring_count,
+        aromatic_bond_count,
+        elements,
+        expected_min,
+        expected_max,
+    ) in cases
+    {
+        let xyz = read_manifest_file_bytes(fixture);
+        let explicit = parse_molecule(&xyz, InputFormat::Xyz)
+            .unwrap_or_else(|error| panic!("{fixture}: explicit XYZ parse failed: {error}"));
+        let detected = parse_molecule(&xyz, InputFormat::Auto)
+            .unwrap_or_else(|error| panic!("{fixture}: auto XYZ parse failed: {error}"));
+
+        assert_eq!(explicit.source_data.kind, "xyz", "{fixture}");
+        assert_eq!(explicit.atoms.len(), atom_count, "{fixture}: atom count");
+        assert_eq!(
+            explicit.bonds.len(),
+            source_bond_count,
+            "{fixture}: source bond count"
+        );
+        assert_eq!(
+            explicit.bond_metadata.len(),
+            explicit.bonds.len(),
+            "{fixture}: bond metadata count"
+        );
+        assert_eq!(
+            explicit
+                .bonds
+                .iter()
+                .map(|bond| (bond.a, bond.b))
+                .collect::<Vec<_>>(),
+            source_bonds,
+            "{fixture}: inferred endpoints vs source SDF connectivity"
+        );
+        assert_eq!(explicit.rings.len(), ring_count, "{fixture}: ring count");
+        assert_eq!(
+            explicit.derived_aromatic_bonds.len(),
+            aromatic_bond_count,
+            "{fixture}: aromatic bond count"
+        );
+        assert!(
+            explicit.bond_metadata.iter().all(|metadata| {
+                metadata.source == BondSource::Computed
+                    && metadata.flags.contains(BondFlags::COVALENT)
+                    && metadata.flags.contains(BondFlags::COMPUTED)
+            }),
+            "{fixture}: every inferred bond should be computed and covalent"
+        );
+        assert!(
+            explicit.atoms.iter().all(|atom| {
+                atom.model_num == 0
+                    && atom.chain == "A"
+                    && atom.residue == "MOL"
+                    && atom.position.x.is_finite()
+                    && atom.position.y.is_finite()
+                    && atom.position.z.is_finite()
+            }),
+            "{fixture}: normalized atom identity and finite coordinates"
+        );
+
+        for (element, expected_count) in elements {
+            assert_eq!(
+                explicit
+                    .atoms
+                    .iter()
+                    .filter(|atom| atom.element == *element)
+                    .count(),
+                *expected_count,
+                "{fixture}: {element} count"
+            );
+        }
+
+        let actual_min = [
+            explicit
+                .atoms
+                .iter()
+                .map(|atom| atom.position.x)
+                .fold(f32::INFINITY, f32::min),
+            explicit
+                .atoms
+                .iter()
+                .map(|atom| atom.position.y)
+                .fold(f32::INFINITY, f32::min),
+            explicit
+                .atoms
+                .iter()
+                .map(|atom| atom.position.z)
+                .fold(f32::INFINITY, f32::min),
+        ];
+        let actual_max = [
+            explicit
+                .atoms
+                .iter()
+                .map(|atom| atom.position.x)
+                .fold(f32::NEG_INFINITY, f32::max),
+            explicit
+                .atoms
+                .iter()
+                .map(|atom| atom.position.y)
+                .fold(f32::NEG_INFINITY, f32::max),
+            explicit
+                .atoms
+                .iter()
+                .map(|atom| atom.position.z)
+                .fold(f32::NEG_INFINITY, f32::max),
+        ];
+        assert_f32_array_close(
+            actual_min,
+            expected_min,
+            0.000_01,
+            &format!("{fixture}: bounds min"),
+        );
+        assert_f32_array_close(
+            actual_max,
+            expected_max,
+            0.000_01,
+            &format!("{fixture}: bounds max"),
+        );
+
+        assert_eq!(
+            detected.atoms.len(),
+            explicit.atoms.len(),
+            "{fixture}: auto-detected atom count"
+        );
+        assert!(
+            detected
+                .atoms
+                .iter()
+                .zip(&explicit.atoms)
+                .all(|(actual, expected)| {
+                    actual.id == expected.id
+                        && actual.element == expected.element
+                        && actual.position == expected.position
+                }),
+            "{fixture}: auto-detected atom identities and positions"
+        );
+        assert_eq!(
+            detected.bonds.len(),
+            explicit.bonds.len(),
+            "{fixture}: auto-detected bond count"
+        );
+        assert!(
+            detected
+                .bonds
+                .iter()
+                .zip(&explicit.bonds)
+                .all(|(actual, expected)| { actual.a == expected.a && actual.b == expected.b }),
+            "{fixture}: auto-detected bond endpoints"
+        );
+        assert_eq!(
+            detected.bond_metadata, explicit.bond_metadata,
+            "{fixture}: auto-detected bond metadata"
+        );
+    }
+}
+
+#[test]
+fn xyz_browser_report_pins_molstar_default_ball_and_stick_scene() {
+    let report = read_repo_file_if_present(
+        "wasm-plugin/tests/expected/molstar-reference/water-xyz-default.browser-report.json",
+    )
+    .expect("tracked XYZ browser report");
+    for snippet in [
+        r#""type": "spheres""#,
+        r#""type": "cylinders""#,
+        r#""component": "all""#,
+        r#""representation": "ball-and-stick""#,
+        r#""colorTheme": "element-symbol""#,
+        r#""exportableDrawCount": 66"#,
+        r#""byteLength": 17195"#,
+        r#""byteLength": 50484"#,
+        r#""fragDepth": true"#,
+    ] {
+        assert!(
+            report.contains(snippet),
+            "XYZ browser report should pin {snippet}"
+        );
+    }
+}
+
+#[test]
 fn parses_cif_single_row_categories_like_loop_tables() {
     let cif = b"data_demo\n_entry.id DEMO\n_exptl.method 'ELECTRON MICROSCOPY'\n_entity.id 1\n_entity.type polymer\n_entity.pdbx_description 'single-row entity'\nloop_\n_atom_site.group_PDB\n_atom_site.id\n_atom_site.type_symbol\n_atom_site.label_atom_id\n_atom_site.label_comp_id\n_atom_site.label_asym_id\n_atom_site.label_seq_id\n_atom_site.Cartn_x\n_atom_site.Cartn_y\n_atom_site.Cartn_z\nATOM 1 C CA GLY A 1 0.0 0.0 0.0\n#\n";
     let mol = parse_molecule(cif, InputFormat::Cif).unwrap();
@@ -610,6 +951,8 @@ fn molstar_reference_converter_supports_external_runtime_module_dirs() {
         "representation-preset",
         "representationPresetParams",
         "TrajectoryFromPDB);",
+        "TrajectoryFromXYZ);",
+        "lower === 'xyz'",
         "displayPath",
         "inspectToolchain",
         "Runtime toolchain:",
@@ -632,6 +975,7 @@ fn molstar_browser_reference_converter_uses_real_chrome_webgl_export_path() {
 
     for snippet in [
         "molstar-browser-reference-harness.ts",
+        "lower === 'xyz'",
         "--chrome <path>",
         "--render-object-report",
         "--compare-references",
@@ -16044,12 +16388,15 @@ fn molstar_reference_input_format(contract: &str, options: &MeshOptions) -> Stri
         InputFormat::Pdb => "pdb".to_string(),
         InputFormat::Cif => "cif".to_string(),
         InputFormat::BinaryCif => "bcif".to_string(),
+        InputFormat::Xyz => "xyz".to_string(),
         InputFormat::Auto => {
             let fixture = contract_value(contract, "fixture").to_ascii_lowercase();
             if fixture.ends_with(".bcif") {
                 "bcif".to_string()
             } else if fixture.ends_with(".cif") || fixture.ends_with(".mmcif") {
                 "cif".to_string()
+            } else if fixture.ends_with(".xyz") {
+                "xyz".to_string()
             } else {
                 "pdb".to_string()
             }

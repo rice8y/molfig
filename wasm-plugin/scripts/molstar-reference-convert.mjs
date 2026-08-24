@@ -343,7 +343,7 @@ function normalizeInputFormat(format, fixture) {
   const lower = String(format || path.extname(fixture).slice(1)).toLowerCase();
   if (lower === 'mmcif') return 'cif';
   if (lower === 'binarycif') return 'bcif';
-  if (lower === 'pdb' || lower === 'cif' || lower === 'bcif') return lower;
+  if (lower === 'pdb' || lower === 'cif' || lower === 'bcif' || lower === 'xyz') return lower;
   throw new Error(`Unsupported input format '${lower}' for ${fixture}`);
 }
 
@@ -1481,6 +1481,8 @@ async function buildScene(plugin, molstar, item) {
 
   if (item.inputFormat === 'pdb') {
     state = state.apply(molstar.TrajectoryFromPDB);
+  } else if (item.inputFormat === 'xyz') {
+    state = state.apply(molstar.TrajectoryFromXYZ);
   } else {
     state = state.apply(molstar.ParseCif).apply(molstar.TrajectoryFromMmCif, cifParams(item.options));
   }
@@ -1593,6 +1595,7 @@ function dataFormatProviderId(item) {
   if (provider !== undefined) return String(provider);
   switch (item.inputFormat) {
     case 'pdb': return 'pdb';
+    case 'xyz': return 'xyz';
     case 'cif':
     case 'bcif': return 'mmcif';
     default: return 'auto';

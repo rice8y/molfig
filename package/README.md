@@ -2,7 +2,7 @@
 
 **Molfig** is a Typst package for rendering molecular structure files in static documents.
 
-It accepts PDB, mmCIF, and BinaryCIF input, converts structures through a CPU-side [Mol*](https://molstar.org/)-style Model/Structure/Unit layer, exports static OBJ/STL/PLY mesh bytes, and delegates final document rendering to [`maquette`](https://typst.app/universe/package/maquette).
+It accepts PDB, mmCIF, BinaryCIF, and XYZ input, converts structures through a CPU-side [Mol*](https://molstar.org/)-style Model/Structure/Unit layer, exports static OBJ/STL/PLY mesh bytes, and delegates final document rendering to [`maquette`](https://typst.app/universe/package/maquette).
 
 ![Gallery of molecular structures rendered with Molfig](examples/gallery.png)
 
@@ -36,35 +36,53 @@ It accepts PDB, mmCIF, and BinaryCIF input, converts structures through a CPU-si
 )
 ```
 
-The manual uses PDB entry 9R1O as its complete example. Put `9R1O.typ` and `9R1O.pdb` in the same directory, then compile the figure PDF:
-
-```sh
-typst compile 9R1O.typ
-```
-
 **Rendered 9R1O Example**
 
 ![Example protein structure rendered from PDB entry 9R1O using Molfig's Mol* Viewer Cartoon preset](examples/9R1O.png)
 
 Structural data source: RCSB PDB / wwPDB, PDB ID `9R1O`, DOI [`10.2210/pdb9R1O/pdb`](https://doi.org/10.2210/pdb9R1O/pdb). PDB archive data files are distributed under CC0 1.0.
 
-Use `format: "mmcif"` or `format: "bcif"` for text mmCIF and BinaryCIF inputs.
+## XYZ Example
+
+```typst
+#import "@preview/molfig:0.1.4"
+
+// Uses coordinate data from PubChem.
+// PubChem CID: 702 (ethanol)
+// PubChem3D conformer: 000002BE00000001
+#let xyz = read("ethanol.xyz", encoding: none)
+
+#molfig.render(
+  xyz,
+  format: "xyz",
+  representation: "default",
+  color-theme: "element-symbol",
+  mesh-format: "obj",
+  quality: "high",
+  center: true,
+  output-format: "svg",
+  config: (
+    azimuth: 35,
+    elevation: 24,
+    background: "",
+  ),
+)
+```
+
+**Rendered Ethanol Example**
+
+![Ethanol rendered from a PubChem3D XYZ conformer with Molfig](examples/ethanol-xyz.png)
+
+Coordinate data source: PubChem CID [`702`](https://pubchem.ncbi.nlm.nih.gov/compound/702),
+PubChem3D conformer `000002BE00000001`, retrieved through
+[PubChem PUG REST](https://pubchem.ncbi.nlm.nih.gov/docs/pug-rest).
+
+Use `format: "mmcif"`, `format: "bcif"`, or `format: "xyz"` for text mmCIF, BinaryCIF, and XYZ inputs.
 For reproducible documents, prefer explicit `format`, `representation`, `assembly`, `alt-loc`, `mesh-format`, and geometry quality options instead of relying on auto-detection.
 
 ## Examples
 
 The [`examples`](examples) directory contains complete example sources, rendered PDFs, and their accompanying structural data files. The example data files are kept under [`examples/data`](examples/data), together with attribution metadata.
-
-## Features
-
-- Inputs: PDB, text CIF/mmCIF, and BinaryCIF.
-- Structure layer: Mol*-style Model/Structure/Unit concepts, assembly operators, altLoc handling, bond metadata, lookup3d/boundary summaries, secondary structure, coarse IHM spheres/gaussians, and semantic render-object metadata.
-- Representations: `default` follows the Mol* Viewer preset, including pLDDT, QMEAN, and SB-NCBR partial-charge annotation themes before automatic size routing; `cartoon` is the Viewer Quick Styles Cartoon preset; `spacefill` is the Viewer illustrative Spacefill preset; and `polymer-cartoon` exposes the standalone Mol* Cartoon provider defaults. Ball-and-stick, ribbon, and backbone are also available.
-- Assembly support: biological assemblies are represented as source model plus unit operators before static mesh export.
-- Alternate locations: select a concrete altLoc, all altLocs, or the highest-occupancy conformer.
-- Color themes: `color-theme` supports `chain-id`, `element-symbol`, `entity-id`, `operator-name`, `plddt-confidence`, `qmean-score`, and `sb-ncbr-partial-charges`. The optional `theme` dictionary mirrors Mol* Viewer overrides such as `globalName`, `carbonColor`, and `symmetryColor`; OBJ materials are forwarded to maquette.
-- Outputs: OBJ, companion MTL, binary STL, and ASCII PLY.
-- Rendering: `render` passes generated mesh bytes to maquette; `render-object` exposes the mesh, rendered content, and normalized metadata for advanced documents.
 
 ## Public API
 
@@ -99,14 +117,14 @@ Use `output-format: "svg"` when vector output is important and the mesh is small
 The full Molfig manual is available at [`docs/documentation.pdf`](docs/documentation.pdf). It documents:
 
 - installation and import conventions;
-- input format handling and BinaryCIF block selection;
+- input format handling, XYZ model behavior, and BinaryCIF block selection;
 - every public command and return shape;
 - mesh, representation, assembly, altLoc, and quality options;
 - maquette passthrough configuration;
 - metadata fields returned by `info` and `render-object`;
 - licensing, third-party notices, and example data attribution;
 - troubleshooting and development commands;
-- the embedded 9R1O rendering and its data source.
+- embedded 9R1O and PubChem ethanol XYZ renderings.
 
 The manual source is [`docs/documentation.typ`](docs/documentation.typ), and it reads the package version from [`typst.toml`](typst.toml).
 
@@ -122,7 +140,7 @@ Molfig package code is licensed under the MIT License. See [`LICENSE`](LICENSE).
 
 Molfig ports or adapts [Mol*](https://github.com/molstar/molstar) behavior and includes Mol*-derived reference data in `molfig.wasm`. Mol* is licensed under the MIT License, copyright (c) 2017 - now, Mol* contributors.
 
-Bundled example structure files under [`examples/data`](examples/data) are PDB archive data from RCSB PDB / wwPDB and are available under CC0 1.0. Per-file PDB IDs, DOIs, and recommended attributions are listed in [`examples/data/README.md`](examples/data/README.md).
+Bundled example structure files under [`examples/data`](examples/data) include CC0 PDB archive data from RCSB PDB / wwPDB and four PubChem-generated conformers in XYZ format. Per-file identifiers, source records, usage terms, and recommended attributions are listed in [`examples/data/README.md`](examples/data/README.md).
 
 See [`NOTICE.md`](NOTICE.md) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for the full distribution notice.
 
@@ -132,10 +150,11 @@ See [`NOTICE.md`](NOTICE.md) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.
 cd ../wasm-plugin
 cargo fmt --check
 cargo test
+node tests/validate-pubchem-xyz.mjs
 cargo build --release --target wasm32-unknown-unknown
 cp target/wasm32-unknown-unknown/release/molfig.wasm ../package/molfig.wasm
 cd ../package
-typst compile --root . docs/documentation.typ docs/documentation.pdf
+just docs
 ```
 
 The checked-in `molfig.wasm` should be regenerated after Rust changes that affect the Typst plugin. Regenerate `docs/documentation.pdf` after public API or documentation changes.

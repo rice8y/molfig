@@ -18,9 +18,9 @@ Representation Object Layer	cartoon-ribbon-mesh|nucleotide-direction-visuals|car
 Mesh Builder Exactness	cartoon-ribbon-mesh|nucleotide-direction-visuals|carbohydrate-branched-visuals|ball-and-stick-component-visuals|obj-export-parity|stl-export-parity-diagnostics	22
 Cartoon And Ribbon Geometry	cartoon-ribbon-mesh|polymer-trace-cyclic-ranges|obj-export-parity|stl-export-parity-diagnostics	23
 Nucleotide Geometry	nucleotide-direction-visuals|cartoon-ribbon-mesh	11
-Surface And Volume Representations	viewer-auto-gaussian-surface|viewer-molecular-surface|viewer-surface-smoothing|structure-molecular-surface|lookup3d-boundary-principal-axes|typst-public-api-smoke	9
+Surface And Volume Representations	viewer-auto-gaussian-surface|viewer-molecular-surface|viewer-surface-smoothing|structure-molecular-surface|lookup3d-boundary-principal-axes|typst-public-api-contract	9
 Exporter Exactness	obj-export-parity|stl-export-parity-diagnostics|diff-cli-and-export-diagnostics|reference-converter-tooling	49
-Molfig Static PLY Contract	ply-export-contract|typst-public-api-smoke	6
-Typst API And Maquette Bridge	typst-public-api-smoke|parser-input-paths|coarse-ihm-model-units|chem-comp-struct-conn-index-pair-bonds|ring-resonance|obj-export-parity	14
+Molfig Static PLY Contract	ply-export-contract|typst-public-api-contract	6
+Typst API And Maquette Bridge	typst-public-api-contract|parser-input-paths|coarse-ihm-model-units|chem-comp-struct-conn-index-pair-bonds|ring-resonance|obj-export-parity	14
 Performance And Determinism	wasm-performance-baselines|lookup3d-boundary-principal-axes|obj-export-parity|stl-export-parity-diagnostics|ply-export-contract	11
 Required Verification Commands	reference-converter-tooling|obj-export-parity|stl-export-parity-diagnostics|ply-export-contract|diff-cli-and-export-diagnostics|wasm-performance-baselines	11

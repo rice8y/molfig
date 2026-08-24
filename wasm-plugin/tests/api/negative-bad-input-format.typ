@@ -1,4 +1,4 @@
-// Negative smoke test.
+// Negative compile-failure test.
 // Expected result: Typst compilation fails with an actionable message that
 // mentions the accepted input formats: pdb, cif.
 

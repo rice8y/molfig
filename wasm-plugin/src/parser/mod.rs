@@ -1,4 +1,6 @@
-use crate::chemistry::{infer_bonds, infer_element_from_name, normalize_element};
+use crate::chemistry::{
+    infer_bonds, infer_element_from_name, infer_xyz_bonds_molstar, normalize_element,
+};
 use crate::model::{
     entity_type_from_component, Assembly, AssemblyGenerator, Atom, AtomSiteAnisotrop,
     AtomSiteColumnPresence, Bond, BondFlags, BondMetadata, BondSource, ChemicalComponent,
@@ -20,6 +22,10 @@ thread_local! {
 mod pdb;
 
 pub(crate) use pdb::parse_pdb;
+
+mod xyz;
+
+pub(crate) use xyz::parse_xyz;
 
 mod cif_table;
 
@@ -72,9 +78,11 @@ fn parse_molecule_source(data: &[u8], options: &MeshOptions) -> Result<Molecule,
         InputFormat::Auto if looks_like_binary_cif(data) => InputFormat::BinaryCif,
         InputFormat::Auto => {
             let text = std::str::from_utf8(data)
-                .map_err(|_| "input must be UTF-8 PDB/mmCIF data or BinaryCIF".to_string())?;
+                .map_err(|_| "input must be UTF-8 PDB/mmCIF/XYZ data or BinaryCIF".to_string())?;
             if looks_like_pdb(text) {
                 InputFormat::Pdb
+            } else if looks_like_xyz(text) {
+                InputFormat::Xyz
             } else {
                 InputFormat::Cif
             }
@@ -94,6 +102,11 @@ fn parse_molecule_source(data: &[u8], options: &MeshOptions) -> Result<Molecule,
             parse_cif(text)
         }
         InputFormat::BinaryCif => binary::parse_binary_cif(data, options),
+        InputFormat::Xyz => {
+            let text = std::str::from_utf8(data)
+                .map_err(|_| "XYZ input must be UTF-8 text".to_string())?;
+            parse_xyz(text)
+        }
     }
 }
 
@@ -113,7 +126,11 @@ fn apply_molecule_options(mut molecule: Molecule, options: &MeshOptions) -> Mole
         molecule = apply_assembly(molecule, id);
     }
     if options.infer_bonds && molecule.bonds.is_empty() {
-        let bonds = infer_bonds(&molecule.atoms);
+        let bonds = if molecule.source_data.kind == "xyz" {
+            infer_xyz_bonds_molstar(&molecule.atoms)
+        } else {
+            infer_bonds(&molecule.atoms)
+        };
         let bond_metadata = bonds
             .iter()
             .map(|bond| {
@@ -142,6 +159,20 @@ fn looks_like_pdb(text: &str) -> bool {
     text.lines()
         .take(64)
         .any(|line| line.starts_with("ATOM  ") || line.starts_with("HETATM"))
+}
+
+fn looks_like_xyz(text: &str) -> bool {
+    let mut lines = text.lines();
+    let Some(count) = lines
+        .next()
+        .and_then(|line| line.trim().parse::<usize>().ok())
+    else {
+        return false;
+    };
+    if count == 0 || lines.next().is_none() {
+        return false;
+    }
+    lines.take(count).count() == count
 }
 
 fn parse_cif(text: &str) -> Result<Molecule, String> {
@@ -2447,7 +2478,22 @@ fn select_alt_loc(mut molecule: Molecule, requested: &str) -> Molecule {
     let mut index_map = vec![None; source_atoms.len()];
     let mut chosen = Vec::<Atom>::new();
     if requested.is_empty() || requested == "highest-occupancy" {
+        let sites_with_alt = source_atoms
+            .iter()
+            .filter(|atom| !atom.alt_id.is_empty())
+            .map(|atom| {
+                (
+                    atom.model_num,
+                    atom.chain.clone(),
+                    atom.residue_seq.clone(),
+                    atom.insertion_code.clone(),
+                    atom.residue.clone(),
+                    atom.name.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
         let mut best_by_site = Vec::<((i32, String, String, String, String, String), usize)>::new();
+        let mut keep = Vec::new();
         for (source_index, atom) in source_atoms.iter().enumerate() {
             let key = (
                 atom.model_num,
@@ -2457,6 +2503,10 @@ fn select_alt_loc(mut molecule: Molecule, requested: &str) -> Molecule {
                 atom.residue.clone(),
                 atom.name.clone(),
             );
+            if !sites_with_alt.iter().any(|site| site == &key) {
+                keep.push(source_index);
+                continue;
+            }
             if let Some((_, best_index)) = best_by_site.iter_mut().find(|(site, _)| site == &key) {
                 let best = &source_atoms[*best_index];
                 let prefers_atom = atom.occupancy > best.occupancy
@@ -2473,10 +2523,11 @@ fn select_alt_loc(mut molecule: Molecule, requested: &str) -> Molecule {
                 best_by_site.push((key, source_index));
             }
         }
-        let mut keep = best_by_site
-            .into_iter()
-            .map(|(_, source_index)| source_index)
-            .collect::<Vec<_>>();
+        keep.extend(
+            best_by_site
+                .into_iter()
+                .map(|(_, source_index)| source_index),
+        );
         keep.sort_unstable();
         for source_index in keep {
             index_map[source_index] = Some(chosen.len());

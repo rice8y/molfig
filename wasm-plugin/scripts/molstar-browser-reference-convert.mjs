@@ -317,7 +317,7 @@ function normalizeInputFormat(format, fixture) {
   const lower = String(format || path.extname(fixture).slice(1)).toLowerCase();
   if (lower === 'mmcif') return 'cif';
   if (lower === 'binarycif') return 'bcif';
-  if (lower === 'pdb' || lower === 'cif' || lower === 'bcif') return lower;
+  if (lower === 'pdb' || lower === 'cif' || lower === 'bcif' || lower === 'xyz') return lower;
   throw new Error(`Unsupported input format '${lower}' for ${fixture}`);
 }
 

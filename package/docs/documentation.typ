@@ -6,6 +6,7 @@
 #let product-name = "Molfig"
 #let package-import = "@preview/" + package-id + ":" + package-version
 #let rendered-9r1o-pdf = "../examples/9R1O.pdf"
+#let rendered-ethanol-xyz-pdf = "../examples/ethanol-xyz.pdf"
 #let rendered-representations-pdf = "../examples/representations.pdf"
 #let rendered-render-object-pdf = "../examples/render-object.pdf"
 #let rendered-theme-pdf = "../examples/theme.pdf"
@@ -14,6 +15,8 @@
 #let rendered-metadata-pdf = "../examples/metadata.pdf"
 #let rendered-draft-pdf = "../examples/9M1U.pdf"
 #let example-9r1o-code = "#import \"" + package-import + "\"\n\n#set page(width: auto, height: auto, margin: 0mm)\n\n// Uses structural data from RCSB PDB / wwPDB.\n// PDB ID: 9R1O\n// PDB DOI: https://doi.org/10.2210/pdb9R1O/pdb\n// PDB archive data files are available under CC0 1.0.\n#let pdb = path(\"9R1O.pdb\")\n\n#molfig.render(\n  pdb,\n  format: \"pdb\",\n  representation: \"cartoon\",\n  assembly: \"1\",\n  mesh-format: \"obj\",\n  quality: \"high\",\n  center: true,\n  output-format: \"svg\",\n  config: (\n    azimuth: 35,\n    elevation: 24,\n    background: \"\",\n  ),\n)"
+#let example-ethanol-xyz-data = "9\nPubChem CID 702 (ethanol), PubChem3D conformer 000002BE00000001\nO  -1.1712   0.2997   0.0000\nC  -0.0463  -0.5665   0.0000\nC   1.2175   0.2668   0.0000\nH  -0.0958  -1.2120   0.8819\nH  -0.0952  -1.1938  -0.8946\nH   2.1050  -0.3720  -0.0177\nH   1.2426   0.9307  -0.8704\nH   1.2616   0.9052   0.8886\nH  -1.1291   0.8364   0.8099"
+#let example-ethanol-xyz-code = "#import \"" + package-import + "\"\n\n#set page(width: 82mm, height: 82mm, margin: 4mm)\n\n// PubChem CID 702 (ethanol), PubChem3D conformer 000002BE00000001.\n// Record: https://pubchem.ncbi.nlm.nih.gov/compound/702\n// Retrieved through PubChem PUG REST on 2026-08-24.\n#let xyz = path(\"data/ethanol.xyz\")\n\n#molfig.render(\n  xyz,\n  format: \"xyz\",\n  representation: \"default\",\n  color-theme: \"element-symbol\",\n  mesh-format: \"obj\",\n  quality: \"high\",\n  center: true,\n  output-format: \"svg\",\n  config: (\n    azimuth: 35,\n    elevation: 24,\n    background: \"\",\n  ),\n  width: 74mm,\n  height: 74mm,\n)"
 
 #let ic(value) = raw(str(value))
 
@@ -119,7 +122,7 @@
   subtitle: [Static molecular structure rendering for Typst],
   date: datetime.today(),
   abstract: [
-    #product-name turns PDB, mmCIF, and BinaryCIF structures into static OBJ,
+    #product-name turns PDB, mmCIF, BinaryCIF, and XYZ structures into static OBJ,
     STL, or PLY meshes inside a Rust WebAssembly plugin, then hands those meshes to
     #std.link("https://typst.app/universe/package/maquette", [maquette]) for
     document rendering.
@@ -155,7 +158,7 @@
 = Overview <sec:overview>
 
 #product-name is a Typst package for molecular figures in static documents. It
-accepts PDB, mmCIF, and BinaryCIF input, converts the structure into a CPU-side
+accepts PDB, mmCIF, BinaryCIF, and XYZ input, converts the structure into a CPU-side
 Mol\*-style Model/Structure/Unit representation, builds static geometry, exports
 the mesh as OBJ, STL, or PLY, and delegates final rendering to maquette.
 
@@ -191,7 +194,7 @@ geometry, and OBJ/STL export behavior; see
 
 #pipeline-table((
   pipeline-row("Read", ic("path(...) or read(..., encoding: none)"), [The user document supplies either a Typst 0.15+ project path or already-read structure bytes.]),
-  pipeline-row("Parse", ic("format"), [The plugin parses PDB, text CIF/mmCIF, or BinaryCIF MessagePack data.]),
+  pipeline-row("Parse", ic("format"), [The plugin parses PDB, text CIF/mmCIF, BinaryCIF MessagePack, or XYZ coordinate data.]),
   pipeline-row("Model", [#ic("assembly"), #ic("alt-loc")], [Model, Structure, Unit, unit operators, altLoc policy, bonds, secondary structure, and coarse data are selected.]),
   pipeline-row("Geometry", [#ic("representation"), #ic("quality")], [The static geometry layer builds spheres, cylinders, tubes, sheets, ribbons, nucleotide visuals, carbohydrate visuals, and related mesh spans.]),
   pipeline-row("Export", ic("mesh-format"), [The mesh is serialized as OBJ, binary STL, or ASCII PLY bytes.]),
@@ -227,10 +230,11 @@ file-backed structure data. The path is resolved by Typst relative to the caller
 file, and #product-name reads it internally with #ic("encoding: none"). This keeps
 package calls concise while preserving the caller-side project boundary.
 
-#table3([Format], [Typst 0.15+ path], [Real structure used in this manual], (
+#table3([Format], [Typst 0.15+ path], [Example], (
   row3([PDB], [#ic("path(\"9R1O.pdb\")")], [RCSB PDB entry 9R1O.]),
   row3([mmCIF], [#ic("path(\"1FYY.cif\")")], [RCSB PDB entry 1FYY.]),
   row3([BinaryCIF], [#ic("path(\"1CRN.bcif\")")], [RCSB PDB entry 1CRN.]),
+  row3([XYZ], [#ic("path(\"molecule.xyz\")")], [A standard atom-count/comment/coordinates XYZ file.]),
 ))
 
 For documents that must also compile on Typst 0.14, read the file in the caller
@@ -253,6 +257,68 @@ all three archive formats appear below.
 
 Passing a Typst string is accepted for small inline examples. A string is treated
 as inline molecular text, not as a file path.
+
+== A Complete XYZ Example <sec:xyz-example>
+
+The following real-data example renders ethanol from the first PubChem3D
+conformer for PubChem CID 702. Save these two files with the shown
+#ic("data/ethanol.xyz") relative path, then compile #ic("ethanol-xyz.typ").
+
+#code("xyz", example-ethanol-xyz-data, title: "PubChem ethanol conformer in XYZ format", file: "data/ethanol.xyz")
+
+#code("typ", example-ethanol-xyz-code, title: "Complete XYZ rendering example", file: "ethanol-xyz.typ")
+
+#figure(
+  block(
+    width: 68%,
+    inset: 4pt,
+    stroke: luma(82%),
+    radius: 2pt,
+    image(rendered-ethanol-xyz-pdf, width: 100%),
+  ),
+  caption: [PubChem CID 702 (ethanol) rendered from XYZ with the complete settings above.],
+)
+
+#info-alert[
+  Coordinate source: #link("https://pubchem.ncbi.nlm.nih.gov/compound/702")[PubChem CID 702],
+  PubChem3D conformer #ic("000002BE00000001"). The 3D SDF was retrieved through
+  #link("https://pubchem.ncbi.nlm.nih.gov/docs/pug-rest")[PubChem PUG REST] on
+  2026-08-24 and transcribed to XYZ without changing atom order or coordinates.
+  General PubChem citation: Kim et al. (2025),
+  #link("https://doi.org/10.1093/nar/gkae1059")[doi:10.1093/nar/gkae1059].
+]
+
+#pagebreak()
+
+== XYZ Validation Corpus <sec:xyz-validation>
+
+The bundled real-data corpus expands the example to four PubChem3D conformers.
+All files preserve the source SDF atom order and four-decimal coordinates.
+
+#table4([Compound], [CID], [Formula / atoms], [Source SDF bonds], (
+  row4([Ethanol (#ic("ethanol.xyz"))], [#link("https://pubchem.ncbi.nlm.nih.gov/compound/702")[702]], [#ic("C2H6O") / 9], [8]),
+  row4([Benzene (#ic("benzene.xyz"))], [#link("https://pubchem.ncbi.nlm.nih.gov/compound/241")[241]], [#ic("C6H6") / 12], [12]),
+  row4([Aspirin (#ic("aspirin.xyz"))], [#link("https://pubchem.ncbi.nlm.nih.gov/compound/2244")[2244]], [#ic("C9H8O4") / 21], [21]),
+  row4([Caffeine (#ic("caffeine.xyz"))], [#link("https://pubchem.ncbi.nlm.nih.gov/compound/2519")[2519]], [#ic("C8H10N4O2") / 24], [25]),
+))
+
+#ic("examples/data/XYZ_VALIDATION.json") pins each source URL, conformer ID,
+formula, source bond endpoints and orders, element composition, coordinate
+bounds, and SHA-256 digest. The offline validator rejects non-canonical line
+counts, symbols, coordinate precision, non-finite or coincident atoms, formula
+or bound drift, duplicate bonds, and any difference between Mol\*-style XYZ
+bond inference and the source SDF connectivity.
+
+The Rust regression test also compares explicit #ic("format: \"xyz\"") parsing
+with auto-detection, including atom identities, coordinates, inferred endpoints,
+bond metadata, ring counts, and aromatic-bond counts. Finally, a real
+Chrome/WebGL run at pinned Mol\* commit
+#ic("1b8117d3f10f7c978aabb5a0d3d47370635aefe4") exports the default
+ball-and-stick representation. Molfig's OBJ is required to match that text
+exactly and its binary STL is required to match byte for byte for all four
+corpus records.
+
+#pagebreak()
 
 == Choosing The First Options <sec:first-options>
 
@@ -305,7 +371,7 @@ render, render-object, export, and metadata commands unless noted otherwise.
     documents.
   ]
 
-  #argument("format", choices: ("auto", "pdb", "cif", "mmcif", "bcif", "binarycif", "binary-cif"), default: "auto", command: "render")[
+  #argument("format", choices: ("auto", "pdb", "cif", "mmcif", "bcif", "binarycif", "binary-cif", "xyz"), default: "auto", command: "render")[
     Input parser selection. Use an explicit format for reproducible documents.
   ]
 
@@ -422,7 +488,7 @@ The following options are accepted by @cmd:render[-], @cmd:render-object[-],
 == Input Selection <sec:input-selection>
 
 #option-table((
-  option-row("format", ic("\"auto\""), [Input parser. Supported values: #ic("\"auto\""), #ic("\"pdb\""), #ic("\"cif\""), #ic("\"mmcif\""), #ic("\"bcif\""), #ic("\"binarycif\""), #ic("\"binary-cif\"").]),
+  option-row("format", ic("\"auto\""), [Input parser. Supported values: #ic("\"auto\""), #ic("\"pdb\""), #ic("\"cif\""), #ic("\"mmcif\""), #ic("\"bcif\""), #ic("\"binarycif\""), #ic("\"binary-cif\""), #ic("\"xyz\"").]),
   option-row("block-index", ic("none"), [Zero-based BinaryCIF data block index. Useful when one BinaryCIF file contains multiple data blocks.]),
   option-row("block-header", ic("\"\""), [Exact BinaryCIF block header. When set, it takes precedence over #arg[block-index].]),
 ))
@@ -431,6 +497,7 @@ The following options are accepted by @cmd:render[-], @cmd:render-object[-],
   row3([#ic("\"pdb\"")], [#ic(".pdb")], [Fixed-width text. Keep bytes to preserve columns.]),
   row3([#ic("\"cif\"") or #ic("\"mmcif\"")], [#ic(".cif"), #ic(".mmcif")], [Text CIF categories and loops.]),
   row3([#ic("\"bcif\"")], [#ic(".bcif")], [BinaryCIF MessagePack data with encoded columns and optional masks.]),
+  row3([#ic("\"xyz\"")], [#ic(".xyz")], [Atom count, comment line, and element/Cartesian-coordinate records. Multiple frames become models; rendering selects the first model, matching Mol\* defaults.]),
   row3([#ic("\"auto\"")], [any], [Convenient for exploration, but explicit formats are better for release documents.]),
 ))
 
@@ -862,6 +929,7 @@ contains third-party material that is covered separately:
 #table3([Material], [Scope], [License / notice], (
   row3([#ic("Mol*")], [#ic("molfig.wasm") contains Rust behavior and generated reference data derived from #ic("Mol*") parity work.], [MIT License; copyright (c) 2017 - now, #ic("Mol*") contributors.]),
   row3([PDB archive data], [#ic("examples/data/*.pdb"), #ic("examples/data/*.cif"), #ic("examples/data/*.bcif"), and generated example PDFs.], [CC0 1.0 Universal Public Domain Dedication; attribution to PDB IDs and structure authors is encouraged.]),
+  row3([PubChem3D examples], [#ic("examples/data/*.xyz"), the validation manifest, and generated PDF/PNG.], [PubChem-generated conformer coordinates for CIDs 702, 241, 2244, and 2519. PubChem makes generated information available without cost and without restriction; see the recorded NCBI/PubChem policies and attribution.]),
   row3([Typst helper packages], [#ic("maquette") for rendering and #ic("mantys") for this manual.], [Imported by Typst; not vendored by Molfig.]),
 ))
 
@@ -872,6 +940,10 @@ the full distribution notice. Example data attributions are also listed in
 For figures made from PDB archive data, cite the PDB ID and DOI. For example:
 
 #code("text", "Structural data source: RCSB PDB / wwPDB, PDB ID 9R1O,\nhttps://doi.org/10.2210/pdb9R1O/pdb.\nPDB archive data files are available under CC0 1.0.", title: "Suggested data attribution")
+
+For a bundled XYZ record, cite its PubChem record and the PubChem service. For example:
+
+#code("text", "Coordinate source: PubChem CID 702 (ethanol), PubChem3D conformer\n000002BE00000001, retrieved through PubChem PUG REST on 2026-08-24.\nhttps://pubchem.ncbi.nlm.nih.gov/compound/702\nhttps://doi.org/10.1093/nar/gkae1059", title: "Suggested XYZ example attribution")
 
 When describing #ic("Mol*") parity or comparing against #ic("Mol*") output, cite #ic("Mol*"):
 
@@ -888,13 +960,13 @@ documentation:
 #table2([Path], [Role], (
   row2([#ic("package/lib.typ")], [Public Typst API and maquette bridge.]),
   row2([#ic("wasm-plugin/src/")], [Rust parser, Model/Structure/Unit layer, geometry builders, exporters, and Typst plugin ABI.]),
-  row2([#ic("wasm-plugin/tests/")], [Rust and Typst smoke/regression tests.]),
+  row2([#ic("wasm-plugin/tests/")], [Rust regression tests and Typst contract/integration tests.]),
   row2([#ic("package/docs/documentation.typ")], [This Mantys manual.]),
   row2([#ic("package/docs/documentation.pdf")], [Compiled reference manual.]),
   row2([#ic("package/molfig.wasm")], [Checked-in WebAssembly plugin consumed by Typst.]),
 ))
 
-#shell("cd wasm-plugin\ncargo fmt --check\ncargo test\ncargo build --release --target wasm32-unknown-unknown\ncp target/wasm32-unknown-unknown/release/molfig.wasm ../package/molfig.wasm\ncd ..\ntypst compile --root package package/docs/documentation.typ package/docs/documentation.pdf")
+#shell("cd wasm-plugin\ncargo fmt --check\ncargo test\nnode tests/validate-pubchem-xyz.mjs\ncargo build --release --target wasm32-unknown-unknown\ncp target/wasm32-unknown-unknown/release/molfig.wasm ../package/molfig.wasm\ncd ../package\njust docs")
 
 Regenerate #ic("package/molfig.wasm") after Rust changes that affect the Typst plugin.
 Regenerate this PDF after documentation or public API changes.

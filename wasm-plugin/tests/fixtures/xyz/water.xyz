@@ -1,0 +1,5 @@
+3
+Water molecule; coordinates match tests/fixtures/cif/water.cif
+O  0.000  0.000 0.000
+H  0.957  0.000 0.000
+H -0.239  0.927 0.000

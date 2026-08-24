@@ -1,4 +1,4 @@
-// Compile-time contract for BinaryCIF, assembly, altLoc, cartoon/ribbon, and
+// Compile-time contract test for BinaryCIF, assembly, altLoc, cartoon/ribbon, and
 // render-object support.
 
 #import "../../../package/lib.typ" as molfig

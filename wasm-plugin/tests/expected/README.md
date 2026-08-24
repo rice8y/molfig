@@ -32,6 +32,6 @@ Recommended future test flow:
 1. Convert each fixture to OBJ, STL, and PLY with default settings.
 2. Parse the exported mesh headers and primitive counts.
 3. Compare counts and parse summaries to `mesh-contract.json`.
-4. Compile the Typst smoke files in `tests/api`.
+4. Compile the Typst contract and integration files in `tests/api`.
 5. Render one example document and inspect that maquette receives a mesh file
    path rather than raw molecular text.

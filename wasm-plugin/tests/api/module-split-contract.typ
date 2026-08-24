@@ -1,4 +1,4 @@
-// Compile-time regression smoke for a Rust module split.
+// Compile-time regression contract for a Rust module split.
 // The goal is to keep parser normalization, mesh export, metadata, and
 // maquette-facing render-object behavior stable while implementation files move.
 
@@ -7,6 +7,7 @@
 #let peptide-pdb = read("../fixtures/pdb/tiny-peptide.pdb", encoding: none)
 #let peptide-cif = read("../fixtures/cif/tiny-peptide.cif", encoding: none)
 #let water-bcif = read("../fixtures/bcif/water.bcif", encoding: none)
+#let water-xyz = read("../fixtures/xyz/water.xyz", encoding: none)
 
 #let pdb-info = molfig.info(peptide-pdb, format: "pdb", assembly: "asymmetric-unit")
 #let cif-info = molfig.info(peptide-cif, format: "mmcif", assembly: "asymmetric-unit")
@@ -21,6 +22,13 @@
 #assert.eq(bcif-info.atom_count, 3)
 #assert.eq(bcif-info.bond_count, 2)
 
+#let xyz-info = molfig.info(water-xyz, format: "xyz", assembly: "asymmetric-unit")
+#let xyz-auto-info = molfig.info(water-xyz, format: "auto", assembly: "asymmetric-unit")
+#assert.eq(xyz-info.atom_count, 3)
+#assert.eq(xyz-info.bond_count, 2)
+#assert.eq(xyz-auto-info.atom_count, xyz-info.atom_count)
+#assert.eq(xyz-auto-info.bounds, xyz-info.bounds)
+
 #let options = (
   representation: "ball-and-stick",
   sphere-detail: 1,
@@ -31,6 +39,7 @@
 #let obj = molfig.to-obj(peptide-cif, format: "mmcif", ..options)
 #let stl = molfig.to-stl(peptide-cif, format: "mmcif", ..options)
 #let ply = molfig.to-ply(peptide-cif, format: "mmcif", ..options)
+#let xyz-obj = molfig.to-obj(water-xyz, format: "xyz", representation: "default", sphere-detail: 1, assembly: "asymmetric-unit")
 
 #assert(str(obj).contains("\nv "))
 #assert(str(obj).contains("\nf "))
@@ -39,6 +48,8 @@
 #assert(str(ply).contains("element vertex"))
 #assert(not str(obj).contains("nan"))
 #assert(not str(ply).contains("nan"))
+#assert(str(xyz-obj).contains("usemtl 0xff26181"))
+#assert(str(xyz-obj).contains("usemtl 0xffffff1"))
 
 #let object = molfig.render-object(
   peptide-cif,

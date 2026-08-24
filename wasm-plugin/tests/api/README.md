@@ -1,21 +1,21 @@
-# Typst API Smoke Tests
+# Typst API Contract and Integration Tests
 
 Run from the repository root:
 
 ```sh
-typst compile --root . wasm-plugin/tests/api/public-api-smoke.typ /tmp/molfig-public-api-smoke.pdf
-typst compile --root . wasm-plugin/tests/api/module-split-contract-smoke.typ /tmp/molfig-module-split-contract-smoke.pdf
-typst compile --root . wasm-plugin/tests/api/maquette-config-passthrough-smoke.typ /tmp/molfig-maquette-config-passthrough-smoke.pdf
-typst compile --root . wasm-plugin/tests/api/future-structure-api-smoke.typ /tmp/molfig-future-structure-api-smoke.pdf
-typst compile --root . wasm-plugin/tests/api/future-rich-api-smoke.typ /tmp/molfig-future-rich-api-smoke.pdf
-typst compile --root . wasm-plugin/tests/api/9r1o-reference-smoke.typ /tmp/molfig-9r1o-reference-smoke.pdf
+typst compile --root . wasm-plugin/tests/api/public-api-contract.typ /tmp/molfig-public-api-contract.pdf
+typst compile --root . wasm-plugin/tests/api/module-split-contract.typ /tmp/molfig-module-split-contract.pdf
+typst compile --root . wasm-plugin/tests/api/maquette-config-passthrough-contract.typ /tmp/molfig-maquette-config-passthrough-contract.pdf
+typst compile --root . wasm-plugin/tests/api/future-structure-api-contract.typ /tmp/molfig-future-structure-api-contract.pdf
+typst compile --root . wasm-plugin/tests/api/future-rich-api-contract.typ /tmp/molfig-future-rich-api-contract.pdf
+typst compile --root . wasm-plugin/tests/api/9r1o-reference-integration.typ /tmp/molfig-9r1o-reference-integration.pdf
 ```
 
-The smoke tests cover:
+The contract and integration tests cover:
 
 - bytes input from `read(..., encoding: none)`;
 - Typst 0.15+ path input from `path(...)`;
-- PDB, mmCIF, and BinaryCIF parsing;
+- PDB, mmCIF, BinaryCIF, and XYZ parsing;
 - OBJ/STL/PLY export;
 - equivalent normalized metadata across PDB and mmCIF fixtures;
 - stable render-object shape for module-split work;
@@ -35,7 +35,7 @@ The smoke tests cover:
 - self-contained 9R1O PDB to OBJ generation and maquette rendering without a
   checked-in reference OBJ.
 
-Negative smoke tests are intentionally expected to fail compilation:
+Negative compile-failure tests are intentionally expected to fail compilation:
 
 ```sh
 typst compile --root . wasm-plugin/tests/api/negative-bad-input-format.typ /tmp/negative.pdf

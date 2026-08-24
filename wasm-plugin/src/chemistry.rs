@@ -264,6 +264,9 @@ pub(crate) fn infer_bonds(atoms: &[Atom]) -> Vec<Bond> {
     let mut bonds = Vec::new();
     for i in 0..atoms.len() {
         for j in (i + 1)..atoms.len() {
+            if atoms[i].model_num != atoms[j].model_num {
+                continue;
+            }
             let d = atoms[i].position.distance(atoms[j].position);
             let cutoff =
                 covalent_radius(&atoms[i].element) + covalent_radius(&atoms[j].element) + 0.45;
@@ -273,4 +276,196 @@ pub(crate) fn infer_bonds(atoms: &[Atom]) -> Vec<Bond> {
         }
     }
     bonds
+}
+
+pub(crate) fn infer_xyz_bonds_molstar(atoms: &[Atom]) -> Vec<Bond> {
+    let mut bonds = Vec::new();
+    for i in 0..atoms.len() {
+        let element_i = molstar_bond_element_index(&atoms[i].element);
+        for j in (i + 1)..atoms.len() {
+            if atoms[i].model_num != atoms[j].model_num {
+                continue;
+            }
+            let element_j = molstar_bond_element_index(&atoms[j].element);
+            if element_i == 0 && element_j == 0 {
+                continue;
+            }
+
+            let delta = atoms[i].position - atoms[j].position;
+            let distance = ((delta.x as f64) * (delta.x as f64)
+                + (delta.y as f64) * (delta.y as f64)
+                + (delta.z as f64) * (delta.z as f64))
+                .sqrt();
+            if distance == 0.0 {
+                continue;
+            }
+            let threshold = molstar_pairing_threshold(element_i, element_j);
+            if distance <= threshold {
+                bonds.push(Bond { a: i, b: j });
+            }
+        }
+    }
+    bonds
+}
+
+fn molstar_bond_element_index(element: &str) -> i16 {
+    match atomic_number(element) {
+        0 => -1,
+        1 => 0,
+        number => number as i16,
+    }
+}
+
+fn molstar_pairing_threshold(a: i16, b: i16) -> f64 {
+    if let Some(threshold) = molstar_element_pair_threshold(a, b) {
+        return threshold;
+    }
+    let threshold_a = molstar_element_bond_threshold(a);
+    if b < 0 {
+        threshold_a
+    } else {
+        (threshold_a + molstar_element_bond_threshold(b)) / 1.95
+    }
+}
+
+fn molstar_element_bond_threshold(element: i16) -> f64 {
+    match element {
+        0 => 1.42,
+        3 | 4 | 11..=13 | 19..=31 | 37..=50 | 55..=83 | 87..=108 => 2.7,
+        6 => 1.75,
+        7 => 1.6,
+        8 => 1.52,
+        14 => 1.9,
+        15 => 2.0,
+        16 => 1.9,
+        17 => 1.8,
+        33 => 2.68,
+        109 => 2.88,
+        _ => 2.001,
+    }
+}
+
+fn molstar_element_pair_threshold(a: i16, b: i16) -> Option<f64> {
+    if a < 0 || b < 0 {
+        return None;
+    }
+    let (min, max) = if a < b { (a, b) } else { (b, a) };
+    let key = (min + max) * (min + max + 1) / 2 + max;
+    Some(match key {
+        0 => 0.8,
+        20 => 1.31,
+        27 => 1.2,
+        35 => 1.15,
+        44 => 1.1,
+        54 => 1.0,
+        60 => 1.84,
+        72 => 1.88,
+        84 => 1.75,
+        85 => 1.56,
+        86 => 1.76,
+        98 => 1.6,
+        99 => 1.68,
+        100 => 1.63,
+        112 => 1.6,
+        113 => 1.59,
+        114 => 1.36,
+        129 => 1.45,
+        135 => 1.47,
+        144 => 1.6,
+        152 => 1.45,
+        170 => 1.4,
+        180 => 1.55,
+        202 => 2.4,
+        222 => 2.24,
+        224 => 1.91,
+        225 => 1.98,
+        243 => 2.02,
+        269 => 2.0,
+        293 => 1.9,
+        316 => 1.8,
+        420 => 2.37,
+        480 => 2.3,
+        512 => 2.3,
+        544 => 2.3,
+        612 => 2.1,
+        629 => 1.54,
+        665 => 1.0,
+        813 => 2.6,
+        851 => 2.65,
+        854 => 2.27,
+        894 => 1.93,
+        896 => 2.1,
+        937 => 2.05,
+        938 => 2.06,
+        981 => 1.62,
+        1258 => 2.68,
+        1309 => 2.33,
+        1484 => 1.0,
+        1763 => 2.14,
+        1823 => 2.48,
+        1882 => 2.1,
+        1944 => 1.72,
+        2063 => 2.72,
+        2380 => 2.34,
+        3132 => 2.6,
+        3367 => 2.44,
+        3733 => 2.11,
+        3819 => 2.6,
+        3821 => 2.36,
+        4736 => 2.75,
+        5724 => 2.73,
+        5959 => 2.63,
+        6519 => 2.84,
+        6750 => 2.87,
+        8991 => 2.81,
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn atom(element: &str, x: f32, model_num: i32) -> Atom {
+        Atom {
+            id: 0,
+            source_index: 0,
+            model_num,
+            name: element.to_string(),
+            type_symbol: element.to_string(),
+            element: element.to_string(),
+            chain: "A".to_string(),
+            auth_chain: "A".to_string(),
+            entity_id: "1".to_string(),
+            residue: "MOL".to_string(),
+            auth_residue: "MOL".to_string(),
+            group_pdb: String::new(),
+            residue_seq: "1".to_string(),
+            auth_residue_seq: "1".to_string(),
+            insertion_code: String::new(),
+            alt_id: String::new(),
+            auth_name: element.to_string(),
+            occupancy: 1.0,
+            b_iso: 0.0,
+            formal_charge: 0,
+            position: crate::model::Vec3::new(x, 0.0, 0.0),
+            het: false,
+            operator_name: String::new(),
+        }
+    }
+
+    #[test]
+    fn xyz_bond_inference_uses_molstar_pair_thresholds() {
+        assert_eq!(
+            infer_xyz_bonds_molstar(&[atom("C", 0.0, 0), atom("H", 1.19, 0)]).len(),
+            1
+        );
+        assert!(infer_xyz_bonds_molstar(&[atom("C", 0.0, 0), atom("H", 1.21, 0)]).is_empty());
+        assert!(infer_xyz_bonds_molstar(&[atom("H", 0.0, 0), atom("H", 0.741, 0)]).is_empty());
+    }
+
+    #[test]
+    fn xyz_bond_inference_never_connects_models() {
+        assert!(infer_xyz_bonds_molstar(&[atom("C", 0.0, 0), atom("H", 1.0, 1)]).is_empty());
+    }
 }

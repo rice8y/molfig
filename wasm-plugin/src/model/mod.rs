@@ -1299,6 +1299,17 @@ impl SourceData {
             frame_categories: categories,
         }
     }
+
+    pub fn xyz() -> Self {
+        SourceData {
+            kind: "xyz".to_string(),
+            name: "xyz".to_string(),
+            original_kind: String::new(),
+            categories: Vec::new(),
+            db_categories: Vec::new(),
+            frame_categories: Vec::new(),
+        }
+    }
 }
 
 fn is_mmcif_db_category(name: &str) -> bool {

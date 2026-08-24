@@ -1,4 +1,4 @@
-// Compile-time smoke test for IHM-only coarse BinaryCIF input.
+// Compile-time contract test for IHM-only coarse BinaryCIF input.
 
 #import "../../../package/lib.typ" as molfig
 
