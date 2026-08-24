@@ -31,6 +31,22 @@ wasm-plugin/tests/expected/molstar-reference/*
 !wasm-plugin/tests/expected/molstar-reference/water-viewer-spacefill.obj
 !wasm-plugin/tests/expected/molstar-reference/water-spacefill.mtl
 !wasm-plugin/tests/expected/molstar-reference/water-viewer-spacefill.stl
+!wasm-plugin/tests/expected/molstar-reference/water-xyz-default.reference.contract
+!wasm-plugin/tests/expected/molstar-reference/water-xyz-default.browser-report.json
+!wasm-plugin/tests/expected/molstar-reference/water-xyz-default.obj
+!wasm-plugin/tests/expected/molstar-reference/water-xyz-default.mtl
+!wasm-plugin/tests/expected/molstar-reference/water-xyz-default.stl
+!wasm-plugin/tests/expected/molstar-reference/xyz-reference-fixtures.txt
+!wasm-plugin/tests/expected/molstar-reference/pubchem-*-xyz-default.reference.contract
+!wasm-plugin/tests/expected/molstar-reference/pubchem-*-xyz-default.browser-report.json
+!wasm-plugin/tests/expected/molstar-reference/pubchem-*-xyz-default.obj
+!wasm-plugin/tests/expected/molstar-reference/pubchem-*-xyz-default.mtl
+!wasm-plugin/tests/expected/molstar-reference/pubchem-*-xyz-default.stl
+!wasm-plugin/tests/validate-pubchem-xyz.mjs
+
+# Public Typst API contract and integration sources.
+!wasm-plugin/tests/api/
+!wasm-plugin/tests/api/*
 
 # Mixed Viewer Cartoon reference fixture and browser artifacts.
 !wasm-plugin/tests/fixtures/
@@ -39,6 +55,9 @@ wasm-plugin/tests/fixtures/*
 wasm-plugin/tests/fixtures/cif/*
 !wasm-plugin/tests/fixtures/cif/mixed-viewer-cartoon-components.cif
 !wasm-plugin/tests/fixtures/cif/viewer-default-annotations.cif
+!wasm-plugin/tests/fixtures/xyz/
+wasm-plugin/tests/fixtures/xyz/*
+!wasm-plugin/tests/fixtures/xyz/water.xyz
 !wasm-plugin/tests/fixtures/bcif/
 wasm-plugin/tests/fixtures/bcif/*
 !wasm-plugin/tests/fixtures/bcif/mixed-viewer-cartoon-components.bcif
