@@ -1,4 +1,4 @@
-// Smoke test for the richer public Typst API: BinaryCIF, assembly selection,
+// Contract test for the richer public Typst API: BinaryCIF, assembly selection,
 // altLoc policy, polymer-cartoon/ribbon representations, and render-object output.
 
 #import "../../../package/lib.typ" as molfig

@@ -1,4 +1,4 @@
-// Compile-time smoke test for chem component dictionary metadata.
+// Compile-time contract test for chem component dictionary metadata.
 
 #import "../../../package/lib.typ" as molfig
 

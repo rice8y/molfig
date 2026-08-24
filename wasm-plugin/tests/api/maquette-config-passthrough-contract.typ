@@ -1,7 +1,7 @@
-// Contract smoke for passing maquette config dictionaries through unchanged.
+// Contract test for passing maquette config dictionaries through unchanged.
 
 #import "../../../package/lib.typ" as molfig
-#import "@preview/maquette:0.1.0": get-ply-info
+#import "@preview/maquette:0.1.3": get-ply-info
 
 #let water-cif = read("../fixtures/cif/water.cif", encoding: none)
 #let mesh-options = (
@@ -23,8 +23,8 @@
 )
 
 #let raw-ply = molfig.to-ply(water-cif, ..mesh-options)
-#let direct-info = get-ply-info(raw-ply, json.encode(passthrough-config))
-#let changed-info = get-ply-info(raw-ply, json.encode(passthrough-config + (azimuth: 71)))
+#let direct-info = get-ply-info(raw-ply, passthrough-config)
+#let changed-info = get-ply-info(raw-ply, passthrough-config + (azimuth: 71))
 #let wrapped-info = molfig.mesh-info(water-cif, config: passthrough-config, ..render-options)
 
 #assert(direct-info != changed-info)

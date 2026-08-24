@@ -1,4 +1,4 @@
-// Compile-time smoke test for generating and rendering Molfig's 9R1O OBJ.
+// Compile-time integration test for generating and rendering Molfig's 9R1O OBJ.
 
 #import "../../../package/lib.typ" as molfig
 #import "@preview/maquette:0.1.0": render-obj

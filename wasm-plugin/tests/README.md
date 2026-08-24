@@ -31,10 +31,10 @@ The fixtures are intentionally small:
   biological assembly, alternate-location, and helix/cartoon/ribbon contract.
 - `tests/fixtures/pdb/assembly-altloc-secondary.pdb` and
   `tests/fixtures/cif/assembly-altloc-secondary.cif` add a sheet range beside
-  helix metadata so cartoon/ribbon smoke tests can cover both secondary
+  helix metadata so cartoon/ribbon contract tests can cover both secondary
   structure families.
 - `tests/fixtures/bcif/water.bcif` is a small BinaryCIF counterpart to the
-  existing water fixture for minimal decoder smoke coverage.
+  existing water fixture for minimal decoder contract coverage.
 
 Each PDB/CIF pair should produce the same parse summary. The exact mesh can
 vary by tessellation quality, but the output must be deterministic for a fixed
@@ -52,23 +52,23 @@ input and option set.
 
 ## Runnable Checks
 
-Run fixture validation and the public API smoke tests from the repository root:
+Run fixture validation and the public API contract tests from the repository root:
 
 ```sh
 node wasm-plugin/tests/validate-fixtures.mjs
-typst compile --root . wasm-plugin/tests/api/public-api-smoke.typ /tmp/molfig-public-api-smoke.pdf
-typst compile --root . wasm-plugin/tests/api/module-split-contract-smoke.typ /tmp/molfig-module-split-contract-smoke.pdf
+typst compile --root . wasm-plugin/tests/api/public-api-contract.typ /tmp/molfig-public-api-contract.pdf
+typst compile --root . wasm-plugin/tests/api/module-split-contract.typ /tmp/molfig-module-split-contract.pdf
 typst compile --root package package/examples/1CRN.typ /tmp/molfig-example-1crn.pdf
 typst compile --root package package/examples/1FYY.typ /tmp/molfig-example-1fyy.pdf
 ```
 
-The richer structure-aware API smoke tests are also runnable:
+The richer structure-aware API contract tests are also runnable:
 
 ```sh
 node wasm-plugin/tests/fixtures/bcif/generate-bcif-fixture.mjs
 node wasm-plugin/tests/validate-fixtures.mjs
-typst compile --root . wasm-plugin/tests/api/future-structure-api-smoke.typ /tmp/molfig-future-structure-api-smoke.pdf
-typst compile --root . wasm-plugin/tests/api/future-rich-api-smoke.typ /tmp/molfig-future-rich-api-smoke.pdf
+typst compile --root . wasm-plugin/tests/api/future-structure-api-contract.typ /tmp/molfig-future-structure-api-contract.pdf
+typst compile --root . wasm-plugin/tests/api/future-rich-api-contract.typ /tmp/molfig-future-rich-api-contract.pdf
 typst compile --root package package/examples/9Z4O.typ /tmp/molfig-example-9z4o.pdf
 ```
 
@@ -92,5 +92,5 @@ Reviewers should check that:
   normalized structure model used by `info`, exporters, and `render-object`;
 - assembly id, alternate-location selection, BinaryCIF/text CIF equivalence,
   cartoon/ribbon secondary-structure handling, and cartoon tuning options are
-  observable in fixtures or smoke tests;
+  observable in fixtures or contract tests;
 - error messages name the bad option and the accepted values.

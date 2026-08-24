@@ -1,4 +1,4 @@
-// Compile-time smoke test for mixed atomic and coarse IHM CIF input.
+// Compile-time contract test for mixed atomic and coarse IHM CIF input.
 
 #import "../../../package/lib.typ" as molfig
 

@@ -1,4 +1,4 @@
-// Compile-time smoke test for the public Typst API.
+// Compile-time contract test for the public Typst API.
 
 #import "../../../package/lib.typ" as molfig
 
@@ -65,7 +65,7 @@
 #assert.eq(polymer-cartoon-info.representation.name, "polymer-cartoon")
 #assert(sheet-info.render_objects.any(object => object.geometry_type == "sheet"))
 
-#if molfig.v15-or-later() {
+#if sys.version >= version(0, 15, 0) {
   let water-pdb-path = path("../fixtures/pdb/water.pdb")
   let path-info = molfig.info(water-pdb-path, format: "pdb")
   let path-obj = molfig.to-obj(
