@@ -1105,5 +1105,10 @@ fn residue_coarse_backbone_atom(
 }
 
 pub(super) fn residue_seq_id(residue: &AtomicResidue) -> Option<i32> {
-    residue.label_seq_id.trim().parse::<i32>().ok()
+    residue
+        .label_seq_id
+        .trim()
+        .parse::<i32>()
+        .ok()
+        .or_else(|| residue.auth_seq_id.trim().parse::<i32>().ok())
 }

@@ -3,7 +3,8 @@ import { ObjExporter } from '../artifacts/molstar/src/extensions/geo-export/obj-
 import { StlExporter } from '../artifacts/molstar/src/extensions/geo-export/stl-exporter';
 import { Box3D } from '../artifacts/molstar/src/mol-math/geometry';
 import { BoundaryHelper } from '../artifacts/molstar/src/mol-math/geometry/boundary-helper';
-import { Structure } from '../artifacts/molstar/src/mol-model/structure';
+import { Structure, Unit } from '../artifacts/molstar/src/mol-model/structure';
+import { SecondaryStructureType } from '../artifacts/molstar/src/mol-model/structure/model/types';
 import { PluginContext } from '../artifacts/molstar/src/mol-plugin/context';
 import { PluginConfig } from '../artifacts/molstar/src/mol-plugin/config';
 import { DefaultPluginSpec, PluginSpec } from '../artifacts/molstar/src/mol-plugin/spec';
@@ -16,6 +17,10 @@ import { SbNcbrPartialCharges } from '../artifacts/molstar/src/extensions/sb-ncb
 import { Asset } from '../artifacts/molstar/src/mol-util/assets';
 import { Task } from '../artifacts/molstar/src/mol-task';
 import type { ValueCell } from '../artifacts/molstar/src/mol-util/value-cell';
+import { Color } from '../artifacts/molstar/src/mol-util/color';
+import { ParamDefinition as PD } from '../artifacts/molstar/src/mol-util/param-definition';
+import { PostprocessingParams } from '../artifacts/molstar/src/mol-canvas3d/passes/postprocessing';
+import { PolymerTraceIterator } from '../artifacts/molstar/src/mol-repr/structure/visual/util/polymer/trace-iterator';
 
 type ExportFormat = 'obj' | 'stl' | 'report'
 
@@ -55,6 +60,8 @@ type BrowserReferenceRequest = {
     dataFormat?: string
     structurePreset?: string
     representation?: string
+    style?: string
+    quality?: string
     theme?: ViewerTheme
     sizeThresholds?: Partial<Structure.SizeThresholds>
     gaussianSurfaceParams?: GaussianSurfaceParams
@@ -82,7 +89,7 @@ type RenderObjectSummary = {
     carbonColorTheme?: string
     representationOrder?: number
     visuals?: string[]
-    surfaceParams?: GaussianSurfaceParams
+    surfaceParams?: GaussianSurfaceParams | MolecularSurfaceParams
     stlTriangleCount?: number
     primitiveCount?: number
     cylinderCapHistogram?: Record<string, number>
@@ -94,6 +101,7 @@ type RenderObjectSummary = {
         end: number[]
     }>
     meshVertexSamples?: number[][]
+    meshGroupCounts?: Array<{ group: number, vertexCount: number, faceCount: number }>
     boundingSphere?: {
         center: number[]
         radius: number
@@ -106,7 +114,9 @@ type BrowserReferenceResult = {
     id: string
     renderObjects: RenderObjectSummary[]
     structures: ReturnType<typeof summarizeStructures>
+    polymerTraceBoundaries?: ReturnType<typeof summarizePolymerTraceBoundaries>
     sceneBoundingSphere: ReturnType<typeof sphereSummary>
+    rendering: ReturnType<typeof summarizeRendering>
     totalDrawCount: number
     visibleDrawCount: number
     hiddenDrawCount: number
@@ -189,6 +199,10 @@ async function getPlugin() {
 
 window.molfigBrowserReferenceExport = async (request: BrowserReferenceRequest) => {
     const plugin = await getPlugin();
+    plugin.canvas3d?.setProps({
+        transparentBackground: false,
+        renderer: { backgroundColor: Color(0xfcfbfa) },
+    });
     const sizeThresholds = { ...Structure.DefaultSizeThresholds, ...(request.sizeThresholds ?? {}) };
     plugin.config.set(PluginConfig.Structure.SizeThresholds, sizeThresholds);
     const bytes = new Uint8Array(await (await fetch(request.fixtureUrl)).arrayBuffer());
@@ -199,16 +213,27 @@ window.molfigBrowserReferenceExport = async (request: BrowserReferenceRequest) =
         visuals: !request.structurePreset,
     }));
     await applyStructurePreset(plugin, request.structurePreset);
-    await applyRequestedRepresentation(plugin, request.representation, request.theme, !request.structurePreset);
+    await applyRequestedRepresentation(plugin, request.representation, request.quality, request.theme, !request.structurePreset);
     await updateGaussianSurfaceParams(plugin, request.gaussianSurfaceParams);
     await updateMolecularSurfaceParams(plugin, request.molecularSurfaceParams);
+    await applyRequestedStyle(plugin, request.style);
     plugin.canvas3d?.commit(true);
     await animationFrames(3);
 
     const renderObjects = plugin.canvas3d?.getRenderObjects() ?? [];
     if (renderObjects.length === 0) throw new Error('Mol* produced no render objects');
-    const summary = summarizeRenderObjects(renderObjects, renderObjectStateMetadata(plugin));
     const sphere = visibleRenderObjectBoundingSphere(renderObjects);
+    plugin.managers.camera.focusSphere(sphere, { durationMs: 0 });
+    plugin.canvas3d?.commit(true);
+    // Postprocessing and the zero-duration camera update can settle on
+    // different frames in headless Chrome. Wait through multiple complete
+    // draw cycles so captures do not sample a partially updated SSAO/outline.
+    await animationFrames(12);
+    const summary = summarizeRenderObjects(
+        renderObjects,
+        renderObjectStateMetadata(plugin),
+        Boolean(request.renderObjectReport),
+    );
     const box = Box3D.fromSphere3D(Box3D(), sphere);
     const debug = request.debugStlFacets?.length
         ? { stlFacets: request.debugStlFacets.map(facet => debugStlFacet(renderObjects, box, sphere, facet)) }
@@ -238,12 +263,143 @@ window.molfigBrowserReferenceExport = async (request: BrowserReferenceRequest) =
         id: request.id,
         ...summary,
         structures: summarizeStructures(plugin, sizeThresholds),
+        polymerTraceBoundaries: request.renderObjectReport
+            ? summarizePolymerTraceBoundaries(plugin)
+            : undefined,
         sceneBoundingSphere: sphereSummary(sphere),
+        rendering: summarizeRendering(plugin),
         uploads,
         webgl: webglSummary(plugin),
         debug,
     };
 };
+
+function summarizeRendering(plugin: PluginContext) {
+    const camera = plugin.canvas3d?.camera.getSnapshot();
+    const postprocessing = plugin.canvas3d?.props.postprocessing;
+    const viewport = plugin.canvas3d?.camera.viewport;
+    return {
+        ignoreLight: plugin.managers.structure.component.state.options.ignoreLight,
+        camera: camera ? {
+            mode: camera.mode,
+            fov: camera.fov,
+            position: Array.from(camera.position),
+            target: Array.from(camera.target),
+            up: Array.from(camera.up),
+            radius: camera.radius,
+            radiusMax: camera.radiusMax,
+        } : undefined,
+        viewport: viewport ? { width: viewport.width, height: viewport.height } : undefined,
+        postprocessing: postprocessing ? {
+            outline: postprocessing.outline,
+            occlusion: postprocessing.occlusion,
+            shadow: postprocessing.shadow,
+        } : undefined,
+    };
+}
+
+function summarizePolymerTraceBoundaries(plugin: PluginContext) {
+    const summaries: Array<Record<string, unknown>> = [];
+    for (const [structureIndex, hierarchy] of plugin.managers.structure.hierarchy.current.structures.entries()) {
+        const structure = hierarchy.cell.obj?.data;
+        if (!structure) continue;
+        for (const [unitIndex, unit] of structure.units.entries()) {
+            if (!Unit.isAtomic(unit)) continue;
+            const iterator = PolymerTraceIterator(unit, structure, { useHelixOrientation: true });
+            let group = 0;
+            while (iterator.hasNext) {
+                const value = iterator.move();
+                if (value.first || value.last || value.secStrucFirst || value.secStrucLast) {
+                    summaries.push({
+                        structureIndex,
+                        unitIndex,
+                        group,
+                        centerElement: Number(value.center.element),
+                        first: value.first,
+                        last: value.last,
+                        initial: value.initial,
+                        final: value.final,
+                        secStrucFirst: value.secStrucFirst,
+                        secStrucLast: value.secStrucLast,
+                        secStrucType: SecondaryStructureType.is(value.secStrucType, SecondaryStructureType.Flag.Helix)
+                            ? 'helix'
+                            : SecondaryStructureType.is(value.secStrucType, SecondaryStructureType.Flag.Beta)
+                                ? 'sheet'
+                                : 'coil',
+                    });
+                }
+                group += 1;
+            }
+        }
+    }
+    return summaries;
+}
+
+async function applyRequestedStyle(plugin: PluginContext, value: string | undefined) {
+    const style = String(value ?? 'default').trim().toLowerCase();
+    if (style !== 'default' && style !== 'illustrative') throw new Error(`unsupported browser style: ${style}`);
+
+    if (style === 'default') {
+        // Match Structure Quick Styles exactly. The PluginContext is reused
+        // across requests, so merely returning here would leak ignoreLight and
+        // postprocessing state from a preceding Illustrative case.
+        await plugin.managers.structure.component.setOptions({
+            ...plugin.managers.structure.component.state.options,
+            ignoreLight: false,
+        });
+        if (plugin.canvas3d) {
+            const defaults = PD.getDefaultValues(PostprocessingParams);
+            plugin.canvas3d.setProps({
+                postprocessing: {
+                    outline: defaults.outline,
+                    occlusion: defaults.occlusion,
+                    shadow: defaults.shadow,
+                },
+            });
+        }
+        return;
+    }
+
+    await plugin.managers.structure.component.setOptions({
+        ...plugin.managers.structure.component.state.options,
+        ignoreLight: true,
+    });
+
+    const pp = plugin.canvas3d?.props.postprocessing;
+    if (!plugin.canvas3d || !pp) return;
+    plugin.canvas3d.setProps({
+        postprocessing: {
+            outline: {
+                name: 'on',
+                params: pp.outline.name === 'on'
+                    ? pp.outline.params
+                    : {
+                        scale: 1,
+                        color: Color(0x000000),
+                        threshold: 0.33,
+                        includeTransparent: true,
+                    },
+            },
+            occlusion: {
+                name: 'on',
+                params: pp.occlusion.name === 'on'
+                    ? pp.occlusion.params
+                    : {
+                        multiScale: { name: 'off', params: {} },
+                        radius: 5,
+                        bias: 0.8,
+                        blurKernelSize: 15,
+                        blurDepthBias: 0.5,
+                        samples: 32,
+                        resolutionScale: 1,
+                        color: Color(0x000000),
+                        transparentThreshold: 0.4,
+                    },
+            },
+            shadow: { name: 'off', params: {} },
+        },
+    });
+}
 
 function visibleRenderObjectBoundingSphere(renderObjects: any[]) {
     const helper = new BoundaryHelper('98');
@@ -353,14 +509,25 @@ async function applyStructurePreset(plugin: PluginContext, value: string | undef
 async function applyRequestedRepresentation(
     plugin: PluginContext,
     value: string | undefined,
+    quality: string | undefined,
     theme: ViewerTheme | undefined,
     canReuseInitial: boolean,
 ) {
-    if (canReuseInitial && representationMatches(plugin, value)) {
+    if (quality) {
+        // Quick Style re-applies the component manager options after creating
+        // a representation. Keep an explicitly requested preset quality in
+        // that shared state so applying Default/Illustrative cannot silently
+        // retessellate the realized geometry back to `auto`.
+        await plugin.managers.structure.component.setOptions({
+            ...plugin.managers.structure.component.state.options,
+            visualQuality: quality as any,
+        });
+    }
+    if (canReuseInitial && !quality && representationMatches(plugin, value)) {
         if (theme) await updateViewerThemes(plugin, theme);
         return;
     }
-    await applyRepresentationPreset(plugin, value, theme);
+    await applyRepresentationPreset(plugin, value, quality, theme);
     // Built-in presets do not consistently consume the optional theme
     // parameter (notably molecular-surface), so update the realized
     // representations after the preset has created them as well.
@@ -448,10 +615,10 @@ function structureHasSymmetry(structure: any) {
     });
 }
 
-async function applyRepresentationPreset(plugin: PluginContext, value: string | undefined, theme?: ViewerTheme) {
+async function applyRepresentationPreset(plugin: PluginContext, value: string | undefined, quality?: string, theme?: ViewerTheme) {
     const structures = plugin.managers.structure.hierarchy.selection.structures;
     const representation = String(value ?? 'default').trim().toLowerCase().replaceAll('_', '-');
-    const params = theme ? { theme } : undefined;
+    const params = quality || theme ? { ...(quality ? { quality } : {}), ...(theme ? { theme } : {}) } : undefined;
     switch (representation) {
         case 'default':
             await plugin.managers.structure.component.applyPreset(structures, ViewerAutoPreset, params);
@@ -513,7 +680,7 @@ type RenderObjectStateMetadata = {
     carbonColorTheme?: string
     representationOrder?: number
     visuals?: string[]
-    surfaceParams?: GaussianSurfaceParams
+    surfaceParams?: GaussianSurfaceParams | MolecularSurfaceParams
 }
 
 function renderObjectStateMetadata(plugin: PluginContext) {
@@ -549,7 +716,11 @@ function renderObjectStateMetadata(plugin: PluginContext) {
             carbonColorTheme: params?.colorTheme?.params?.carbonColor?.name,
             representationOrder: tag === undefined ? undefined : orderByTag.get(tag),
             visuals: Array.isArray(typeParams?.visuals) ? [...typeParams.visuals] : undefined,
-            surfaceParams: params?.type?.name === 'gaussian-surface' ? gaussianSurfaceParamsSummary(typeParams) : undefined,
+            surfaceParams: params?.type?.name === 'gaussian-surface'
+                ? gaussianSurfaceParamsSummary(typeParams)
+                : params?.type?.name === 'molecular-surface'
+                    ? molecularSurfaceParamsSummary(typeParams)
+                    : undefined,
         };
         for (const renderObject of repr.renderObjects) metadata.set(renderObject, stateMetadata);
     }
@@ -568,7 +739,22 @@ function gaussianSurfaceParamsSummary(params: any): GaussianSurfaceParams {
     };
 }
 
-function summarizeRenderObjects(renderObjects: any[], stateMetadata: Map<any, RenderObjectStateMetadata>) {
+function molecularSurfaceParamsSummary(params: any): MolecularSurfaceParams {
+    return {
+        quality: params?.quality,
+        resolution: params?.resolution,
+        probeRadius: params?.probeRadius,
+        probePositions: params?.probePositions,
+        floodfill: params?.floodfill,
+        visuals: Array.isArray(params?.visuals) ? [...params.visuals] : undefined,
+    };
+}
+
+function summarizeRenderObjects(
+    renderObjects: any[],
+    stateMetadata: Map<any, RenderObjectStateMetadata>,
+    detailed = false,
+) {
     const objects: RenderObjectSummary[] = [];
     let totalDrawCount = 0;
     let visibleDrawCount = 0;
@@ -585,7 +771,14 @@ function summarizeRenderObjects(renderObjects: any[], stateMetadata: Map<any, Re
         const geometry = String(value(values.dGeometryType) ?? renderObject.type ?? '<unknown>');
         const visible = renderObject.state?.visible ?? true;
         const sphere = value(values.boundingSphere);
-        const primitiveSummary = summarizePrimitiveValues(geometry, values, vertexCount);
+        const primitiveSummary = summarizePrimitiveValues(
+            geometry,
+            values,
+            vertexCount,
+            drawCount,
+            groupCount,
+            detailed,
+        );
 
         totalDrawCount += drawCount;
         if (visible) {
@@ -612,7 +805,14 @@ function summarizeRenderObjects(renderObjects: any[], stateMetadata: Map<any, Re
     return { renderObjects: objects, totalDrawCount, visibleDrawCount, hiddenDrawCount, exportableDrawCount };
 }
 
-function summarizePrimitiveValues(geometry: string, values: any, vertexCount: number) {
+function summarizePrimitiveValues(
+    geometry: string,
+    values: any,
+    vertexCount: number,
+    drawCount: number,
+    groupCount: number,
+    detailed: boolean,
+) {
     if (geometry === 'spheres') {
         return { primitiveCount: vertexCount / 6 };
     }
@@ -628,7 +828,28 @@ function summarizePrimitiveValues(geometry: string, values: any, vertexCount: nu
                 ]);
             }
         }
-        return { meshVertexSamples: samples };
+        if (!detailed) return { meshVertexSamples: samples };
+        const groups = value(values.aGroup) as ArrayLike<number> | undefined;
+        const elements = value(values.elements) as ArrayLike<number> | undefined;
+        const counts = Array.from({ length: groupCount }, (_, group) => ({
+            group,
+            vertexCount: 0,
+            faceCount: 0,
+        }));
+        if (groups) {
+            for (let i = 0; i < vertexCount; i++) {
+                const group = Math.round(Number(groups[i] ?? -1));
+                if (counts[group]) counts[group].vertexCount += 1;
+            }
+        }
+        if (groups && elements) {
+            for (let i = 0; i + 2 < drawCount; i += 3) {
+                const vertex = Number(elements[i]);
+                const group = Math.round(Number(groups[vertex] ?? -1));
+                if (counts[group]) counts[group].faceCount += 1;
+            }
+        }
+        return { meshVertexSamples: samples, meshGroupCounts: counts };
     }
     if (geometry !== 'cylinders') return {};
 

@@ -54,6 +54,19 @@ impl CifTable {
             })
     }
 
+    pub(super) fn float64_at(&self, row: usize, column: usize) -> Option<f64> {
+        self.columns
+            .get(column)
+            .and_then(Option::as_ref)
+            .and_then(|data| data.f64_at(row))
+            .or_else(|| {
+                self.rows
+                    .get(row)
+                    .and_then(|fields| fields.get(column))
+                    .and_then(|value| clean_cif_value(value).parse::<f64>().ok())
+            })
+    }
+
     pub(super) fn usize_at(&self, row: usize, column: usize) -> Option<usize> {
         self.columns
             .get(column)

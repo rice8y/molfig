@@ -24,9 +24,9 @@ RCSB PDB also encourages attribution to the original structure-data authors wher
 | `9R1O.pdb` | 9R1O | PDB | https://doi.org/10.2210/pdb9R1O/pdb | Petrenas, R.; Ozga, K.; Chubb, J.J.; Woolfson, D.N. Literature status in the included PDB file: to be published. |
 | `9Z4O.pdb` | 9Z4O | PDB | https://doi.org/10.2210/pdb9Z4O/pdb | Ge, Y.; de Almeida Magalhaes, T.; Wu, H.; Yadav, G.P.; Wang, Z.; Salic, A.; Jiang, J.; Huang, P. Literature status in the included PDB file: to be published. |
 
-## PubChem XYZ validation corpus
+## PubChem XYZ examples
 
-The XYZ corpus contains PubChem3D conformer coordinates retrieved as 3D SDF
+The XYZ examples contain PubChem3D conformer coordinates retrieved as 3D SDF
 through PubChem PUG REST on 2026-08-24. Each file preserves the source atom
 order and four-decimal coordinates.
 
@@ -37,13 +37,6 @@ order and four-decimal coordinates.
 | `aspirin.xyz` | aspirin | 2244 | C9H8O4 | `000008C400000001` | 21 | 21 |
 | `caffeine.xyz` | caffeine | 2519 | C8H10N4O2 | `000009D700000001` | 24 | 25 |
 
-`XYZ_VALIDATION.json` pins each source URL, conformer ID, molecular formula,
-atom and source-bond counts, exact source bond endpoints and orders, element
-composition, coordinate bounds, and SHA-256 digest. The offline validator at
-`wasm-plugin/tests/validate-pubchem-xyz.mjs` additionally checks canonical XYZ
-syntax, finite and non-coincident coordinates, and exact agreement between
-Mol*-style XYZ bond inference and the source SDF connectivity.
-
 - Compound records: https://pubchem.ncbi.nlm.nih.gov/compound/702, https://pubchem.ncbi.nlm.nih.gov/compound/241, https://pubchem.ncbi.nlm.nih.gov/compound/2244, https://pubchem.ncbi.nlm.nih.gov/compound/2519
 - Retrieval service: https://pubchem.ncbi.nlm.nih.gov/docs/pug-rest
 - General PubChem citation: Kim S, Chen J, Cheng T, et al. PubChem 2025 update. Nucleic Acids Res. 2025;53(D1):D1516-D1525. https://doi.org/10.1093/nar/gkae1059
@@ -52,8 +45,8 @@ Mol*-style XYZ bond inference and the source SDF connectivity.
 
 The PubChem data submission policy states that PubChem-generated information is
 made available without cost and without restriction. NCBI also notes that some
-submitters may claim rights in contributed molecular data. This corpus contains
-only PubChem-generated conformer coordinates and records its provenance here.
+submitters may claim rights in contributed molecular data. These examples contain
+only PubChem-generated conformer coordinates and record their provenance here.
 
 Suggested wording:
 
@@ -63,7 +56,7 @@ https://doi.org/10.2210/pdb<ID>/pdb. PDB archive data files are available
 under CC0 1.0.
 ```
 
-For an XYZ corpus record:
+For an XYZ example:
 
 ```text
 Coordinate source: PubChem CID <CID> (<compound>), PubChem3D conformer

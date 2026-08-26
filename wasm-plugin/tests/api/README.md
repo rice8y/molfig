@@ -9,6 +9,7 @@ typst compile --root . wasm-plugin/tests/api/maquette-config-passthrough-contrac
 typst compile --root . wasm-plugin/tests/api/future-structure-api-contract.typ /tmp/molfig-future-structure-api-contract.pdf
 typst compile --root . wasm-plugin/tests/api/future-rich-api-contract.typ /tmp/molfig-future-rich-api-contract.pdf
 typst compile --root . wasm-plugin/tests/api/9r1o-reference-integration.typ /tmp/molfig-9r1o-reference-integration.pdf
+node wasm-plugin/scripts/validate-illustrative-rendering.mjs
 ```
 
 The contract and integration tests cover:
@@ -21,8 +22,10 @@ The contract and integration tests cover:
 - stable render-object shape for module-split work;
 - assembly selection;
 - alternate-location selection;
-- Viewer `default`, `auto`, `cartoon`, and illustrative `spacefill` presets,
-  plus `polymer-cartoon`, `ball-and-stick`, `ribbon`, and `backbone` representations;
+- Viewer `default`, `auto`, and `cartoon` presets, plus `spacefill`,
+  `polymer-cartoon`, `ball-and-stick`, `ribbon`, and `backbone` representations;
+- orthogonal `illustrative` renderer parameters and metadata, with invariant
+  OBJ/MTL color-theme materials;
 - ViewerAuto pLDDT annotation dispatch from text CIF and BinaryCIF, plus an
   explicitly selected QMEAN color theme;
 - Mol*-style `selected_visuals` and `realized_visuals` representation

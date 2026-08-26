@@ -1,6 +1,4 @@
-use crate::chemistry::{
-    infer_bonds, infer_element_from_name, infer_xyz_bonds_molstar, normalize_element,
-};
+use crate::chemistry::{infer_element_from_name, infer_xyz_bonds_molstar, normalize_element};
 use crate::model::{
     entity_type_from_component, Assembly, AssemblyGenerator, Atom, AtomSiteAnisotrop,
     AtomSiteColumnPresence, Bond, BondFlags, BondMetadata, BondSource, ChemicalComponent,
@@ -125,28 +123,141 @@ fn apply_molecule_options(mut molecule: Molecule, options: &MeshOptions) -> Mole
     if let Some(id) = &options.assembly {
         molecule = apply_assembly(molecule, id);
     }
-    if options.infer_bonds && molecule.bonds.is_empty() {
-        let bonds = if molecule.source_data.kind == "xyz" {
-            infer_xyz_bonds_molstar(&molecule.atoms)
-        } else {
-            infer_bonds(&molecule.atoms)
-        };
-        let bond_metadata = bonds
-            .iter()
-            .map(|bond| {
-                molecule
-                    .atoms
-                    .get(bond.a)
-                    .zip(molecule.atoms.get(bond.b))
-                    .map(|(a, b)| BondMetadata::computed_for_atoms(a, b))
-                    .unwrap_or_else(BondMetadata::computed)
-            })
-            .collect();
-        molecule.bonds = bonds;
-        molecule.bond_metadata = bond_metadata;
-    }
     molecule.refresh_topology_metadata();
+    if options.infer_bonds {
+        if molecule.source_data.kind == "xyz" {
+            if molecule.bonds.is_empty() {
+                append_computed_bonds(&mut molecule, infer_xyz_bonds_molstar);
+            }
+        } else if molecule.index_pair_bonds.is_none() {
+            append_missing_molstar_bonds(&mut molecule);
+        }
+        molecule.refresh_topology_metadata();
+    }
     molecule
+}
+
+fn append_computed_bonds(molecule: &mut Molecule, infer: impl FnOnce(&[Atom]) -> Vec<Bond>) {
+    let bonds = infer(&molecule.atoms);
+    let metadata = bonds
+        .iter()
+        .map(|bond| {
+            molecule
+                .atoms
+                .get(bond.a)
+                .zip(molecule.atoms.get(bond.b))
+                .map(|(a, b)| BondMetadata::computed_for_atoms(a, b))
+                .unwrap_or_else(BondMetadata::computed)
+        })
+        .collect::<Vec<_>>();
+    append_unique_bonds(
+        &mut molecule.bonds,
+        &mut molecule.bond_metadata,
+        bonds,
+        metadata,
+    );
+}
+
+fn append_missing_molstar_bonds(molecule: &mut Molecule) {
+    // Mol* combines explicit struct_conn and component-dictionary edges with
+    // distance-computed edges. A partially populated explicit bond table must
+    // therefore not suppress the remaining computed edges.
+    let explicit_struct_conn_count = molecule
+        .bond_metadata
+        .iter()
+        .filter(|metadata| metadata.source == BondSource::StructConn)
+        .count();
+    if !molecule.atoms.is_empty()
+        && explicit_struct_conn_count as f64 / molecule.atoms.len() as f64 > 0.95
+    {
+        return;
+    }
+
+    let component_ids = molecule
+        .chemical_component_bonds
+        .iter()
+        .map(|bond| bond.comp_id.to_ascii_uppercase())
+        .collect::<std::collections::BTreeSet<_>>();
+    let residue_ids = molstar_residue_ids(&molecule.atoms);
+    let struct_conn_residue_pairs = molecule
+        .bonds
+        .iter()
+        .zip(&molecule.bond_metadata)
+        .filter(|(_, metadata)| metadata.source == BondSource::StructConn)
+        .filter_map(|(bond, _)| {
+            let a = *residue_ids.get(bond.a)?;
+            let b = *residue_ids.get(bond.b)?;
+            Some(if a <= b { (a, b) } else { (b, a) })
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+
+    let inferred = infer_xyz_bonds_molstar(&molecule.atoms)
+        .into_iter()
+        .filter(|bond| {
+            let Some(a) = molecule.atoms.get(bond.a) else {
+                return false;
+            };
+            let Some(b) = molecule.atoms.get(bond.b) else {
+                return false;
+            };
+            if !a.alt_id.is_empty() && !b.alt_id.is_empty() && a.alt_id != b.alt_id {
+                return false;
+            }
+            let Some(&residue_a) = residue_ids.get(bond.a) else {
+                return false;
+            };
+            let Some(&residue_b) = residue_ids.get(bond.b) else {
+                return false;
+            };
+            let residue_pair = if residue_a <= residue_b {
+                (residue_a, residue_b)
+            } else {
+                (residue_b, residue_a)
+            };
+            if struct_conn_residue_pairs.contains(&residue_pair) {
+                return false;
+            }
+            if residue_a == residue_b && component_ids.contains(&a.residue.to_ascii_uppercase()) {
+                return false;
+            }
+            true
+        })
+        .collect::<Vec<_>>();
+    let metadata = inferred
+        .iter()
+        .map(|bond| {
+            molecule
+                .atoms
+                .get(bond.a)
+                .zip(molecule.atoms.get(bond.b))
+                .map(|(a, b)| BondMetadata::computed_for_atoms(a, b))
+                .unwrap_or_else(BondMetadata::computed)
+        })
+        .collect::<Vec<_>>();
+    append_unique_bonds(
+        &mut molecule.bonds,
+        &mut molecule.bond_metadata,
+        inferred,
+        metadata,
+    );
+}
+
+fn molstar_residue_ids(atoms: &[Atom]) -> Vec<usize> {
+    let mut ids = Vec::with_capacity(atoms.len());
+    let mut by_key =
+        std::collections::BTreeMap::<(i32, String, String, String, String), usize>::new();
+    for atom in atoms {
+        let key = (
+            atom.model_num,
+            atom.chain.clone(),
+            atom.residue_seq.clone(),
+            atom.auth_residue_seq.clone(),
+            atom.insertion_code.clone(),
+        );
+        let next = by_key.len();
+        ids.push(*by_key.entry(key).or_insert(next));
+    }
+    ids
 }
 
 fn looks_like_binary_cif(data: &[u8]) -> bool {
@@ -242,6 +353,7 @@ fn parse_cif_tables(tables: &[CifTable], source_data: SourceData) -> Result<Mole
         let imodel =
             idx("_atom_site.ihm_model_id").or_else(|| idx("_atom_site.pdbx_PDB_model_num"));
         let ientity = idx("_atom_site.label_entity_id");
+        let binary_coordinates = table.columns.get(ix).and_then(Option::as_ref).is_some();
         atom_site_columns = AtomSiteColumnPresence {
             occupancy_defined: true,
             b_iso_defined: ib.is_some(),
@@ -249,15 +361,16 @@ fn parse_cif_tables(tables: &[CifTable], source_data: SourceData) -> Result<Mole
         };
 
         for row_index in table.row_indices() {
-            let x = table
-                .float_at(row_index, ix)
+            let x64 = table
+                .float64_at(row_index, ix)
                 .ok_or_else(|| format!("invalid Cartn_x: {}", table.raw_at(row_index, ix)))?;
-            let y = table
-                .float_at(row_index, iy)
+            let y64 = table
+                .float64_at(row_index, iy)
                 .ok_or_else(|| format!("invalid Cartn_y: {}", table.raw_at(row_index, iy)))?;
-            let z = table
-                .float_at(row_index, iz)
+            let z64 = table
+                .float64_at(row_index, iz)
                 .ok_or_else(|| format!("invalid Cartn_z: {}", table.raw_at(row_index, iz)))?;
+            let (x, y, z) = (x64 as f32, y64 as f32, z64 as f32);
             let name = ilabel_name
                 .map(|n| table.clean_at(row_index, n))
                 .unwrap_or_else(|| "?".to_string());
@@ -337,6 +450,13 @@ fn parse_cif_tables(tables: &[CifTable], source_data: SourceData) -> Result<Mole
                 b_iso,
                 formal_charge,
                 position: Vec3 { x, y, z },
+                // BinaryCIF float columns keep their decoded source precision
+                // in Mol*; text mmCIF conformation columns are Float32-backed.
+                position64: if binary_coordinates {
+                    [x64, y64, z64]
+                } else {
+                    [x as f64, y as f64, z as f64]
+                },
                 het: group.eq_ignore_ascii_case("HETATM"),
                 operator_name: String::new(),
             });
@@ -397,9 +517,19 @@ fn parse_cif_tables(tables: &[CifTable], source_data: SourceData) -> Result<Mole
     let quality_assessment = parse_cif_quality_assessment(tables, &atoms);
     let partial_charges = parse_cif_partial_charges(tables, &atoms);
 
-    let (helices, struct_conf_sheets) = secondary_ranges_from_struct_conf(tables);
+    let secondary_coordinates = secondary_coordinate_type(tables);
+    let (mut helices, struct_conf_sheets) =
+        secondary_ranges_from_struct_conf(tables, secondary_coordinates);
     let mut sheets = struct_conf_sheets;
-    sheets.extend(secondary_ranges_from_tables(tables, "struct_sheet_range"));
+    sheets.extend(secondary_ranges_from_tables(
+        tables,
+        "struct_sheet_range",
+        secondary_coordinates,
+    ));
+    if secondary_coordinates == SecondaryCoordinateType::Auth {
+        normalize_cif_auth_secondary_ranges(&mut helices, &atoms);
+        normalize_cif_auth_secondary_ranges(&mut sheets, &atoms);
+    }
 
     Ok(Molecule {
         source_data,
@@ -2084,8 +2214,39 @@ enum StructConfRangeKind {
     Sheet,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SecondaryCoordinateType {
+    Label,
+    Auth,
+}
+
+fn secondary_coordinate_type(tables: &[CifTable]) -> SecondaryCoordinateType {
+    let struct_conf = tables.iter().find(|table| table.name == "struct_conf");
+    if let Some(table) = struct_conf.filter(|table| table.row_count() > 0) {
+        return secondary_coordinate_type_from_table(table);
+    }
+    tables
+        .iter()
+        .find(|table| table.name == "struct_sheet_range")
+        .map(secondary_coordinate_type_from_table)
+        .unwrap_or(SecondaryCoordinateType::Label)
+}
+
+fn secondary_coordinate_type_from_table(table: &CifTable) -> SecondaryCoordinateType {
+    let label_start = table.header_index(&format!("_{}.beg_label_seq_id", table.name));
+    let label_end = table.header_index(&format!("_{}.end_label_seq_id", table.name));
+    if label_start.is_some_and(|column| first_row_value_is_present(table, column))
+        && label_end.is_some_and(|column| first_row_value_is_present(table, column))
+    {
+        SecondaryCoordinateType::Label
+    } else {
+        SecondaryCoordinateType::Auth
+    }
+}
+
 fn secondary_ranges_from_struct_conf(
     tables: &[CifTable],
+    coordinates: SecondaryCoordinateType,
 ) -> (Vec<SecondaryRange>, Vec<SecondaryRange>) {
     let Some(table) = tables.iter().find(|t| t.name == "struct_conf") else {
         return (Vec::new(), Vec::new());
@@ -2095,7 +2256,7 @@ fn secondary_ranges_from_struct_conf(
         return (
             table
                 .row_indices()
-                .filter_map(|row| secondary_range_from_row(table, &idx, row))
+                .filter_map(|row| secondary_range_from_row(table, &idx, row, coordinates))
                 .collect(),
             Vec::new(),
         );
@@ -2107,7 +2268,7 @@ fn secondary_ranges_from_struct_conf(
         let Some(kind) = struct_conf_range_kind(&table.clean_at(row, conf_type)) else {
             continue;
         };
-        let Some(range) = secondary_range_from_row(table, &idx, row) else {
+        let Some(range) = secondary_range_from_row(table, &idx, row, coordinates) else {
             continue;
         };
         match kind {
@@ -2130,7 +2291,11 @@ fn struct_conf_range_kind(conf_type_id: &str) -> Option<StructConfRangeKind> {
     }
 }
 
-fn secondary_ranges_from_tables(tables: &[CifTable], category: &str) -> Vec<SecondaryRange> {
+fn secondary_ranges_from_tables(
+    tables: &[CifTable],
+    category: &str,
+    coordinates: SecondaryCoordinateType,
+) -> Vec<SecondaryRange> {
     let Some(table) = tables.iter().find(|t| t.name == category) else {
         return Vec::new();
     };
@@ -2138,7 +2303,7 @@ fn secondary_ranges_from_tables(tables: &[CifTable], category: &str) -> Vec<Seco
     let idx = |suffix: &str| table.header_index(&format!("{prefix}{suffix}"));
     table
         .row_indices()
-        .filter_map(|row| secondary_range_from_row(table, &idx, row))
+        .filter_map(|row| secondary_range_from_row(table, &idx, row, coordinates))
         .collect()
 }
 
@@ -2146,8 +2311,9 @@ fn secondary_range_from_row(
     table: &CifTable,
     idx: &dyn Fn(&str) -> Option<usize>,
     row: usize,
+    coordinates: SecondaryCoordinateType,
 ) -> Option<SecondaryRange> {
-    let (chain, start, end) = secondary_coordinate_columns(table, &idx);
+    let (chain, start, end) = secondary_coordinate_columns(&idx, coordinates);
     let start_insertion_code = idx("pdbx_beg_PDB_ins_code");
     let end_insertion_code = idx("pdbx_end_PDB_ins_code");
     let (Some(chain), Some(start), Some(end)) = (chain, start, end) else {
@@ -2167,23 +2333,58 @@ fn secondary_range_from_row(
 }
 
 fn secondary_coordinate_columns(
-    table: &CifTable,
     idx: &dyn Fn(&str) -> Option<usize>,
+    coordinates: SecondaryCoordinateType,
 ) -> (Option<usize>, Option<usize>, Option<usize>) {
-    let label_start = idx("beg_label_seq_id");
-    let label_end = idx("end_label_seq_id");
-    let use_label = table.row_count() > 0
-        && label_start.is_some_and(|column| first_row_value_is_present(table, column))
-        && label_end.is_some_and(|column| first_row_value_is_present(table, column));
-
-    let chain = idx("beg_label_asym_id")
-        .filter(|&column| first_row_value_is_present(table, column))
-        .or_else(|| idx("beg_auth_asym_id"));
-    if use_label {
-        (chain, label_start, label_end)
-    } else {
-        (chain, idx("beg_auth_seq_id"), idx("end_auth_seq_id"))
+    let chain = idx("beg_label_asym_id").or_else(|| idx("beg_auth_asym_id"));
+    match coordinates {
+        SecondaryCoordinateType::Label => (chain, idx("beg_label_seq_id"), idx("end_label_seq_id")),
+        SecondaryCoordinateType::Auth => (chain, idx("beg_auth_seq_id"), idx("end_auth_seq_id")),
     }
+}
+
+fn normalize_cif_auth_secondary_ranges(ranges: &mut [SecondaryRange], atoms: &[Atom]) {
+    for range in ranges {
+        let start = cif_label_secondary_boundary(
+            atoms,
+            &range.chain,
+            range.start,
+            &range.start_insertion_code,
+        );
+        let end =
+            cif_label_secondary_boundary(atoms, &range.chain, range.end, &range.end_insertion_code);
+        let (Some((start_chain, start_seq_id)), Some((end_chain, end_seq_id))) = (start, end)
+        else {
+            continue;
+        };
+        if start_chain != end_chain {
+            continue;
+        }
+        range.chain = start_chain;
+        range.start = start_seq_id;
+        range.end = end_seq_id;
+    }
+}
+
+fn cif_label_secondary_boundary(
+    atoms: &[Atom],
+    label_chain: &str,
+    auth_seq_id: i32,
+    insertion_code: &str,
+) -> Option<(String, i32)> {
+    atoms.iter().find_map(|atom| {
+        (atom.chain == label_chain
+            && atom.auth_residue_seq.trim().parse::<i32>().ok() == Some(auth_seq_id)
+            && atom.insertion_code == insertion_code)
+            .then(|| {
+                atom.residue_seq
+                    .trim()
+                    .parse::<i32>()
+                    .ok()
+                    .map(|label_seq_id| (atom.chain.clone(), label_seq_id))
+            })
+            .flatten()
+    })
 }
 
 fn first_row_value_is_present(table: &CifTable, column: usize) -> bool {
@@ -2471,13 +2672,13 @@ fn normalize_type_symbol_molstar(value: &str) -> String {
 
 fn select_alt_loc(mut molecule: Molecule, requested: &str) -> Molecule {
     let requested = requested.trim();
-    if requested == "all" {
+    if requested.is_empty() || requested == "all" {
         return molecule;
     }
     let source_atoms = molecule.atoms;
     let mut index_map = vec![None; source_atoms.len()];
     let mut chosen = Vec::<Atom>::new();
-    if requested.is_empty() || requested == "highest-occupancy" {
+    if requested == "highest-occupancy" {
         let sites_with_alt = source_atoms
             .iter()
             .filter(|atom| !atom.alt_id.is_empty())
@@ -2488,7 +2689,7 @@ fn select_alt_loc(mut molecule: Molecule, requested: &str) -> Molecule {
                     atom.residue_seq.clone(),
                     atom.insertion_code.clone(),
                     atom.residue.clone(),
-                    atom.name.clone(),
+                    atom.auth_name.clone(),
                 )
             })
             .collect::<Vec<_>>();
@@ -2501,7 +2702,7 @@ fn select_alt_loc(mut molecule: Molecule, requested: &str) -> Molecule {
                 atom.residue_seq.clone(),
                 atom.insertion_code.clone(),
                 atom.residue.clone(),
-                atom.name.clone(),
+                atom.auth_name.clone(),
             );
             if !sites_with_alt.iter().any(|site| site == &key) {
                 keep.push(source_index);

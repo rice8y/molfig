@@ -93,7 +93,7 @@ struct CylinderPrimitiveKey {
     radial_segments: usize,
     top_cap: bool,
     bottom_cap: bool,
-    radius_bits: u64,
+    radius_milli: i32,
 }
 
 #[derive(Default)]
@@ -113,7 +113,10 @@ impl CylinderPrimitiveCache {
             radial_segments: radial_segments.max(3),
             top_cap,
             bottom_cap,
-            radius_bits: radius.to_bits(),
+            // Mol* hashes cylinder properties after Math.round(1000 * radius).
+            // The first primitive inserted for a rounded key is reused for all
+            // later radii that map to the same key.
+            radius_milli: (radius * 1000.0).round() as i32,
         };
         let index = self
             .entries
@@ -1366,7 +1369,7 @@ mod tests {
     }
 
     #[test]
-    fn cylinder_primitive_cache_reuses_exact_radius_and_cap_keys() {
+    fn cylinder_primitive_cache_reuses_molstar_rounded_radius_and_cap_keys() {
         let mut cache = CylinderPrimitiveCache::default();
         let cases = [
             (3, true, true, 0.2_f64),
@@ -1415,7 +1418,7 @@ mod tests {
 
         assert_eq!(cache.len(), cases.len());
         cache.get(8, false, false, f64::from_bits(0.2_f64.to_bits() + 1));
-        assert_eq!(cache.len(), cases.len() + 1);
+        assert_eq!(cache.len(), cases.len());
     }
 
     #[test]
@@ -4880,7 +4883,10 @@ impl MolstarRotationD {
 
     fn from_axis_angle(axis: DVec3, angle: f64) -> Self {
         let axis = axis.normalized();
-        let (s, c) = angle.sin_cos();
+        // Mol* calls Math.sin and Math.cos separately in Mat4.fromRotation.
+        // Keep the same evaluation path instead of Rust's paired sin_cos.
+        let s = angle.sin();
+        let c = angle.cos();
         let oc = 1.0 - c;
         Self {
             m: [

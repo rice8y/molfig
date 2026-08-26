@@ -1,8 +1,10 @@
 # Mol* Viewer Quick Styles Spacefill reference for the small water fixture.
-# The real Chrome/WebGL harness applies the illustrative preset and exports
-# spheres with primitive quality low, matching molfig quality=custom/detail=1.
+# The real Chrome/WebGL harness applies the Illustrative representation preset,
+# whose separate color theme lightens carbon and overrides water. Molfig's
+# Quick Style preserves its selected entity-id base colors, so this fixture
+# keeps geometry parity while recording the intentional OBJ-material difference.
 fixture=tests/fixtures/cif/water.cif
-options={"format":"cif","representation":"spacefill","assembly":"asymmetric-unit","sphere-detail":1,"quality":"custom","export-primitives-quality":"low","obj-basename":"water-spacefill","operator-metadata":false,"obj-groups":false}
+options={"format":"cif","representation":"spacefill","color-theme":"entity-id","style":"illustrative","assembly":"asymmetric-unit","sphere-detail":1,"quality":"custom","export-primitives-quality":"low","obj-basename":"water-spacefill","operator-metadata":false,"obj-groups":false}
 input_format=cif
 molstar_reference_commit=1b8117d3f10f7c978aabb5a0d3d47370635aefe4
 obj_reference=tests/expected/molstar-reference/water-viewer-spacefill.obj

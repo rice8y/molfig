@@ -62,8 +62,8 @@ Structural data source: RCSB PDB / wwPDB, PDB ID `9R1O`, DOI [`10.2210/pdb9R1O/p
   center: true,
   output-format: "svg",
   config: (
-    azimuth: 35,
-    elevation: 24,
+    azimuth: 125,
+    elevation: 40,
     background: "",
   ),
 )
@@ -80,6 +80,47 @@ PubChem3D conformer `000002BE00000001`, retrieved through
 Use `format: "mmcif"`, `format: "bcif"`, or `format: "xyz"` for text mmCIF, BinaryCIF, and XYZ inputs.
 For reproducible documents, prefer explicit `format`, `representation`, `assembly`, `alt-loc`, `mesh-format`, and geometry quality options instead of relying on auto-detection.
 
+## Illustrative Style
+
+Illustrative is an independent style, so it can be combined with any representation and base color theme:
+
+```typst
+#molfig.render(
+  read("1CRN.bcif", encoding: none),
+  format: "bcif",
+  representation: "cartoon",
+  color-theme: "chain-id",
+  style: "illustrative",
+  style-params: (
+    ignore-light: true,
+    outline: true,
+    occlusion: true,
+  ),
+  output-format: "png",
+)
+```
+
+**Rendered 1CRN Illustrative Example**
+
+![RCSB PDB entry 1CRN rendered as an illustrative Cartoon with Molfig](package/examples/illustrative-1crn.png)
+
+Structural data source: RCSB PDB / wwPDB, PDB ID `1CRN`, DOI [`10.2210/pdb1CRN/pdb`](https://doi.org/10.2210/pdb1CRN/pdb). PDB archive data files are distributed under CC0 1.0.
+
+The style preserves the selected color theme and approximates the Mol\* Quick
+Styles flat lighting, dark outline, and ambient occlusion treatment through
+maquette. Ambient occlusion is available for PNG output; SVG output retains the
+flat lighting and silhouette outline.
+
+Molfig reproduces Mol\*-derived static geometry and material selection, but its
+Illustrative output is not a pixel-identical rendering from the Mol\* WebGL
+renderer. OBJ, STL, and PLY do not encode Mol\*'s camera-dependent outline,
+screen-space ambient occlusion, depth reconstruction, blur, or final color
+composition. Maquette applies its own rasterization and post-processing to the
+exported mesh. The difference is often small for simple XYZ atom-and-bond
+figures, but can be more visible for folded polymer Cartoon, Ribbon, and
+Backbone geometry from PDB, mmCIF, or BinaryCIF input. This limitation depends
+on the realized geometry, not on which of those structure formats supplied it.
+
 ## Examples
 
 The [`package/examples`](package/examples) directory contains complete example sources, rendered PDFs, and their accompanying structural data files. The example data files are kept under [`package/examples/data`](package/examples/data), together with attribution metadata.
@@ -92,7 +133,7 @@ The [`package/examples`](package/examples) directory contains complete example s
 - `info(data, ...)` returns molecular and mesh-planning metadata without rendering.
 - `mesh-info(data, mesh-format: "obj", config: (:), ...)` delegates to maquette's mesh metadata helpers for the generated mesh.
 
-Common options include `format`, `representation`, `color-theme`, `theme`, `assembly`, `alt-loc`, `block-index`, `block-header`, `quality`, `decimate`, `sphere-detail`, `linear-segments`, `radial-segments`, `radius-scale`, `atom-radius`, `bond-radius`, `ribbon-radius`, `ribbon-width`, `helix-profile`, `round-cap`, `sheet-arrow-factor`, `tubular-helices`, `infer-bonds`, and `center`.
+Common options include `format`, `representation`, `color-theme`, `style`, `style-params`, `theme`, `assembly`, `alt-loc`, `block-index`, `block-header`, `quality`, `decimate`, `sphere-detail`, `linear-segments`, `radial-segments`, `radius-scale`, `atom-radius`, `bond-radius`, `ribbon-radius`, `ribbon-width`, `helix-profile`, `round-cap`, `sheet-arrow-factor`, `tubular-helices`, `infer-bonds`, and `center`.
 
 The `data` argument accepts bytes from `read(..., encoding: none)`, inline string data for small examples, and Typst 0.15+ path values created with `path("...")`.
 
@@ -119,18 +160,20 @@ The full Molfig manual is available at [`package/docs/documentation.pdf`](packag
 - installation and import conventions;
 - input format handling, XYZ model behavior, and BinaryCIF block selection;
 - every public command and return shape;
-- mesh, representation, assembly, altLoc, and quality options;
+- mesh, representation, Illustrative style, assembly, altLoc, and quality options;
 - maquette passthrough configuration;
 - metadata fields returned by `info` and `render-object`;
 - licensing, third-party notices, and example data attribution;
 - troubleshooting and development commands;
-- embedded 9R1O and PubChem ethanol XYZ renderings.
+- embedded 9R1O, PubChem ethanol XYZ, and Illustrative comparison renderings.
 
 The manual source is [`package/docs/documentation.typ`](package/docs/documentation.typ), and it reads the package version from [`package/typst.toml`](package/typst.toml).
 
 ## Notes And Limits
 
 Molfig emits static presentation meshes. `representation: "surface"` implements the Mol* Viewer Quick Styles Molecular Surface preset on the CPU and exports the result as OBJ/STL/PLY. Gaussian volume and density/volume visuals remain outside the static export contract; the size-dependent ViewerAuto path uses a CPU Gaussian surface for Huge and Gigantic structures.
+
+Known renderer limitation: Molfig's Surface OBJ contains the molecular-surface geometry and indexed corner normals, but maquette 0.1.3 reduces the normal indices of each OBJ face to one triangle normal before smooth shading. As a result, `render(..., representation: "surface")` can show triangular fringes, faceted patches, or shading that differs from Mol\*, even when the exported geometry is correct. This is a maquette rendering limitation rather than an XYZ, PDB, mmCIF, BinaryCIF, or molecular-surface generation difference. For strict visual comparison, export OBJ and use a renderer that preserves indexed corner normals.
 
 IHM coarse sphere and gaussian rows remain available as coarse model units and participate in the size-dependent ViewerAuto Gaussian-surface path.
 
@@ -163,7 +206,6 @@ See [`benchmarks/README.md`](benchmarks/README.md) for case selection and runner
 cd wasm-plugin
 cargo fmt --check
 cargo test
-node tests/validate-pubchem-xyz.mjs
 cargo build --release --target wasm32-unknown-unknown
 cp target/wasm32-unknown-unknown/release/molfig.wasm ../package/molfig.wasm
 cd ../package
