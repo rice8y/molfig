@@ -42,6 +42,8 @@ wasm-plugin/tests/expected/molstar-reference/*
 !wasm-plugin/tests/expected/molstar-reference/pubchem-*-xyz-default.obj
 !wasm-plugin/tests/expected/molstar-reference/pubchem-*-xyz-default.mtl
 !wasm-plugin/tests/expected/molstar-reference/pubchem-*-xyz-default.stl
+!wasm-plugin/tests/expected/molstar-reference/molfig-benzene-spacefill.*
+!wasm-plugin/tests/expected/molstar-reference/molfig-benzene-surface.*
 !wasm-plugin/tests/validate-pubchem-xyz.mjs
 
 # Public Typst API contract and integration sources.

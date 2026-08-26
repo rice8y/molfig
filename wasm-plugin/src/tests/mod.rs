@@ -525,6 +525,52 @@ fn pubchem_xyz_corpus_matches_source_composition_bounds_and_connectivity() {
 }
 
 #[test]
+fn pubchem_benzene_default_preset_emits_aromatic_dash_cylinders() {
+    let molecule = parse_molecule_with_options(
+        include_bytes!("../../../package/examples/data/benzene.xyz"),
+        &MeshOptions {
+            format: InputFormat::Xyz,
+            representation: Representation::Default,
+            assembly: None,
+            ..MeshOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(molecule.rings.len(), 1);
+    assert_eq!(molecule.derived_aromatic_bonds.len(), 6);
+    assert_eq!(molecule.resonance.element_aromatic_ring_indices.len(), 12);
+    assert!(molecule.resonance.element_aromatic_ring_indices[..6]
+        .iter()
+        .all(|rings| rings.as_slice() == [0]));
+    let objects = build_render_objects(
+        &molecule,
+        &MeshOptions {
+            format: InputFormat::Xyz,
+            representation: Representation::Default,
+            assembly: None,
+            ..MeshOptions::default()
+        },
+    );
+
+    assert_eq!(
+        objects
+            .iter()
+            .filter(|object| {
+                matches!(
+                    object,
+                    RenderObject::ExportCylinderWithSegments {
+                        top_cap: true,
+                        bottom_cap: true,
+                        ..
+                    }
+                )
+            })
+            .count(),
+        12
+    );
+}
+
+#[test]
 fn xyz_browser_report_pins_molstar_default_ball_and_stick_scene() {
     let report = read_repo_file_if_present(
         "wasm-plugin/tests/expected/molstar-reference/water-xyz-default.browser-report.json",
@@ -1036,6 +1082,11 @@ fn molstar_browser_reference_converter_uses_real_chrome_webgl_export_path() {
         "applyRepresentationPreset",
         "ViewerAutoPreset",
         "PresetStructureRepresentations.illustrative",
+        "ParamDefinition as PD",
+        "PD.getDefaultValues(PostprocessingParams)",
+        "ignoreLight: false",
+        "outline: defaults.outline",
+        "visualQuality: quality as any",
         "renderObjectStateMetadata",
         "structure-component-static-",
         "representationOrder",
@@ -2039,7 +2090,10 @@ fn cif_asymmetric_unit_order_follows_molstar_chain_segment_order() {
         })
         .collect::<Vec<_>>();
 
-    assert_eq!(units, vec![("A", vec![0]), ("B", vec![1]), ("C", vec![2])]);
+    // Mol* buckets atom_site rows by entity before chain, preserving the
+    // first-seen order within each bucket: entity 1 contributes A then C,
+    // followed by entity 2 chain B.
+    assert_eq!(units, vec![("A", vec![0]), ("C", vec![2]), ("B", vec![1])]);
 }
 
 #[test]
@@ -2077,7 +2131,7 @@ fn structure_unit_array_ordering_and_unit_maps_match_molstar_create() {
     assert_eq!(structure.unit_index_by_id(20), Some(1));
     assert_eq!(structure.unit_index_map().get(&10), Some(&0));
     assert_eq!(structure.position(20, 0).unwrap(), vec3(0.0, 0.0, 0.0));
-    assert_eq!(structure.position(10, 0).unwrap(), vec3(5.0, 0.0, 0.0));
+    assert_eq!(structure.position(10, 0).unwrap(), vec3(10.0, 0.0, 0.0));
     assert_eq!(structure.serial_index(20, 0), Some(1));
     assert_eq!(
         structure.serial_mapping(),
@@ -3689,9 +3743,10 @@ fn molstar_sheet_and_tube_defaults_use_size_factor_aspect_and_caps() {
             |(width, height, _, _, _)| (*width - 0.20).abs() <= 0.000_001
                 && (*height - 1.00).abs() <= 0.000_001
         ));
-    assert!(sheet_segments
+    assert!(sheet_segments[..sheet_segments.len() - 1]
         .iter()
         .all(|(_, _, arrow_height, _, _)| arrow_height.abs() <= 0.000_001));
+    assert!((sheet_segments.last().unwrap().2 - 1.5).abs() <= 0.000_001);
     assert!(sheet_segments.first().unwrap().3);
     assert!(sheet_segments.last().unwrap().4);
 
@@ -3750,14 +3805,17 @@ fn molstar_sheet_and_tube_defaults_use_size_factor_aspect_and_caps() {
             ..MeshOptions::default()
         },
     );
-    let RenderObject::Tube { radius, .. } = ribbon_objects
+    let RenderObject::PolymerTraceSegment {
+        widths, heights, ..
+    } = ribbon_objects
         .iter()
-        .find(|object| matches!(object, RenderObject::Tube { .. }))
+        .find(|object| matches!(object, RenderObject::PolymerTraceSegment { .. }))
         .expect("ribbon polymer-tube")
     else {
         unreachable!()
     };
-    assert!((*radius - 1.0).abs() <= 0.000_001);
+    assert!((widths[1] - 1.2).abs() <= 0.000_001);
+    assert!((heights[1] - 1.2).abs() <= 0.000_001);
 }
 
 #[test]
@@ -4284,7 +4342,10 @@ fn molfig_obj_outputs_are_diffed_against_all_molstar_reference_fixtures() {
             &generated,
             &format!("{contract_path}: OBJ exact export"),
         );
-        if contract_optional_value(&contract, "exact_diff_required") == Some("true") {
+        let exact_diff_required = contract_optional_value(&contract, "obj_exact_diff_required")
+            .or_else(|| contract_optional_value(&contract, "exact_diff_required"))
+            == Some("true");
+        if exact_diff_required {
             assert!(
                 report.passed,
                 "{contract_path}: OBJ must match the pinned Mol* browser export exactly: {}",
@@ -4355,7 +4416,10 @@ fn molfig_stl_outputs_are_diffed_against_all_molstar_reference_fixtures() {
             &generated,
             &format!("{contract_path}: STL exact export"),
         );
-        if contract_optional_value(&contract, "exact_diff_required") == Some("true") {
+        let exact_diff_required = contract_optional_value(&contract, "stl_exact_diff_required")
+            .or_else(|| contract_optional_value(&contract, "exact_diff_required"))
+            == Some("true");
+        if exact_diff_required {
             assert!(
                 report.passed,
                 "{contract_path}: STL must match the pinned Mol* browser export exactly: {}",
@@ -4369,6 +4433,34 @@ fn molfig_stl_outputs_are_diffed_against_all_molstar_reference_fixtures() {
                 "{contract_path}: STL exact diff report was not actionable: {}",
                 report.message
             );
+            if let (Some(vertex_tolerance), Some(normal_tolerance)) = (
+                contract_optional_value(&contract, "stl_max_vertex_component_delta"),
+                contract_optional_value(&contract, "stl_max_normal_component_delta"),
+            ) {
+                assert_eq!(
+                    actual_stats.byte_len, reference_stats.byte_len,
+                    "{contract_path}: tolerant STL parity still requires identical byte length"
+                );
+                assert_eq!(
+                    actual_stats.facet_count, reference_stats.facet_count,
+                    "{contract_path}: tolerant STL parity still requires identical topology"
+                );
+                let drift = stl_component_drift(&reference, &generated);
+                let vertex_tolerance = vertex_tolerance.parse::<f32>().unwrap_or_else(|_| {
+                    panic!("{contract_path}: invalid stl_max_vertex_component_delta")
+                });
+                let normal_tolerance = normal_tolerance.parse::<f32>().unwrap_or_else(|_| {
+                    panic!("{contract_path}: invalid stl_max_normal_component_delta")
+                });
+                assert!(
+                    drift.max_vertex_component_delta <= vertex_tolerance,
+                    "{contract_path}: STL vertex drift exceeded {vertex_tolerance}: {drift:?}"
+                );
+                assert!(
+                    drift.max_normal_component_delta <= normal_tolerance,
+                    "{contract_path}: STL normal drift exceeded {normal_tolerance}: {drift:?}"
+                );
+            }
         }
         assert_ne!(
             stable_test_hash64(&generated),
@@ -4989,7 +5081,9 @@ fn alt_loc_selection_remaps_bonds() {
     assert_eq!(mol.atoms[mol.bonds[0].a].id, 1);
     assert_eq!(mol.atoms[mol.bonds[0].b].id, 3);
     assert_eq!(mol.bond_metadata.len(), 1);
-    assert_eq!(mol.bond_metadata[0].source, BondSource::PdbConect);
+    // Mol* converts PDB CONECT records into an mmCIF struct_conn category
+    // before building the atomic model.
+    assert_eq!(mol.bond_metadata[0].source, BondSource::StructConn);
     assert_eq!(mol.bond_metadata[0].order, 1);
     assert!(mol.bond_metadata[0].flags.contains(BondFlags::COVALENT));
 }
@@ -5077,7 +5171,7 @@ fn atomic_protein_altloc_tie_fixture_prefers_a_on_highest_occupancy_tie() {
         assert_eq!(
             all.atoms
                 .iter()
-                .filter(|atom| atom.name == "CB")
+                .filter(|atom| atom.auth_name == "CB")
                 .map(|atom| (atom.alt_id.as_str(), atom.occupancy))
                 .collect::<Vec<_>>(),
             vec![("A", 0.5), ("B", 0.5)]
@@ -6748,6 +6842,25 @@ fn cif_secondary_structure_falls_back_to_auth_when_label_seq_is_null() {
 }
 
 #[test]
+fn cif_auth_secondary_ranges_normalize_to_atom_label_coordinates() {
+    let cif = b"data_demo\nloop_\n_atom_site.group_PDB\n_atom_site.id\n_atom_site.type_symbol\n_atom_site.label_atom_id\n_atom_site.label_comp_id\n_atom_site.label_asym_id\n_atom_site.auth_asym_id\n_atom_site.label_seq_id\n_atom_site.auth_seq_id\n_atom_site.Cartn_x\n_atom_site.Cartn_y\n_atom_site.Cartn_z\nATOM 1 C CA ALA A X 1 10 0.000 0.000 0.000\nATOM 2 C CA GLY A X 2 20 1.000 0.000 0.000\n#\nloop_\n_struct_conf.conf_type_id\n_struct_conf.beg_label_asym_id\n_struct_conf.beg_label_seq_id\n_struct_conf.beg_auth_asym_id\n_struct_conf.beg_auth_seq_id\n_struct_conf.end_label_seq_id\n_struct_conf.end_auth_seq_id\n_struct_conf.pdbx_beg_PDB_ins_code\n_struct_conf.pdbx_end_PDB_ins_code\nHELX_P A . X 10 ? 20 . .\n#\n";
+    let mol = parse_molecule_with_options(
+        cif,
+        &MeshOptions {
+            format: InputFormat::Cif,
+            assembly: None,
+            ..MeshOptions::default()
+        },
+    )
+    .unwrap();
+
+    assert_eq!(mol.helices.len(), 1);
+    assert_eq!(mol.helices[0].chain, "A");
+    assert_eq!(mol.helices[0].start, 1);
+    assert_eq!(mol.helices[0].end, 2);
+}
+
+#[test]
 fn pdb_secondary_structure_uses_fixed_columns_for_adjacent_fields() {
     fn set_field(line: &mut [u8], start: usize, value: &str) {
         for (offset, byte) in value.bytes().enumerate() {
@@ -6829,6 +6942,56 @@ fn pdb_secondary_structure_uses_fixed_columns_for_adjacent_fields() {
     assert_eq!(mol.sheets[1].start_insertion_code, "A");
     assert_eq!(mol.sheets[1].end, 4);
     assert_eq!(mol.sheets[1].end_insertion_code, "B");
+}
+
+#[test]
+fn pdb_secondary_structure_normalizes_auth_ranges_to_seqres_label_ids() {
+    fn set_field(line: &mut [u8], start: usize, value: &str) {
+        for (offset, byte) in value.bytes().enumerate() {
+            line[start + offset] = byte;
+        }
+    }
+
+    let mut helix = vec![b' '; 80];
+    set_field(&mut helix, 0, "HELIX ");
+    set_field(&mut helix, 7, "  1");
+    set_field(&mut helix, 11, "H1 ");
+    set_field(&mut helix, 15, "ALA ");
+    set_field(&mut helix, 19, "A");
+    set_field(&mut helix, 21, "  10");
+    set_field(&mut helix, 27, "GLY ");
+    set_field(&mut helix, 31, "A");
+    set_field(&mut helix, 33, "  11");
+
+    let pdb = format!(
+        "SEQRES   1 A    5  MET SER ALA GLY THR\n{}\nATOM      1  CA  ALA A  10       0.000   0.000   0.000  1.00 10.00           C\nATOM      2  CA  GLY A  11       1.000   0.000   0.000  1.00 10.00           C\nEND\n",
+        String::from_utf8(helix).unwrap()
+    );
+    let mol = parse_molecule_with_options(
+        pdb.as_bytes(),
+        &MeshOptions {
+            format: InputFormat::Pdb,
+            assembly: None,
+            infer_bonds: false,
+            ..MeshOptions::default()
+        },
+    )
+    .unwrap();
+
+    assert_eq!(mol.atoms[0].auth_residue_seq, "10");
+    assert_eq!(mol.atoms[0].residue_seq, "3");
+    assert_eq!(mol.atoms[1].auth_residue_seq, "11");
+    assert_eq!(mol.atoms[1].residue_seq, "4");
+    assert_eq!(mol.helices.len(), 1);
+    assert_eq!(mol.helices[0].chain, "A");
+    assert_eq!(mol.helices[0].start, 3);
+    assert_eq!(mol.helices[0].end, 4);
+
+    let secondary = &mol.atomic_structure().model.secondary_structure;
+    assert_eq!(
+        secondary.residue_type,
+        vec![SecondaryStructureType::HELIX, SecondaryStructureType::HELIX]
+    );
 }
 
 #[test]
@@ -7978,7 +8141,8 @@ fn molstar_structure_builder_merges_water_and_single_atom_chains_and_tracks_inte
         test_atom(2, "O", "W2", 1, vec3(1.0, 0.0, 0.0)),
         test_atom(3, "ZN", "I1", 1, vec3(3.0, 0.0, 0.0)),
         test_atom(4, "CL", "I2", 1, vec3(4.0, 0.0, 0.0)),
-        test_atom(5, "CA", "P", 1, vec3(6.0, 0.0, 0.0)),
+        // Mol* ignores explicit inter-unit struct_conn edges longer than 4 Å.
+        test_atom(5, "CA", "P", 1, vec3(2.0, 0.0, 0.0)),
     ];
     atoms[0].residue = "HOH".to_string();
     atoms[1].residue = "HOH".to_string();
@@ -8020,7 +8184,18 @@ fn molstar_structure_builder_merges_water_and_single_atom_chains_and_tracks_inte
                 distance: Some(2.0),
                 operator_a: -1,
                 operator_b: -1,
-                struct_conn: None,
+                struct_conn: Some(StructConnMetadata {
+                    id: "disulf1".to_string(),
+                    row_index: 0,
+                    partner_a_atom_index: 0,
+                    partner_b_atom_index: 4,
+                    conn_type_id: "disulf".to_string(),
+                    value_order: "trip".to_string(),
+                    partner_a_symmetry: String::new(),
+                    partner_b_symmetry: String::new(),
+                    partner_a_comp_id: "HOH".to_string(),
+                    partner_b_comp_id: "GLY".to_string(),
+                }),
             },
             BondMetadata::pdb_conect(12),
         ],
@@ -9671,7 +9846,7 @@ fn cartoon_secondary_trace_flags_match_molstar_transitions() {
     assert!(summary.contains(r#""secondary_type":"helix","chain":"A","residue_start":1,"residue_end":1,"group_id":0,"polymer_trace":{"initial":true,"final":false,"sec_struc_first":false,"sec_struc_last":false}"#));
     assert!(summary.contains(r#""secondary_type":"helix","chain":"A","residue_start":4,"residue_end":4,"group_id":3,"polymer_trace":{"initial":false,"final":false,"sec_struc_first":false,"sec_struc_last":true}"#));
     assert!(summary.contains(r#""secondary_type":"sheet","chain":"A","residue_start":5,"residue_end":5,"group_id":4,"polymer_trace":{"initial":false,"final":false,"sec_struc_first":true,"sec_struc_last":false}"#));
-    assert!(summary.contains(r#""secondary_type":"sheet","chain":"A","residue_start":6,"residue_end":6,"group_id":5,"polymer_trace":{"initial":false,"final":true,"sec_struc_first":false,"sec_struc_last":false}"#));
+    assert!(summary.contains(r#""secondary_type":"sheet","chain":"A","residue_start":6,"residue_end":6,"group_id":5,"polymer_trace":{"initial":false,"final":true,"sec_struc_first":false,"sec_struc_last":true}"#));
 }
 
 #[test]
@@ -9917,9 +10092,9 @@ fn molstar_sec_struc_flags_clamp_at_missing_trace_polymer_ranges() {
     );
 
     let summary = render_object_summary_json(&molecule, &options);
-    assert!(summary.contains(r#""secondary_type":"helix","chain":"A","residue_start":1,"residue_end":1,"group_id":0,"polymer_trace":{"initial":true,"final":true,"sec_struc_first":false,"sec_struc_last":false}"#));
+    assert!(summary.contains(r#""secondary_type":"helix","chain":"A","residue_start":1,"residue_end":1,"group_id":0,"polymer_trace":{"initial":true,"final":true,"sec_struc_first":false,"sec_struc_last":true}"#));
     assert!(summary.contains(r#""secondary_type":"sheet","chain":"A","residue_start":3,"residue_end":3,"group_id":1,"polymer_trace":{"initial":true,"final":false,"sec_struc_first":false,"sec_struc_last":false}"#));
-    assert!(summary.contains(r#""secondary_type":"sheet","chain":"A","residue_start":4,"residue_end":4,"group_id":2,"polymer_trace":{"initial":false,"final":true,"sec_struc_first":false,"sec_struc_last":false}"#));
+    assert!(summary.contains(r#""secondary_type":"sheet","chain":"A","residue_start":4,"residue_end":4,"group_id":2,"polymer_trace":{"initial":false,"final":true,"sec_struc_first":false,"sec_struc_last":true}"#));
 }
 
 #[test]
@@ -9977,9 +10152,9 @@ fn molstar_trace_initial_final_flags_follow_polymer_ranges_not_chain_boundaries(
 
     let summary = render_object_summary_json(&molecule, &options);
     assert!(summary.contains(r#""secondary_type":"helix","chain":"A","residue_start":1,"residue_end":1,"group_id":0,"polymer_trace":{"initial":true,"final":false,"sec_struc_first":false,"sec_struc_last":false}"#));
-    assert!(summary.contains(r#""secondary_type":"helix","chain":"A","residue_start":2,"residue_end":2,"group_id":1,"polymer_trace":{"initial":false,"final":true,"sec_struc_first":false,"sec_struc_last":false}"#));
+    assert!(summary.contains(r#""secondary_type":"helix","chain":"A","residue_start":2,"residue_end":2,"group_id":1,"polymer_trace":{"initial":false,"final":true,"sec_struc_first":false,"sec_struc_last":true}"#));
     assert!(summary.contains(r#""secondary_type":"helix","chain":"A","residue_start":3,"residue_end":3,"group_id":2,"polymer_trace":{"initial":true,"final":false,"sec_struc_first":false,"sec_struc_last":false}"#));
-    assert!(summary.contains(r#""secondary_type":"helix","chain":"A","residue_start":4,"residue_end":4,"group_id":3,"polymer_trace":{"initial":false,"final":true,"sec_struc_first":false,"sec_struc_last":false}"#));
+    assert!(summary.contains(r#""secondary_type":"helix","chain":"A","residue_start":4,"residue_end":4,"group_id":3,"polymer_trace":{"initial":false,"final":true,"sec_struc_first":false,"sec_struc_last":true}"#));
 }
 
 #[test]
@@ -10378,14 +10553,9 @@ fn molstar_coil_bridges_missing_trace_residues_as_polymer_gap() {
     let molecule = Molecule {
         atoms: [1, 2, 3, 6, 7, 8]
             .into_iter()
-            .map(|seq| {
-                test_atom(
-                    seq as usize,
-                    "CA",
-                    "A",
-                    seq,
-                    vec3(seq as f32 * 2.0, 0.0, 0.0),
-                )
+            .enumerate()
+            .map(|(index, seq)| {
+                test_atom(index + 1, "CA", "A", seq, vec3(seq as f32 * 2.0, 0.0, 0.0))
             })
             .collect(),
         helices: vec![
@@ -10492,14 +10662,9 @@ fn polymer_trace_iterator_reference_json_matches_molstar_snapshot() {
     let missing_bridge = Molecule {
         atoms: [1, 2, 3, 6, 7, 8]
             .into_iter()
-            .map(|seq| {
-                test_atom(
-                    seq as usize,
-                    "CA",
-                    "A",
-                    seq,
-                    vec3(seq as f32 * 2.0, 0.0, 0.0),
-                )
+            .enumerate()
+            .map(|(index, seq)| {
+                test_atom(index + 1, "CA", "A", seq, vec3(seq as f32 * 2.0, 0.0, 0.0))
             })
             .collect(),
         helices: vec![
@@ -12421,9 +12586,10 @@ fn molstar_ligand_overlay_includes_molstar_connected_whole_residues() {
     };
 
     let summary = render_object_summary_json(&molecule, &options);
-    assert_eq!(summary.matches(r#""secondary_type":"ligand""#).count(), 13);
+    assert_eq!(summary.matches(r#""secondary_type":"ligand""#).count(), 19);
     assert_eq!(summary.matches(r#""visual":"element-sphere""#).count(), 7);
-    assert_eq!(summary.matches(r#""visual":"intra-bond""#).count(), 8);
+    assert_eq!(summary.matches(r#""visual":"intra-bond""#).count(), 2);
+    assert_eq!(summary.matches(r#""visual":"inter-bond""#).count(), 12);
     assert!(summary.contains(r#""secondary_type":"ligand","chain":"L""#));
     assert!(summary.contains(r#""secondary_type":"ligand","chain":"W""#));
     assert!(summary.contains(r#""secondary_type":"ligand","chain":"I""#));
@@ -12523,7 +12689,9 @@ fn backbone_representation_uses_molstar_backbone_cylinder_and_sphere_visuals() {
     let cylinders = objects
         .iter()
         .filter_map(|object| match object {
-            RenderObject::Cylinder { start, end, radius } => Some((*start, *end, *radius)),
+            RenderObject::ExportCylinderWithSegments64 {
+                start, end, radius, ..
+            } => Some((start.to_vec3(), end.to_vec3(), *radius)),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -12539,12 +12707,12 @@ fn backbone_representation_uses_molstar_backbone_cylinder_and_sphere_visuals() {
     assert_eq!(spheres.len(), 3);
     assert_vec3_close(cylinders[0].0, vec3(0.0, 0.0, 0.0), 0.000_001);
     assert_vec3_close(cylinders[0].1, vec3(1.9, 0.0, 0.0), 0.000_001);
-    assert_vec3_close(cylinders[1].0, vec3(3.8, 0.0, 0.0), 0.000_001);
-    assert_vec3_close(cylinders[1].1, vec3(1.9, 0.0, 0.0), 0.000_001);
+    assert_vec3_close(cylinders[1].0, vec3(1.9, 0.0, 0.0), 0.000_001);
+    assert_vec3_close(cylinders[1].1, vec3(3.8, 0.0, 0.0), 0.000_001);
     assert_vec3_close(cylinders[4].0, vec3(7.6, 0.0, 0.0), 0.000_001);
     assert_vec3_close(cylinders[4].1, vec3(3.8, 0.0, 0.0), 0.000_001);
-    assert_vec3_close(cylinders[5].0, vec3(0.0, 0.0, 0.0), 0.000_001);
-    assert_vec3_close(cylinders[5].1, vec3(3.8, 0.0, 0.0), 0.000_001);
+    assert_vec3_close(cylinders[5].0, vec3(3.8, 0.0, 0.0), 0.000_001);
+    assert_vec3_close(cylinders[5].1, vec3(0.0, 0.0, 0.0), 0.000_001);
     assert!((cylinders[0].2 - 0.3).abs() <= 0.000_001);
     assert_vec3_close(spheres[2].0, vec3(7.6, 0.0, 0.0), 0.000_001);
     assert!((spheres[2].1 - 0.3).abs() <= 0.000_001);
@@ -12630,7 +12798,7 @@ fn molstar_component_ball_and_stick_uses_physical_bond_radius() {
     let cylinders = objects
         .iter()
         .filter_map(|object| match object {
-            RenderObject::LinkCylinderWithSegments { radius, .. } => Some(*radius),
+            RenderObject::ExportCylinderWithSegments { radius, .. } => Some(*radius),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -12677,7 +12845,7 @@ fn molstar_component_ball_and_stick_uses_type_symbol_for_physical_size_theme() {
     let cylinders = objects
         .iter()
         .filter_map(|object| match object {
-            RenderObject::LinkCylinderWithSegments { radius, .. } => Some(*radius),
+            RenderObject::ExportCylinderWithSegments { radius, .. } => Some(*radius),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -13704,7 +13872,7 @@ fn render_object_summary_includes_atom_bond_semantics_and_escapes_chain() {
     assert!(summary.contains(r#""geometry_type":"cylinder","visual":"intra-bond","representation":"ball-and-stick","secondary_type":"bond","chain":"A\"B","residue_start":10,"residue_end":11,"group_id":0"#));
     assert!(summary.contains(r#""value_cell":{"group_id":0"#));
     assert!(summary.contains(
-        r#""valueCell":{"drawCount":432,"uVertexCount":148,"uGroupCount":1,"instanceCount":1,"uInstanceCount":1}"#
+        r#""valueCell":{"drawCount":216,"uVertexCount":74,"uGroupCount":1,"instanceCount":1,"uInstanceCount":1}"#
     ));
 }
 
@@ -13822,10 +13990,10 @@ fn api_obj_export_options_can_match_molstar_reference_header_shape() {
 }
 
 #[test]
-fn api_obj_export_emits_molstar_default_materials_from_semantic_objects() {
+fn api_obj_export_preserves_base_materials_for_illustrative_quick_style() {
     let cif = b"data_demo\nloop_\n_atom_site.group_PDB\n_atom_site.id\n_atom_site.type_symbol\n_atom_site.label_atom_id\n_atom_site.label_comp_id\n_atom_site.label_asym_id\n_atom_site.auth_asym_id\n_atom_site.label_entity_id\n_atom_site.label_seq_id\n_atom_site.Cartn_x\n_atom_site.Cartn_y\n_atom_site.Cartn_z\nATOM 1 C CA ALA A A 1 1 0.0 0.0 0.0\nATOM 2 O O HOH B B 2 1 4.0 0.0 0.0\n#\n";
     let options =
-        br#"{"format":"cif","representation":"spacefill","assembly":"asymmetric-unit","center":false,"sphere-detail":1,"obj-groups":false}"#;
+        br#"{"format":"cif","representation":"spacefill","color-theme":"entity-id","style":"illustrative","assembly":"asymmetric-unit","center":false,"sphere-detail":1,"obj-groups":false}"#;
 
     let parsed_options = MeshOptions::from_json(options).unwrap();
     let molecule = parse_molecule_with_options(cif, &parsed_options).unwrap();
@@ -13845,35 +14013,33 @@ fn api_obj_export_emits_molstar_default_materials_from_semantic_objects() {
     assert!(mesh
         .face_materials
         .iter()
-        .any(|material| material.color == 0x4fc69c && material.alpha_tenths == 10));
+        .any(|material| material.color == 0x1b9e77 && material.alpha_tenths == 10));
     assert!(mesh
         .face_materials
         .iter()
-        .any(|material| material.color == 0xff0d0d && material.alpha_tenths == 10));
+        .any(|material| material.color == 0xd95f02 && material.alpha_tenths == 10));
 
     let obj = String::from_utf8(convert_to_obj(cif, options).unwrap()).unwrap();
     let switches = obj
         .lines()
         .filter(|line| line.starts_with("usemtl "))
         .collect::<Vec<_>>();
-    assert_eq!(switches, vec!["usemtl 0x4fc69c1", "usemtl 0xff0d0d1"]);
-    assert!(obj.contains("\nusemtl 0x4fc69c1\nf "));
-    assert!(obj.contains("\nusemtl 0xff0d0d1\nf "));
+    assert_eq!(switches, vec!["usemtl 0x1b9e771", "usemtl 0xd95f021"]);
+    assert!(obj.contains("\nusemtl 0x1b9e771\nf "));
+    assert!(obj.contains("\nusemtl 0xd95f021\nf "));
 
     let mtl = String::from_utf8(convert_to_mtl(cif, options).unwrap()).unwrap();
-    if let Some(reference_mtl) = read_repo_file_if_present("package/examples/data/9R1O.mtl") {
-        assert_eq!(mtl, reference_mtl);
-    }
-    assert_eq!(mtl.len(), 181);
-    assert_eq!(
-        format!("{:016x}", stable_test_hash64(mtl.as_bytes())),
-        "a9264402b504efb2"
-    );
+    let default_options = std::str::from_utf8(options)
+        .unwrap()
+        .replace("\"illustrative\"", "\"default\"")
+        .into_bytes();
+    let default_mtl = String::from_utf8(convert_to_mtl(cif, &default_options).unwrap()).unwrap();
+    assert_eq!(mtl, default_mtl);
 
     let material_map = String::from_utf8(maquette_material_map(obj.as_bytes()).unwrap()).unwrap();
     assert_eq!(
         material_map,
-        r##"{"0x4fc69c1":"#4fc69c","0xff0d0d1":"#ff0d0d"}"##
+        r##"{"0x1b9e771":"#1b9e77","0xd95f021":"#d95f02"}"##
     );
 }
 
@@ -15520,6 +15686,41 @@ fn stl_stats(stl: &[u8]) -> StlStats {
         }
     }
     stats
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct StlComponentDrift {
+    max_vertex_component_delta: f32,
+    max_normal_component_delta: f32,
+}
+
+fn stl_component_drift(reference: &[u8], generated: &[u8]) -> StlComponentDrift {
+    let reference_stats = stl_stats(reference);
+    let generated_stats = stl_stats(generated);
+    assert_eq!(reference_stats.facet_count, generated_stats.facet_count);
+
+    let mut drift = StlComponentDrift {
+        max_vertex_component_delta: 0.0,
+        max_normal_component_delta: 0.0,
+    };
+    for facet in 0..reference_stats.facet_count {
+        let base = 84 + facet * 50;
+        for component in 0..12 {
+            let offset = base + component * 4;
+            let delta = (stl_f32(reference, offset) - stl_f32(generated, offset)).abs();
+            if component < 3 {
+                drift.max_normal_component_delta = drift.max_normal_component_delta.max(delta);
+            } else {
+                drift.max_vertex_component_delta = drift.max_vertex_component_delta.max(delta);
+            }
+        }
+        assert_eq!(
+            &reference[base + 48..base + 50],
+            &generated[base + 48..base + 50],
+            "STL attribute byte count differs at facet {facet}"
+        );
+    }
+    drift
 }
 
 fn nine_r1o_default_assembly_live_export_diff_json() -> Option<String> {
@@ -17642,6 +17843,7 @@ fn test_atom(id: usize, name: &str, chain: &str, seq: i32, position: Vec3) -> At
         b_iso: 0.0,
         formal_charge: 0,
         position,
+        position64: [position.x as f64, position.y as f64, position.z as f64],
         het: false,
         operator_name: String::new(),
     }

@@ -15,6 +15,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const workspaceDir = path.resolve(rootDir, '..');
 const defaultManifest = 'tests/expected/molstar-reference/reference-fixtures.txt';
 const defaultMolstarDir = 'artifacts/molstar';
 const defaultOutDir = '/private/tmp/molfig-molstar-browser-reference';
@@ -41,6 +42,7 @@ Options:
   --render-object-report   Print per-render-object draw-count diagnostics.
   --compare-references     Diff generated OBJ/MTL/STL bytes against contract references.
   --compare-molfig          Diff generated browser OBJ/STL against molfig exports.
+  --capture-images         Save the rendered Mol* viewport as <stem>.png.
   --molfig-diff <path|cargo>
                           molfig-diff command for --compare-molfig. Default: built binary or cargo.
   --debug-stl-facet <n[,n]>
@@ -65,6 +67,7 @@ function parseArgs(argv) {
     renderObjectReport: false,
     compareReferences: false,
     compareMolfig: false,
+    captureImages: false,
     molfigDiff: undefined,
     debugStlFacets: [],
     timeoutMs: 120000,
@@ -100,6 +103,8 @@ function parseArgs(argv) {
       args.compareReferences = true;
     } else if (arg === '--compare-molfig') {
       args.compareMolfig = true;
+    } else if (arg === '--capture-images') {
+      args.captureImages = true;
     } else if (arg === '--molfig-diff') {
       args.molfigDiff = requireValue(argv, ++i, arg);
     } else if (arg === '--debug-stl-facet') {
@@ -157,7 +162,10 @@ function validateFormats(formats, label) {
 }
 
 function resolveRepoPath(value) {
-  return path.resolve(rootDir, value);
+  const cratePath = path.resolve(rootDir, value);
+  if (existsSync(cratePath)) return cratePath;
+  const workspacePath = path.resolve(workspaceDir, value);
+  return existsSync(workspacePath) ? workspacePath : cratePath;
 }
 
 function resolveInputPath(value) {
@@ -448,6 +456,7 @@ async function runBrowserConversion(args, plan, bundlePath) {
     for (const item of plan) {
       console.log(`Converting ${item.fixture}`);
       const result = await runFixtureInBrowser(cdp, args, item, server.url);
+      if (args.captureImages) await captureBrowserImage(cdp, args, item);
       writeBrowserReport(args, item, result);
       const contractChecks = validateBrowserContract(item, result);
       for (const check of contractChecks) console.log(check.message);
@@ -488,6 +497,18 @@ async function runBrowserConversion(args, plan, bundlePath) {
   }
 }
 
+async function captureBrowserImage(cdp, args, item) {
+  const response = await cdp.call('Page.captureScreenshot', {
+    format: 'png',
+    fromSurface: true,
+    captureBeyondViewport: false,
+  }, args.timeoutMs);
+  if (!response.data) throw new Error(`${item.contractPath}: Chrome returned no screenshot data`);
+  const outputPath = path.join(resolveInputPath(args.outDir), `${item.stem}.png`);
+  writeFileSync(outputPath, Buffer.from(response.data, 'base64'));
+  console.log(`- PASS ${item.stem}: browser image ${Buffer.byteLength(response.data, 'base64')} bytes`);
+}
+
 function launchChrome(args, debugPort, profileDir, url) {
   const chromeArgs = [
     `--remote-debugging-port=${debugPort}`,
@@ -523,6 +544,8 @@ async function runFixtureInBrowser(cdp, args, item, baseUrl) {
     dataFormat: dataFormatProviderId(item),
     structurePreset: item.options['structure-preset'] ?? item.options.structure_preset,
     representation: String(item.options.representation ?? 'default'),
+    style: String(item.options.style ?? 'default'),
+    quality: String(item.options.quality ?? 'auto'),
     theme: browserTheme(item.options),
     sizeThresholds: browserObjectOption(item.options, 'viewer-size-thresholds', 'viewerSizeThresholds'),
     gaussianSurfaceParams: browserObjectOption(item.options, 'gaussian-surface-params', 'gaussianSurfaceParams'),
@@ -610,6 +633,9 @@ function writeBrowserReport(args, item, result) {
     ...(item.options['structure-preset'] || item.options.structure_preset || item.browserExpectation
       ? { structures }
       : {}),
+    ...(result.polymerTraceBoundaries
+      ? { polymerTraceBoundaries: result.polymerTraceBoundaries }
+      : {}),
     renderObjects: result.renderObjects.map(object => ({
       index: object.index,
       type: object.type,
@@ -634,6 +660,7 @@ function writeBrowserReport(args, item, result) {
       cylinderCapHistogram: object.cylinderCapHistogram,
       cylinderSamples: object.cylinderSamples,
       meshVertexSamples: object.meshVertexSamples,
+      meshGroupCounts: object.meshGroupCounts,
       boundingSphere: object.boundingSphere && {
         center: object.boundingSphere.center,
         radius: object.boundingSphere.radius,
@@ -642,6 +669,7 @@ function writeBrowserReport(args, item, result) {
       },
     })),
     sceneBoundingSphere: result.sceneBoundingSphere,
+    rendering: result.rendering,
     totalDrawCount: result.totalDrawCount,
     visibleDrawCount: result.visibleDrawCount,
     hiddenDrawCount: result.hiddenDrawCount,
@@ -789,9 +817,77 @@ function compareBrowserOutputsToMolfig(args, item, molfigContext) {
 
   for (const format of item.formats) {
     if (format !== 'obj' && format !== 'stl') continue;
-    checks.push(runMolfigDiff(command, format, item.absFixturePath, optionsPath, output[format], `${item.stem}: molfig-vs-browser ${format}`));
+    const vertexTolerance = Number(item.contract.stl_max_vertex_component_delta);
+    const normalTolerance = Number(item.contract.stl_max_normal_component_delta);
+    if (format === 'stl' && Number.isFinite(vertexTolerance) && Number.isFinite(normalTolerance)) {
+      checks.push(runMolfigStlToleranceDiff(
+        command,
+        item,
+        optionsPath,
+        output.stl,
+        vertexTolerance,
+        normalTolerance,
+        `${item.stem}: molfig-vs-browser stl`,
+      ));
+    } else {
+      checks.push(runMolfigDiff(command, format, item.absFixturePath, optionsPath, output[format], `${item.stem}: molfig-vs-browser ${format}`));
+    }
   }
   return checks;
+}
+
+function runMolfigStlToleranceDiff(command, item, optionsPath, referencePath, vertexTolerance, normalTolerance, label) {
+  const generatedPath = `${optionsPath}.generated.stl`;
+  try {
+    spawnSync(command.command, [
+      ...command.args,
+      '--generated-out', generatedPath,
+      'stl', item.absFixturePath, optionsPath, referencePath,
+    ], {
+      cwd: rootDir,
+      encoding: 'utf8',
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    if (!existsSync(generatedPath)) {
+      return { ok: false, label, message: `- FAIL ${label}: molfig did not produce a generated STL` };
+    }
+    return compareStlComponents(referencePath, generatedPath, vertexTolerance, normalTolerance, label);
+  } finally {
+    if (existsSync(generatedPath)) rmSync(generatedPath, { force: true });
+  }
+}
+
+function compareStlComponents(referencePath, generatedPath, vertexTolerance, normalTolerance, label) {
+  const reference = readFileSync(referencePath);
+  const generated = readFileSync(generatedPath);
+  if (!looksLikeBinaryStl(reference) || !looksLikeBinaryStl(generated)) {
+    return { ok: false, label, message: `- FAIL ${label}: expected valid binary STL files` };
+  }
+  if (reference.length !== generated.length || reference.readUInt32LE(80) !== generated.readUInt32LE(80)) {
+    return { ok: false, label, message: `- FAIL ${label}: topology differs; reference_len=${reference.length}, generated_len=${generated.length}` };
+  }
+
+  const facetCount = reference.readUInt32LE(80);
+  let maxVertexDelta = 0;
+  let maxNormalDelta = 0;
+  for (let facet = 0; facet < facetCount; facet++) {
+    const base = 84 + facet * 50;
+    for (let component = 0; component < 12; component++) {
+      const offset = base + component * 4;
+      const delta = Math.abs(reference.readFloatLE(offset) - generated.readFloatLE(offset));
+      if (component < 3) maxNormalDelta = Math.max(maxNormalDelta, delta);
+      else maxVertexDelta = Math.max(maxVertexDelta, delta);
+    }
+    if (reference.readUInt16LE(base + 48) !== generated.readUInt16LE(base + 48)) {
+      return { ok: false, label, message: `- FAIL ${label}: attribute bytes differ at facet ${facet}` };
+    }
+  }
+  const ok = maxVertexDelta <= vertexTolerance && maxNormalDelta <= normalTolerance;
+  return {
+    ok,
+    label,
+    message: `- ${ok ? 'PASS' : 'FAIL'} ${label}: identical topology (${facetCount} facets); max_vertex_component_delta=${maxVertexDelta}; limit=${vertexTolerance}; max_normal_component_delta=${maxNormalDelta}; limit=${normalTolerance}`,
+  };
 }
 
 function compareBrowserStlFacetDebugToMolfig(command, item, optionsPath, browserResult) {
