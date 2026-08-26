@@ -60,11 +60,22 @@ pub(crate) enum ColorTheme {
     PartialCharges,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RenderStyle {
+    Default,
+    Illustrative,
+}
+
 #[derive(Clone, Debug)]
 pub struct MeshOptions {
     pub format: InputFormat,
     pub(crate) representation: Representation,
     pub(crate) color_theme: ColorTheme,
+    pub(crate) spacefill_illustrative_color: bool,
+    pub(crate) style: RenderStyle,
+    pub(crate) illustrative_ignore_light: bool,
+    pub(crate) illustrative_outline: bool,
+    pub(crate) illustrative_occlusion: bool,
     pub(crate) theme_global_name: Option<ColorTheme>,
     pub(crate) theme_carbon_color: ColorTheme,
     pub(crate) theme_symmetry_color: Option<ColorTheme>,
@@ -105,6 +116,11 @@ impl Default for MeshOptions {
             format: InputFormat::Auto,
             representation: Representation::Default,
             color_theme: ColorTheme::ChainId,
+            spacefill_illustrative_color: false,
+            style: RenderStyle::Default,
+            illustrative_ignore_light: true,
+            illustrative_outline: true,
+            illustrative_occlusion: true,
             theme_global_name: None,
             theme_carbon_color: ColorTheme::ChainId,
             theme_symmetry_color: None,
@@ -185,6 +201,21 @@ impl MeshOptions {
         }
         if let Some(value) = json_string(text, "color_theme") {
             options.color_theme = parse_color_theme(&value)?;
+        }
+        if let Some(value) = json_string(text, "style") {
+            options.style = parse_render_style(&value)?;
+        }
+        if let Some(value) = json_bool(text, "ignore-light")
+            .or_else(|| json_bool(text, "ignore_light"))
+            .or_else(|| json_bool(text, "ignoreLight"))
+        {
+            options.illustrative_ignore_light = value;
+        }
+        if let Some(value) = json_bool(text, "outline") {
+            options.illustrative_outline = value;
+        }
+        if let Some(value) = json_bool(text, "occlusion") {
+            options.illustrative_occlusion = value;
         }
         if let Some(value) = json_string(text, "globalName")
             .or_else(|| json_string(text, "global-name"))
@@ -455,6 +486,16 @@ fn parse_color_theme(value: &str) -> Result<ColorTheme, String> {
     }
 }
 
+fn parse_render_style(value: &str) -> Result<RenderStyle, String> {
+    match value.to_ascii_lowercase().as_str() {
+        "default" | "none" => Ok(RenderStyle::Default),
+        "illustrative" => Ok(RenderStyle::Illustrative),
+        other => Err(format!(
+            "unsupported style: {other}; expected one of \"default\" or \"illustrative\""
+        )),
+    }
+}
+
 fn parse_optional_color_theme(value: &str) -> Result<Option<ColorTheme>, String> {
     if value.trim().is_empty() {
         Ok(None)
@@ -513,6 +554,7 @@ fn apply_quality(options: &mut MeshOptions, quality: VisualQuality) {
             options.sphere_detail = 3;
             options.surface_resolution = 0.1;
             options.molecular_surface_resolution = 0.1;
+            options.probe_positions = 72;
             options.radial_segments = 36;
             options.linear_segments = 18;
         }
@@ -520,6 +562,7 @@ fn apply_quality(options: &mut MeshOptions, quality: VisualQuality) {
             options.sphere_detail = 3;
             options.surface_resolution = 0.3;
             options.molecular_surface_resolution = 0.3;
+            options.probe_positions = 48;
             options.radial_segments = 28;
             options.linear_segments = 14;
         }
@@ -527,6 +570,7 @@ fn apply_quality(options: &mut MeshOptions, quality: VisualQuality) {
             options.sphere_detail = 2;
             options.surface_resolution = 0.5;
             options.molecular_surface_resolution = 0.5;
+            options.probe_positions = 36;
             options.radial_segments = 20;
             options.linear_segments = 10;
         }
@@ -534,6 +578,7 @@ fn apply_quality(options: &mut MeshOptions, quality: VisualQuality) {
             options.sphere_detail = 1;
             options.surface_resolution = 0.8;
             options.molecular_surface_resolution = 0.8;
+            options.probe_positions = 24;
             options.radial_segments = 12;
             options.linear_segments = 8;
         }
@@ -541,6 +586,7 @@ fn apply_quality(options: &mut MeshOptions, quality: VisualQuality) {
             options.sphere_detail = 0;
             options.surface_resolution = 1.3;
             options.molecular_surface_resolution = 1.3;
+            options.probe_positions = 24;
             options.radial_segments = 8;
             options.linear_segments = 3;
         }
@@ -548,6 +594,7 @@ fn apply_quality(options: &mut MeshOptions, quality: VisualQuality) {
             options.sphere_detail = 0;
             options.surface_resolution = 3.0;
             options.molecular_surface_resolution = 3.0;
+            options.probe_positions = 12;
             options.radial_segments = 4;
             options.linear_segments = 2;
         }
@@ -555,6 +602,7 @@ fn apply_quality(options: &mut MeshOptions, quality: VisualQuality) {
             options.sphere_detail = 0;
             options.surface_resolution = 8.0;
             options.molecular_surface_resolution = 8.0;
+            options.probe_positions = 12;
             options.radial_segments = 2;
             options.linear_segments = 1;
         }
@@ -697,7 +745,7 @@ fn json_string_array(text: &str, key: &str) -> Option<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ExportPrimitivesQuality, MeshOptions, Representation, VisualQuality};
+    use super::{ExportPrimitivesQuality, MeshOptions, RenderStyle, Representation, VisualQuality};
 
     #[test]
     fn representation_names_follow_molstar_viewer_and_provider_semantics() {
@@ -744,6 +792,33 @@ mod tests {
         assert_eq!(
             MeshOptions::default().representation,
             Representation::Default
+        );
+    }
+
+    #[test]
+    fn illustrative_style_defaults_and_parameters_are_parsed_independently() {
+        let defaults = MeshOptions::default();
+        assert_eq!(defaults.style, RenderStyle::Default);
+        assert!(defaults.illustrative_ignore_light);
+        assert!(defaults.illustrative_outline);
+        assert!(defaults.illustrative_occlusion);
+
+        let options = MeshOptions::from_json(
+            br#"{"representation":"cartoon","color-theme":"element-symbol","style":"illustrative","style-params":{"ignore-light":false,"outline":false,"occlusion":false}}"#,
+        )
+        .unwrap();
+        assert_eq!(options.representation, Representation::Cartoon);
+        assert_eq!(options.style, RenderStyle::Illustrative);
+        assert!(!options.illustrative_ignore_light);
+        assert!(!options.illustrative_outline);
+        assert!(!options.illustrative_occlusion);
+    }
+
+    #[test]
+    fn unsupported_style_is_rejected() {
+        assert_eq!(
+            MeshOptions::from_json(br#"{"style":"cartoon"}"#).unwrap_err(),
+            "unsupported style: cartoon; expected one of \"default\" or \"illustrative\""
         );
     }
 

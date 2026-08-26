@@ -1,20 +1,20 @@
 use crate::chemistry::{infer_element_from_name, normalize_element};
 use crate::model::{
-    Assembly, AssemblyGenerator, Atom, AtomSiteAnisotrop, AtomSiteColumnPresence, Bond,
-    BondMetadata, Entity, EntityIndexMap, Molecule, SecondaryRange, SourceData, Transform, Vec3,
+    Assembly, AssemblyGenerator, Atom, AtomSiteAnisotrop, AtomSiteColumnPresence, Bond, BondFlags,
+    BondMetadata, BondSource, Entity, EntityIndexMap, EntityPolySeq, Molecule, SecondaryRange,
+    SourceData, StructConnMetadata, Transform, Vec3,
 };
+use std::collections::BTreeMap;
 
 use super::normalize_type_symbol_molstar;
 
 pub(crate) fn parse_pdb(text: &str) -> Result<Molecule, String> {
     let mut atoms = Vec::new();
     let mut serial_to_index = Vec::<(usize, usize)>::new();
-    let mut bonds = Vec::new();
-    let mut bond_metadata = Vec::new();
     let mut atom_site_anisotrop = Vec::new();
     let mut b_iso_defined = false;
     let assemblies = parse_pdb_assemblies(text);
-    let (helices, sheets) = parse_pdb_secondary(text);
+    let (mut helices, mut sheets) = parse_pdb_secondary(text);
     let mut model_num = 1;
     let mut next_model_num = 1;
 
@@ -33,9 +33,10 @@ pub(crate) fn parse_pdb(text: &str) -> Result<Molecule, String> {
             let chain = field(line, 21, 22).trim().to_string();
             let residue_seq = field(line, 22, 26).trim().to_string();
             let insertion_code = field(line, 26, 27).trim().to_string();
-            let x = parse_f32(field(line, 30, 38))?;
-            let y = parse_f32(field(line, 38, 46))?;
-            let z = parse_f32(field(line, 46, 54))?;
+            let x64 = parse_f64(field(line, 30, 38))?;
+            let y64 = parse_f64(field(line, 38, 46))?;
+            let z64 = parse_f64(field(line, 46, 54))?;
+            let (x, y, z) = (x64 as f32, y64 as f32, z64 as f32);
             let occupancy = parse_js_number_f32(field(line, 54, 60)).unwrap_or(1.0);
             b_iso_defined |= !field(line, 60, 66).trim().is_empty();
             let b_iso = parse_js_number_f32(field(line, 60, 66)).unwrap_or(0.0);
@@ -75,6 +76,7 @@ pub(crate) fn parse_pdb(text: &str) -> Result<Molecule, String> {
                 b_iso,
                 formal_charge,
                 position: Vec3 { x, y, z },
+                position64: [x as f64, y as f64, z as f64],
                 het: line.starts_with("HETATM"),
                 operator_name: String::new(),
             });
@@ -82,39 +84,21 @@ pub(crate) fn parse_pdb(text: &str) -> Result<Molecule, String> {
             if let Some(row) = parse_pdb_anisou(line) {
                 atom_site_anisotrop.push(row);
             }
-        } else if line.starts_with("CONECT") {
-            let Some((a, rest)) = line
-                .get(6..)
-                .map(str::trim)
-                .and_then(|s| s.split_once(char::is_whitespace))
-            else {
-                continue;
-            };
-            let Ok(serial_a) = a.trim().parse::<usize>() else {
-                continue;
-            };
-            for part in rest.split_whitespace() {
-                if let Ok(serial_b) = part.parse::<usize>() {
-                    if let (Some(ia), Some(ib)) = (
-                        lookup_serial(&serial_to_index, serial_a),
-                        lookup_serial(&serial_to_index, serial_b),
-                    ) {
-                        if ia < ib {
-                            bonds.push(Bond { a: ia, b: ib });
-                            bond_metadata
-                                .push(BondMetadata::pdb_conect(bond_metadata.len() as i32));
-                        }
-                    }
-                }
-            }
         }
     }
 
     if atoms.is_empty() {
         return Err("no ATOM/HETATM records found in PDB input".to_string());
     }
+    assign_pdb_label_atom_ids(&mut atoms);
+    let (bonds, bond_metadata) = parse_pdb_conect(text, &atoms, &serial_to_index);
     let entities = assign_pdb_entities(text, &mut atoms);
-    let entity_index = EntityIndexMap::from_entities(&entities, &[], &[]);
+    let seqres = parse_pdb_seqres(text);
+    assign_pdb_label_seq_ids(&seqres, &mut atoms);
+    normalize_pdb_secondary_ranges(&mut helices, &atoms);
+    normalize_pdb_secondary_ranges(&mut sheets, &atoms);
+    let entity_poly_seq = pdb_entity_poly_seq(&seqres, &atoms, &entities);
+    let entity_index = EntityIndexMap::from_mmcif(&entities, &[], &[], &atoms, &[], &[], &[]);
     Ok(Molecule {
         source_data: SourceData::pdb(pdb_id(text)),
         atom_site_columns: AtomSiteColumnPresence {
@@ -139,7 +123,7 @@ pub(crate) fn parse_pdb(text: &str) -> Result<Molecule, String> {
         entities,
         entity_index,
         entity_polymers: Vec::new(),
-        entity_poly_seq: Vec::new(),
+        entity_poly_seq,
         pdbx_entity_branch: Vec::new(),
         pdbx_entity_branch_links: Vec::new(),
         pdbx_branch_scheme: Vec::new(),
@@ -162,6 +146,415 @@ pub(crate) fn parse_pdb(text: &str) -> Result<Molecule, String> {
         derived_aromatic_bonds: Default::default(),
         derived_resonance_bonds: Default::default(),
     })
+}
+
+fn assign_pdb_label_atom_ids(atoms: &mut [Atom]) {
+    let mut current_residue = None::<(i32, String, String, String)>;
+    let mut counts = BTreeMap::<String, usize>::new();
+    for atom in atoms {
+        let residue = (
+            atom.model_num,
+            atom.auth_chain.clone(),
+            atom.auth_residue_seq.clone(),
+            atom.insertion_code.clone(),
+        );
+        if current_residue.as_ref() != Some(&residue) {
+            current_residue = Some(residue);
+            counts.clear();
+        }
+        let count = counts.entry(atom.auth_name.clone()).or_default();
+        atom.name = if *count == 0 {
+            atom.auth_name.clone()
+        } else {
+            format!("{}_{}", atom.auth_name, *count)
+        };
+        *count += 1;
+    }
+}
+
+fn parse_pdb_conect(
+    text: &str,
+    atoms: &[Atom],
+    serial_to_index: &[(usize, usize)],
+) -> (Vec<Bond>, Vec<BondMetadata>) {
+    let mut bonds = Vec::<Bond>::new();
+    let mut metadata = Vec::<BondMetadata>::new();
+    let mut current_atom = None::<usize>;
+    let mut bond_index = BTreeMap::<usize, usize>::new();
+
+    for line in text.lines().filter(|line| line.starts_with("CONECT")) {
+        let Ok(serial_a) = field(line, 6, 11).trim().parse::<usize>() else {
+            continue;
+        };
+        let Some(atom_a) = lookup_serial(serial_to_index, serial_a) else {
+            continue;
+        };
+        if current_atom != Some(atom_a) {
+            current_atom = Some(atom_a);
+            bond_index.clear();
+        }
+
+        for (start, end) in [(11, 16), (16, 21), (21, 26), (26, 31)] {
+            let Ok(serial_b) = field(line, start, end).trim().parse::<usize>() else {
+                continue;
+            };
+            let Some(atom_b) = lookup_serial(serial_to_index, serial_b) else {
+                continue;
+            };
+            if atom_a > atom_b {
+                continue;
+            }
+            if let Some(&index) = bond_index.get(&atom_b) {
+                if let Some(entry) = metadata.get_mut(index) {
+                    entry.order = entry.order.saturating_add(1);
+                    if let Some(struct_conn) = &mut entry.struct_conn {
+                        struct_conn.value_order = pdb_conect_value_order(entry.order).to_string();
+                    }
+                }
+                continue;
+            }
+
+            let Some((a, b)) = atoms.get(atom_a).zip(atoms.get(atom_b)) else {
+                continue;
+            };
+            let metallic = BondMetadata::computed_for_atoms(a, b)
+                .flags
+                .contains(BondFlags::METALLIC_COORDINATION);
+            let conn_type_id = if metallic { "metalc" } else { "covale" };
+            let row_index = metadata.len();
+            bonds.push(Bond {
+                a: atom_a,
+                b: atom_b,
+            });
+            metadata.push(BondMetadata {
+                source: BondSource::StructConn,
+                order: 1,
+                flags: if metallic {
+                    BondFlags::METALLIC_COORDINATION
+                } else {
+                    BondFlags::COVALENT
+                },
+                key: row_index as i32,
+                distance: None,
+                operator_a: -1,
+                operator_b: -1,
+                struct_conn: Some(StructConnMetadata {
+                    id: format!("{conn_type_id}{}", row_index + 1),
+                    row_index,
+                    partner_a_atom_index: atom_a,
+                    partner_b_atom_index: atom_b,
+                    conn_type_id: conn_type_id.to_string(),
+                    value_order: "sing".to_string(),
+                    partner_a_symmetry: String::new(),
+                    partner_b_symmetry: String::new(),
+                    partner_a_comp_id: a.residue.clone(),
+                    partner_b_comp_id: b.residue.clone(),
+                }),
+            });
+            bond_index.insert(atom_b, row_index);
+        }
+    }
+
+    (bonds, metadata)
+}
+
+fn pdb_conect_value_order(order: i8) -> &'static str {
+    match order {
+        2 => "doub",
+        3 => "trip",
+        4 => "quad",
+        _ => "sing",
+    }
+}
+
+fn parse_pdb_seqres(text: &str) -> Vec<(String, Vec<String>)> {
+    let mut chains = Vec::<(String, Vec<String>)>::new();
+    for line in text.lines().filter(|line| line.starts_with("SEQRES")) {
+        let chain = field(line, 11, 12).to_string();
+        let residues = field(line, 19, line.len())
+            .split_whitespace()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        if let Some((_, existing)) = chains.iter_mut().find(|(id, _)| id == &chain) {
+            existing.extend(residues);
+        } else {
+            chains.push((chain, residues));
+        }
+    }
+    chains
+}
+
+fn pdb_entity_poly_seq(
+    seqres: &[(String, Vec<String>)],
+    atoms: &[Atom],
+    entities: &[Entity],
+) -> Vec<EntityPolySeq> {
+    let mut processed = Vec::<String>::new();
+    let mut rows = Vec::new();
+    for (chain, residues) in seqres {
+        let Some(entity_id) = atoms.iter().find_map(|atom| {
+            if atom.auth_chain != *chain {
+                return None;
+            }
+            entities
+                .iter()
+                .find(|entity| entity.id == atom.entity_id && entity.type_name == "polymer")
+                .map(|entity| entity.id.clone())
+        }) else {
+            continue;
+        };
+        if processed.iter().any(|id| id == &entity_id) {
+            continue;
+        }
+        processed.push(entity_id.clone());
+        rows.extend(
+            residues
+                .iter()
+                .enumerate()
+                .map(|(index, residue)| EntityPolySeq {
+                    entity_id: entity_id.clone(),
+                    num: index as i32 + 1,
+                    mon_id: residue.clone(),
+                    hetero: "no".to_string(),
+                }),
+        );
+    }
+    rows
+}
+
+fn assign_pdb_label_seq_ids(seqres: &[(String, Vec<String>)], atoms: &mut [Atom]) {
+    if atoms.is_empty() {
+        return;
+    }
+    let use_linear = !seqres.is_empty() || atoms.iter().any(|atom| !atom.insertion_code.is_empty());
+    if !use_linear {
+        for atom in atoms {
+            atom.residue_seq.clear();
+        }
+        return;
+    }
+
+    let first_model = atoms[0].model_num;
+    let mut observed = Vec::<(String, Vec<String>)>::new();
+    let mut previous = None::<(String, String, String)>;
+    for atom in atoms
+        .iter()
+        .take_while(|atom| atom.model_num == first_model)
+    {
+        let key = (
+            atom.auth_chain.clone(),
+            atom.auth_residue_seq.clone(),
+            atom.insertion_code.clone(),
+        );
+        if previous.as_ref() == Some(&key) {
+            continue;
+        }
+        if let Some((_, residues)) = observed
+            .iter_mut()
+            .find(|(chain, _)| chain == &atom.auth_chain)
+        {
+            residues.push(atom.auth_residue.clone());
+        } else {
+            observed.push((atom.auth_chain.clone(), vec![atom.auth_residue.clone()]));
+        }
+        previous = Some(key);
+    }
+
+    let alignments = observed
+        .into_iter()
+        .filter_map(|(chain, observed)| {
+            let sequence = seqres.iter().find(|(id, _)| id == &chain)?.1.as_slice();
+            Some((chain, pdb_seqres_alignment(&observed, sequence)))
+        })
+        .collect::<Vec<_>>();
+
+    let mut current_model = atoms[0].model_num;
+    let mut current_chain = atoms[0].auth_chain.clone();
+    let mut current_auth_seq = pdb_integer(&atoms[0].auth_residue_seq);
+    let mut current_insertion = atoms[0].insertion_code.clone();
+    let mut residue_index = 0usize;
+    let mut current_label_seq = initial_pdb_label_seq(
+        alignment_for_chain(&alignments, &current_chain),
+        residue_index,
+        current_auth_seq,
+    );
+
+    for atom in atoms {
+        let auth_seq = pdb_integer(&atom.auth_residue_seq);
+        if atom.model_num != current_model {
+            current_model = atom.model_num;
+            current_chain = atom.auth_chain.clone();
+            current_auth_seq = auth_seq;
+            current_insertion = atom.insertion_code.clone();
+            residue_index = 0;
+            current_label_seq = initial_pdb_label_seq(
+                alignment_for_chain(&alignments, &current_chain),
+                residue_index,
+                current_auth_seq,
+            );
+        } else if atom.auth_chain != current_chain {
+            current_chain = atom.auth_chain.clone();
+            current_auth_seq = auth_seq;
+            current_insertion = atom.insertion_code.clone();
+            residue_index = 0;
+            current_label_seq = initial_pdb_label_seq(
+                alignment_for_chain(&alignments, &current_chain),
+                residue_index,
+                current_auth_seq,
+            );
+        } else if auth_seq != current_auth_seq || atom.insertion_code != current_insertion {
+            residue_index += 1;
+            current_label_seq = alignment_for_chain(&alignments, &current_chain)
+                .and_then(|alignment| alignment.get(residue_index).copied().flatten())
+                .unwrap_or(current_label_seq + 1);
+            current_auth_seq = auth_seq;
+            current_insertion = atom.insertion_code.clone();
+        }
+        atom.residue_seq = current_label_seq.to_string();
+    }
+}
+
+fn alignment_for_chain<'a>(
+    alignments: &'a [(String, Vec<Option<i32>>)],
+    chain: &str,
+) -> Option<&'a [Option<i32>]> {
+    alignments
+        .iter()
+        .find(|(id, _)| id == chain)
+        .map(|(_, alignment)| alignment.as_slice())
+}
+
+fn initial_pdb_label_seq(
+    alignment: Option<&[Option<i32>]>,
+    residue_index: usize,
+    _auth_seq: i32,
+) -> i32 {
+    alignment
+        .and_then(|alignment| alignment.get(residue_index).copied().flatten())
+        .unwrap_or(1)
+}
+
+fn pdb_integer(value: &str) -> i32 {
+    value.trim().parse::<i32>().unwrap_or(0)
+}
+
+fn pdb_seqres_alignment(observed: &[String], sequence: &[String]) -> Vec<Option<i32>> {
+    const GAP: i32 = -11;
+    const EXTEND: i32 = -1;
+    const NEG_INFINITY: i32 = i32::MIN / 4;
+
+    let n = observed.len();
+    let m = sequence.len();
+    let mut score = vec![vec![0i32; m + 1]; n + 1];
+    let mut vertical = vec![vec![0i32; m + 1]; n + 1];
+    let mut horizontal = vec![vec![0i32; m + 1]; n + 1];
+    for row in 0..=n {
+        score[row][0] = GAP;
+        horizontal[row][0] = NEG_INFINITY;
+    }
+    for column in 0..=m {
+        score[0][column] = GAP;
+        vertical[0][column] = NEG_INFINITY;
+    }
+    score[0][0] = 0;
+
+    for row in 1..=n {
+        for column in 1..=m {
+            vertical[row][column] =
+                (score[row - 1][column] + GAP).max(vertical[row - 1][column] + EXTEND);
+            horizontal[row][column] =
+                (score[row][column - 1] + GAP).max(horizontal[row][column - 1] + EXTEND);
+            let substitution = if observed[row - 1] == sequence[column - 1] {
+                5
+            } else {
+                -3
+            };
+            score[row][column] = (score[row - 1][column - 1] + substitution)
+                .max(vertical[row][column])
+                .max(horizontal[row][column]);
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum Matrix {
+        Score,
+        Vertical,
+        Horizontal,
+    }
+    let mut row = n;
+    let mut column = m;
+    let mut matrix = if score[row][column] >= vertical[row][column] {
+        Matrix::Score
+    } else if vertical[row][column] >= horizontal[row][column] {
+        Matrix::Vertical
+    } else {
+        Matrix::Horizontal
+    };
+    let mut trace = Vec::<(Option<usize>, Option<usize>)>::new();
+    while row > 0 && column > 0 {
+        match matrix {
+            Matrix::Score => {
+                let substitution = if observed[row - 1] == sequence[column - 1] {
+                    5
+                } else {
+                    -3
+                };
+                if score[row][column] == score[row - 1][column - 1] + substitution {
+                    trace.push((Some(row - 1), Some(column - 1)));
+                    row -= 1;
+                    column -= 1;
+                } else if score[row][column] == vertical[row][column] {
+                    matrix = Matrix::Vertical;
+                } else if score[row][column] == horizontal[row][column] {
+                    matrix = Matrix::Horizontal;
+                } else {
+                    row -= 1;
+                    column -= 1;
+                }
+            }
+            Matrix::Vertical => {
+                if vertical[row][column] == vertical[row - 1][column] + EXTEND {
+                    trace.push((Some(row - 1), None));
+                    row -= 1;
+                } else if vertical[row][column] == score[row - 1][column] + GAP {
+                    trace.push((Some(row - 1), None));
+                    row -= 1;
+                    matrix = Matrix::Score;
+                } else {
+                    row -= 1;
+                }
+            }
+            Matrix::Horizontal => {
+                if horizontal[row][column] == horizontal[row][column - 1] + EXTEND {
+                    trace.push((None, Some(column - 1)));
+                    column -= 1;
+                } else if horizontal[row][column] == score[row][column - 1] + GAP {
+                    trace.push((None, Some(column - 1)));
+                    column -= 1;
+                    matrix = Matrix::Score;
+                } else {
+                    column -= 1;
+                }
+            }
+        }
+    }
+    while row > 0 {
+        trace.push((Some(row - 1), None));
+        row -= 1;
+    }
+    while column > 0 {
+        trace.push((None, Some(column - 1)));
+        column -= 1;
+    }
+    trace.reverse();
+
+    let mut alignment = vec![None; n];
+    for (observed_index, sequence_index) in trace {
+        if let (Some(observed_index), Some(sequence_index)) = (observed_index, sequence_index) {
+            alignment[observed_index] = Some(sequence_index as i32 + 1);
+        }
+    }
+    alignment
 }
 
 fn parse_pdb_anisou(line: &str) -> Option<AtomSiteAnisotrop> {
@@ -336,6 +729,50 @@ fn parse_pdb_secondary(text: &str) -> (Vec<SecondaryRange>, Vec<SecondaryRange>)
     (helices, sheets)
 }
 
+fn normalize_pdb_secondary_ranges(ranges: &mut [SecondaryRange], atoms: &[Atom]) {
+    for range in ranges {
+        let start = pdb_label_secondary_boundary(
+            atoms,
+            &range.chain,
+            range.start,
+            &range.start_insertion_code,
+        );
+        let end =
+            pdb_label_secondary_boundary(atoms, &range.chain, range.end, &range.end_insertion_code);
+        let (Some((start_chain, start_seq_id)), Some((end_chain, end_seq_id))) = (start, end)
+        else {
+            continue;
+        };
+        if start_chain != end_chain {
+            continue;
+        }
+        range.chain = start_chain;
+        range.start = start_seq_id;
+        range.end = end_seq_id;
+    }
+}
+
+fn pdb_label_secondary_boundary(
+    atoms: &[Atom],
+    auth_chain: &str,
+    auth_seq_id: i32,
+    insertion_code: &str,
+) -> Option<(String, i32)> {
+    atoms.iter().find_map(|atom| {
+        (atom.auth_chain == auth_chain
+            && pdb_integer(&atom.auth_residue_seq) == auth_seq_id
+            && atom.insertion_code == insertion_code)
+            .then(|| {
+                atom.residue_seq
+                    .trim()
+                    .parse::<i32>()
+                    .ok()
+                    .map(|label_seq_id| (atom.chain.clone(), label_seq_id))
+            })
+            .flatten()
+    })
+}
+
 fn parse_pdb_helix_range(line: &str) -> Option<SecondaryRange> {
     Some(SecondaryRange {
         chain: field(line, 19, 20).trim().to_string(),
@@ -497,8 +934,11 @@ fn field(line: &str, start: usize, end: usize) -> &str {
     line.get(start..end.min(line.len())).unwrap_or("")
 }
 
-fn parse_f32(value: &str) -> Result<f32, String> {
-    parse_js_number_f32(value).map_err(|_| format!("invalid coordinate: {}", value.trim()))
+fn parse_f64(value: &str) -> Result<f64, String> {
+    value
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| format!("invalid coordinate: {}", value.trim()))
 }
 
 fn parse_js_number_f32(value: &str) -> Result<f32, std::num::ParseFloatError> {

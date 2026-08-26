@@ -83,6 +83,7 @@ pub(crate) struct TraceResidue {
     pub(crate) seq: i32,
     pub(crate) insertion_code: String,
     pub(crate) position: Vec3,
+    pub(crate) position64: [f64; 3],
     pub(crate) direction: Option<Vec3>,
     pub(crate) initial: bool,
     pub(crate) final_residue: bool,

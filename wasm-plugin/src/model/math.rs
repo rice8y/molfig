@@ -632,6 +632,23 @@ impl Transform {
         }
     }
 
+    pub(crate) fn apply64(self, v: [f64; 3]) -> [f64; 3] {
+        [
+            self.m[0][0] as f64 * v[0]
+                + self.m[0][1] as f64 * v[1]
+                + self.m[0][2] as f64 * v[2]
+                + self.m[0][3] as f64,
+            self.m[1][0] as f64 * v[0]
+                + self.m[1][1] as f64 * v[1]
+                + self.m[1][2] as f64 * v[2]
+                + self.m[1][3] as f64,
+            self.m[2][0] as f64 * v[0]
+                + self.m[2][1] as f64 * v[1]
+                + self.m[2][2] as f64 * v[2]
+                + self.m[2][3] as f64,
+        ]
+    }
+
     pub(crate) fn is_identity(self) -> bool {
         let identity = Transform::identity();
         self.m.iter().enumerate().all(|(row, values)| {
