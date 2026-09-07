@@ -234,7 +234,7 @@ package calls concise while preserving the caller-side project boundary.
   row3([PDB], [#ic("path(\"9R1O.pdb\")")], [RCSB PDB entry 9R1O.]),
   row3([mmCIF], [#ic("path(\"1FYY.cif\")")], [RCSB PDB entry 1FYY.]),
   row3([BinaryCIF], [#ic("path(\"1CRN.bcif\")")], [RCSB PDB entry 1CRN.]),
-  row3([XYZ], [#ic("path(\"molecule.xyz\")")], [A standard atom-count/comment/coordinates XYZ file.]),
+  row3([XYZ], [#ic("path(\"data/ethanol.xyz\")")], [PubChem CID 702 (ethanol).]),
 ))
 
 For documents that must also compile on Typst 0.14, read the file in the caller
@@ -243,12 +243,14 @@ external structure files; it preserves BinaryCIF bytes and avoids Unicode
 decoding loss for fixed-width PDB columns.
 
 For the same files, use #ic("read(\"9R1O.pdb\", encoding: none)"),
-#ic("read(\"1FYY.cif\", encoding: none)"), or
-#ic("read(\"1CRN.bcif\", encoding: none)"). Complete, rendered examples for
-all three archive formats appear below.
+#ic("read(\"1FYY.cif\", encoding: none)"),
+#ic("read(\"1CRN.bcif\", encoding: none)"), or
+#ic("read(\"data/ethanol.xyz\", encoding: none)"). Complete, rendered examples
+appear in the API sections and Practical Workflows, including the
+#link(<sec:xyz-example>)[small-molecule example].
 
 #info-alert[
-  These files are RCSB PDB / wwPDB entries 9R1O, 1FYY, and 1CRN. Their PDB
+  The archive examples use RCSB PDB / wwPDB entries 9R1O, 1FYY, and 1CRN. Their PDB
   DOIs are #link("https://doi.org/10.2210/pdb9R1O/pdb")[9R1O],
   #link("https://doi.org/10.2210/pdb1FYY/pdb")[1FYY], and
   #link("https://doi.org/10.2210/pdb1CRN/pdb")[1CRN]. PDB archive data files
@@ -257,66 +259,6 @@ all three archive formats appear below.
 
 Passing a Typst string is accepted for small inline examples. A string is treated
 as inline molecular text, not as a file path.
-
-== A Complete XYZ Example <sec:xyz-example>
-
-The following real-data example renders ethanol from the first PubChem3D
-conformer for PubChem CID 702. Save these two files with the shown
-#ic("data/ethanol.xyz") relative path, then compile #ic("ethanol-xyz.typ").
-
-#code("xyz", example-ethanol-xyz-data, title: "PubChem ethanol conformer in XYZ format", file: "data/ethanol.xyz")
-
-#code("typ", example-ethanol-xyz-code, title: "Complete XYZ rendering example", file: "ethanol-xyz.typ")
-
-#figure(
-  block(
-    width: 68%,
-    inset: 4pt,
-    stroke: luma(82%),
-    radius: 2pt,
-    image(rendered-ethanol-xyz-pdf, width: 100%),
-  ),
-  caption: [PubChem CID 702 (ethanol) rendered from XYZ with the complete settings above.],
-)
-
-#info-alert[
-  Coordinate source: #link("https://pubchem.ncbi.nlm.nih.gov/compound/702")[PubChem CID 702],
-  PubChem3D conformer #ic("000002BE00000001"). The 3D SDF was retrieved through
-  #link("https://pubchem.ncbi.nlm.nih.gov/docs/pug-rest")[PubChem PUG REST] on
-  2026-08-24 and transcribed to XYZ without changing atom order or coordinates.
-  General PubChem citation: Kim et al. (2025),
-  #link("https://doi.org/10.1093/nar/gkae1059")[doi:10.1093/nar/gkae1059].
-]
-
-#pagebreak()
-
-== XYZ Validation Corpus <sec:xyz-validation>
-
-The bundled real-data corpus expands the example to four PubChem3D conformers.
-All files preserve the source SDF atom order and four-decimal coordinates.
-
-#table4([Compound], [CID], [Formula / atoms], [Source SDF bonds], (
-  row4([Ethanol (#ic("ethanol.xyz"))], [#link("https://pubchem.ncbi.nlm.nih.gov/compound/702")[702]], [#ic("C2H6O") / 9], [8]),
-  row4([Benzene (#ic("benzene.xyz"))], [#link("https://pubchem.ncbi.nlm.nih.gov/compound/241")[241]], [#ic("C6H6") / 12], [12]),
-  row4([Aspirin (#ic("aspirin.xyz"))], [#link("https://pubchem.ncbi.nlm.nih.gov/compound/2244")[2244]], [#ic("C9H8O4") / 21], [21]),
-  row4([Caffeine (#ic("caffeine.xyz"))], [#link("https://pubchem.ncbi.nlm.nih.gov/compound/2519")[2519]], [#ic("C8H10N4O2") / 24], [25]),
-))
-
-#ic("examples/data/XYZ_VALIDATION.json") pins each source URL, conformer ID,
-formula, source bond endpoints and orders, element composition, coordinate
-bounds, and SHA-256 digest. The offline validator rejects non-canonical line
-counts, symbols, coordinate precision, non-finite or coincident atoms, formula
-or bound drift, duplicate bonds, and any difference between Mol\*-style XYZ
-bond inference and the source SDF connectivity.
-
-The Rust regression test also compares explicit #ic("format: \"xyz\"") parsing
-with auto-detection, including atom identities, coordinates, inferred endpoints,
-bond metadata, ring counts, and aromatic-bond counts. Finally, a real
-Chrome/WebGL run at pinned Mol\* commit
-#ic("1b8117d3f10f7c978aabb5a0d3d47370635aefe4") exports the default
-ball-and-stick representation. Molfig's OBJ is required to match that text
-exactly and its binary STL is required to match byte for byte for all four
-corpus records.
 
 #pagebreak()
 
@@ -986,6 +928,39 @@ attribution are shown together in the Quickstart section.
     #link("https://doi.org/10.1038/s44318-026-00823-y")[doi:10.1038/s44318-026-00823-y].],
 )
 
+#pagebreak()
+
+== Rendering A Small Molecule <sec:xyz-example>
+
+For a small molecule, use an atomistic representation and element colors.
+This example uses XYZ coordinates from the first PubChem3D conformer for
+ethanol (PubChem CID 702). Save these two files with the shown
+#ic("data/ethanol.xyz") relative path, then compile #ic("ethanol-xyz.typ").
+
+#code("xyz", example-ethanol-xyz-data, title: "PubChem ethanol conformer in XYZ format", file: "data/ethanol.xyz")
+
+#code("typ", example-ethanol-xyz-code, title: "Complete XYZ rendering example", file: "ethanol-xyz.typ")
+
+#figure(
+  block(
+    width: 68%,
+    inset: 4pt,
+    stroke: luma(82%),
+    radius: 2pt,
+    image(rendered-ethanol-xyz-pdf, width: 100%),
+  ),
+  caption: [PubChem CID 702 (ethanol) rendered from XYZ with the complete settings above.],
+)
+
+#info-alert[
+  Coordinate source: #link("https://pubchem.ncbi.nlm.nih.gov/compound/702")[PubChem CID 702],
+  PubChem3D conformer #ic("000002BE00000001"). The 3D SDF was retrieved through
+  #link("https://pubchem.ncbi.nlm.nih.gov/docs/pug-rest")[PubChem PUG REST] on
+  2026-08-24 and transcribed to XYZ without changing atom order or coordinates.
+  General PubChem citation: Kim et al. (2025),
+  #link("https://doi.org/10.1093/nar/gkae1059")[doi:10.1093/nar/gkae1059].
+]
+
 == Export For External Tools <sec:external-export>
 
 The complete 1CRN export example in the Export Commands section generates OBJ,
@@ -1059,3 +1034,34 @@ documentation:
 
 Regenerate #ic("package/molfig.wasm") after Rust changes that affect the Typst plugin.
 Regenerate this PDF after documentation or public API changes.
+
+#pagebreak()
+
+== XYZ Validation Corpus <sec:xyz-validation>
+
+The bundled real-data corpus expands the
+#link(<sec:xyz-example>)[small-molecule example] to four PubChem3D conformers.
+All files preserve the source SDF atom order and four-decimal coordinates.
+
+#table4([Compound], [CID], [Formula / atoms], [Source SDF bonds], (
+  row4([Ethanol (#ic("ethanol.xyz"))], [#link("https://pubchem.ncbi.nlm.nih.gov/compound/702")[702]], [#ic("C2H6O") / 9], [8]),
+  row4([Benzene (#ic("benzene.xyz"))], [#link("https://pubchem.ncbi.nlm.nih.gov/compound/241")[241]], [#ic("C6H6") / 12], [12]),
+  row4([Aspirin (#ic("aspirin.xyz"))], [#link("https://pubchem.ncbi.nlm.nih.gov/compound/2244")[2244]], [#ic("C9H8O4") / 21], [21]),
+  row4([Caffeine (#ic("caffeine.xyz"))], [#link("https://pubchem.ncbi.nlm.nih.gov/compound/2519")[2519]], [#ic("C8H10N4O2") / 24], [25]),
+))
+
+#ic("examples/data/XYZ_VALIDATION.json") pins each source URL, conformer ID,
+formula, source bond endpoints and orders, element composition, coordinate
+bounds, and SHA-256 digest. The offline validator rejects non-canonical line
+counts, symbols, coordinate precision, non-finite or coincident atoms, formula
+or bound drift, duplicate bonds, and any difference between Mol\*-style XYZ
+bond inference and the source SDF connectivity.
+
+The Rust regression test also compares explicit #ic("format: \"xyz\"") parsing
+with auto-detection, including atom identities, coordinates, inferred endpoints,
+bond metadata, ring counts, and aromatic-bond counts. Finally, a real
+Chrome/WebGL run at pinned Mol\* commit
+#ic("1b8117d3f10f7c978aabb5a0d3d47370635aefe4") exports the default
+ball-and-stick representation. Molfig's OBJ is required to match that text
+exactly and its binary STL is required to match byte for byte for all four
+corpus records.
