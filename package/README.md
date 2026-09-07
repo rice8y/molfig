@@ -11,7 +11,7 @@ You can try the [web demo](https://bernsteining.github.io/maquette/?a=9R1O) by [
 ## Quickstart
 
 ```typst
-#import "@preview/molfig:0.1.4"
+#import "@preview/molfig:0.1.5"
 #set page(width: auto, height: auto, margin: 0mm)
 
 // Uses structural data from RCSB PDB / wwPDB.
@@ -47,7 +47,7 @@ Structural data source: RCSB PDB / wwPDB, PDB ID `9R1O`, DOI [`10.2210/pdb9R1O/p
 ## XYZ Example
 
 ```typst
-#import "@preview/molfig:0.1.4"
+#import "@preview/molfig:0.1.5"
 
 // Uses coordinate data from PubChem.
 // PubChem CID: 702 (ethanol)
