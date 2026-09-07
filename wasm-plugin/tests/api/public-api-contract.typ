@@ -6,7 +6,6 @@
 #let water-cif = read("../fixtures/cif/water.cif", encoding: none)
 #let annotation-cif = read("../fixtures/cif/viewer-default-annotations.cif", encoding: none)
 #let annotation-bcif = read("../fixtures/bcif/viewer-default-annotations.bcif", encoding: none)
-#let caffeine-xyz = read("../../../package/examples/data/caffeine.xyz", encoding: none)
 #let sheet-pdb = "SHEET    1 S1  1 SER A   1  THR A   4\nATOM      1  CA  SER A   1       0.000   0.000   0.000  1.00 10.00           C\nATOM      2  CA  THR A   2       1.100   0.250   0.200  1.00 10.00           C\nATOM      3  CA  SER A   3       2.200  -0.200   0.100  1.00 10.00           C\nATOM      4  CA  THR A   4       3.300   0.150   0.000  1.00 10.00           C\nEND\n"
 
 #let pdb-info = molfig.info(water-pdb, format: "pdb")
@@ -22,31 +21,6 @@
   format: "cif",
   representation: "auto",
   color-theme: "qmean-score",
-)
-#let illustrative-info = molfig.info(
-  sheet-pdb,
-  format: "pdb",
-  representation: "cartoon",
-  color-theme: "entity-id",
-  style: "illustrative",
-  style-params: (
-    ignore-light: false,
-    outline: false,
-    occlusion: false,
-  ),
-)
-#let xyz-illustrative-info = molfig.info(
-  caffeine-xyz,
-  format: "xyz",
-  representation: "ball-and-stick",
-  color-theme: "chain-id",
-  style: "illustrative",
-)
-#let xyz-cartoon-info = molfig.info(
-  caffeine-xyz,
-  format: "xyz",
-  representation: "cartoon",
-  color-theme: "element-symbol",
 )
 #let sheet-info = molfig.info(
   sheet-pdb,
@@ -87,18 +61,6 @@
 #assert(annotation-info.render_objects.any(object => object.color_theme == "plddt-confidence"))
 #assert(annotation-bcif-info.render_objects.any(object => object.color_theme == "plddt-confidence"))
 #assert(qmean-info.render_objects.any(object => object.color_theme == "qmean-score"))
-#assert.eq(illustrative-info.representation.name, "cartoon")
-#assert.eq(illustrative-info.representation.style, "illustrative")
-#assert.eq(illustrative-info.representation.style_params.ignore_light, false)
-#assert.eq(illustrative-info.representation.style_params.outline, false)
-#assert.eq(illustrative-info.representation.style_params.occlusion, false)
-#assert.eq(xyz-illustrative-info.atom_count, 24)
-#assert.eq(xyz-illustrative-info.representation.name, "ball-and-stick")
-#assert.eq(xyz-illustrative-info.representation.style, "illustrative")
-#assert.eq(xyz-cartoon-info.representation.name, "cartoon")
-#assert(xyz-cartoon-info.representation.realized_visuals.any(visual => visual == "element-sphere"))
-#assert(xyz-cartoon-info.representation.realized_visuals.any(visual => visual == "intra-bond"))
-#assert(not xyz-cartoon-info.representation.realized_visuals.any(visual => visual == "polymer-trace"))
 #assert.eq(sheet-info.representation.name, "cartoon")
 #assert.eq(polymer-cartoon-info.representation.name, "polymer-cartoon")
 #assert(sheet-info.render_objects.any(object => object.geometry_type == "sheet"))
@@ -132,44 +94,6 @@
 
 #assert(str(obj).contains("\nv "))
 #assert(str(obj).contains("\nf "))
-
-#let illustrative-mtl = molfig.to-mtl(
-  sheet-pdb,
-  format: "pdb",
-  representation: "cartoon",
-  color-theme: "entity-id",
-  style: "illustrative",
-  infer-bonds: false,
-  sphere-detail: 1,
-)
-#let default-mtl = molfig.to-mtl(
-  sheet-pdb,
-  format: "pdb",
-  representation: "cartoon",
-  color-theme: "entity-id",
-  style: "default",
-  infer-bonds: false,
-  sphere-detail: 1,
-)
-#assert.eq(illustrative-mtl, default-mtl)
-
-#let xyz-illustrative-mtl = molfig.to-mtl(
-  caffeine-xyz,
-  format: "xyz",
-  representation: "ball-and-stick",
-  color-theme: "chain-id",
-  style: "illustrative",
-  sphere-detail: 1,
-)
-#let xyz-default-mtl = molfig.to-mtl(
-  caffeine-xyz,
-  format: "xyz",
-  representation: "ball-and-stick",
-  color-theme: "chain-id",
-  style: "default",
-  sphere-detail: 1,
-)
-#assert.eq(xyz-illustrative-mtl, xyz-default-mtl)
 
 #let themed-info = molfig.info(
   water-pdb,
@@ -232,7 +156,6 @@
   water-cif,
   format: "cif",
   representation: "spacefill",
-  style: "illustrative",
   mesh-format: "ply",
   helix-profile: "square",
   round-cap: true,

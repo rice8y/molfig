@@ -449,7 +449,6 @@ mod tests {
             b_iso: 0.0,
             formal_charge: 0,
             position: crate::model::Vec3::new(x, 0.0, 0.0),
-            position64: [x as f64, 0.0, 0.0],
             het: false,
             operator_name: String::new(),
         }

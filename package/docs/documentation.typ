@@ -7,10 +7,7 @@
 #let package-import = "@preview/" + package-id + ":" + package-version
 #let rendered-9r1o-pdf = "../examples/9R1O.pdf"
 #let rendered-ethanol-xyz-pdf = "../examples/ethanol-xyz.pdf"
-#let rendered-xyz-illustrative-pdf = "../examples/xyz-illustrative.pdf"
-#let rendered-xyz-representations-pdf = "../examples/xyz-representations.pdf"
 #let rendered-representations-pdf = "../examples/representations.pdf"
-#let rendered-illustrative-pdf = "../examples/illustrative.pdf"
 #let rendered-render-object-pdf = "../examples/render-object.pdf"
 #let rendered-theme-pdf = "../examples/theme.pdf"
 #let rendered-decimate-pdf = "../examples/decimate.pdf"
@@ -19,7 +16,7 @@
 #let rendered-draft-pdf = "../examples/9M1U.pdf"
 #let example-9r1o-code = "#import \"" + package-import + "\"\n\n#set page(width: auto, height: auto, margin: 0mm)\n\n// Uses structural data from RCSB PDB / wwPDB.\n// PDB ID: 9R1O\n// PDB DOI: https://doi.org/10.2210/pdb9R1O/pdb\n// PDB archive data files are available under CC0 1.0.\n#let pdb = path(\"9R1O.pdb\")\n\n#molfig.render(\n  pdb,\n  format: \"pdb\",\n  representation: \"cartoon\",\n  assembly: \"1\",\n  mesh-format: \"obj\",\n  quality: \"high\",\n  center: true,\n  output-format: \"svg\",\n  config: (\n    azimuth: 35,\n    elevation: 24,\n    background: \"\",\n  ),\n)"
 #let example-ethanol-xyz-data = "9\nPubChem CID 702 (ethanol), PubChem3D conformer 000002BE00000001\nO  -1.1712   0.2997   0.0000\nC  -0.0463  -0.5665   0.0000\nC   1.2175   0.2668   0.0000\nH  -0.0958  -1.2120   0.8819\nH  -0.0952  -1.1938  -0.8946\nH   2.1050  -0.3720  -0.0177\nH   1.2426   0.9307  -0.8704\nH   1.2616   0.9052   0.8886\nH  -1.1291   0.8364   0.8099"
-#let example-ethanol-xyz-code = "#import \"" + package-import + "\"\n\n#set page(width: 82mm, height: 82mm, margin: 4mm)\n\n// PubChem CID 702 (ethanol), PubChem3D conformer 000002BE00000001.\n// Record: https://pubchem.ncbi.nlm.nih.gov/compound/702\n// Retrieved through PubChem PUG REST on 2026-08-24.\n#let xyz = path(\"data/ethanol.xyz\")\n\n#molfig.render(\n  xyz,\n  format: \"xyz\",\n  representation: \"default\",\n  color-theme: \"element-symbol\",\n  mesh-format: \"obj\",\n  quality: \"high\",\n  center: true,\n  output-format: \"svg\",\n  config: (\n    azimuth: 125,\n    elevation: 40,\n    background: \"\",\n  ),\n  width: 74mm,\n  height: 74mm,\n)"
+#let example-ethanol-xyz-code = "#import \"" + package-import + "\"\n\n#set page(width: 82mm, height: 82mm, margin: 4mm)\n\n// PubChem CID 702 (ethanol), PubChem3D conformer 000002BE00000001.\n// Record: https://pubchem.ncbi.nlm.nih.gov/compound/702\n// Retrieved through PubChem PUG REST on 2026-08-24.\n#let xyz = path(\"data/ethanol.xyz\")\n\n#molfig.render(\n  xyz,\n  format: \"xyz\",\n  representation: \"default\",\n  color-theme: \"element-symbol\",\n  mesh-format: \"obj\",\n  quality: \"high\",\n  center: true,\n  output-format: \"svg\",\n  config: (\n    azimuth: 35,\n    elevation: 24,\n    background: \"\",\n  ),\n  width: 74mm,\n  height: 74mm,\n)"
 
 #let ic(value) = raw(str(value))
 
@@ -261,7 +258,7 @@ all three archive formats appear below.
 Passing a Typst string is accepted for small inline examples. A string is treated
 as inline molecular text, not as a file path.
 
-== XYZ Example <sec:xyz-example>
+== A Complete XYZ Example <sec:xyz-example>
 
 The following real-data example renders ethanol from the first PubChem3D
 conformer for PubChem CID 702. Save these two files with the shown
@@ -269,7 +266,7 @@ conformer for PubChem CID 702. Save these two files with the shown
 
 #code("xyz", example-ethanol-xyz-data, title: "PubChem ethanol conformer in XYZ format", file: "data/ethanol.xyz")
 
-#code("typ", example-ethanol-xyz-code, title: "Render PubChem ethanol from XYZ", file: "ethanol-xyz.typ")
+#code("typ", example-ethanol-xyz-code, title: "Complete XYZ rendering example", file: "ethanol-xyz.typ")
 
 #figure(
   block(
@@ -291,83 +288,35 @@ conformer for PubChem CID 702. Save these two files with the shown
   #link("https://doi.org/10.1093/nar/gkae1059")[doi:10.1093/nar/gkae1059].
 ]
 
-=== XYZ With Illustrative Style <sec:xyz-illustrative>
+#pagebreak()
 
-#ic("style: \"illustrative\"") can be applied to an XYZ structure independently
-of its representation and color theme. For this small XYZ structure,
-#ic("representation: \"default\"") resolves to the Viewer ball-and-stick
-preset. The example keeps that representation and
-#ic("color-theme: \"element-symbol\"") fixed so that only the style changes.
+== XYZ Validation Corpus <sec:xyz-validation>
 
-#code(
-  "typ",
-  read("../examples/xyz-illustrative.typ"),
-  title: "Compare default and illustrative styles for XYZ",
-  file: "xyz-illustrative.typ",
-)
+The bundled real-data corpus expands the example to four PubChem3D conformers.
+All files preserve the source SDF atom order and four-decimal coordinates.
 
-#figure(
-  block(
-    width: 82%,
-    inset: 4pt,
-    stroke: luma(82%),
-    radius: 2pt,
-    image(rendered-xyz-illustrative-pdf, width: 100%),
-  ),
-  caption: [The same benzene XYZ ball-and-stick representation with default and Illustrative renderer styles.],
-)
+#table4([Compound], [CID], [Formula / atoms], [Source SDF bonds], (
+  row4([Ethanol (#ic("ethanol.xyz"))], [#link("https://pubchem.ncbi.nlm.nih.gov/compound/702")[702]], [#ic("C2H6O") / 9], [8]),
+  row4([Benzene (#ic("benzene.xyz"))], [#link("https://pubchem.ncbi.nlm.nih.gov/compound/241")[241]], [#ic("C6H6") / 12], [12]),
+  row4([Aspirin (#ic("aspirin.xyz"))], [#link("https://pubchem.ncbi.nlm.nih.gov/compound/2244")[2244]], [#ic("C9H8O4") / 21], [21]),
+  row4([Caffeine (#ic("caffeine.xyz"))], [#link("https://pubchem.ncbi.nlm.nih.gov/compound/2519")[2519]], [#ic("C8H10N4O2") / 24], [25]),
+))
 
-=== XYZ Representation Comparison <sec:xyz-representations>
+#ic("examples/data/XYZ_VALIDATION.json") pins each source URL, conformer ID,
+formula, source bond endpoints and orders, element composition, coordinate
+bounds, and SHA-256 digest. The offline validator rejects non-canonical line
+counts, symbols, coordinate precision, non-finite or coincident atoms, formula
+or bound drift, duplicate bonds, and any difference between Mol\*-style XYZ
+bond inference and the source SDF connectivity.
 
-XYZ supplies atoms and Cartesian coordinates but no polymer hierarchy,
-residues, or secondary-structure annotations. Consequently, its most useful
-distinct representations are #ic("ball-and-stick"), #ic("spacefill"), and
-#ic("surface"). The comparison below fixes the source data, default style,
-camera, quality, and output settings. It uses the same benzene XYZ data as the
-Mol\* comparison fixture. For this XYZ
-structure, #ic("representation: \"default\"") resolves to ball-and-stick, so a
-duplicate default panel is omitted.
-
-#code(
-  "typ",
-  read("../examples/xyz-representations.typ"),
-  title: "Compare XYZ representations",
-  file: "xyz-representations.typ",
-)
-
-#figure(
-  block(
-    width: 100%,
-    inset: 4pt,
-    stroke: luma(82%),
-    radius: 2pt,
-    image(rendered-xyz-representations-pdf, width: 100%),
-  ),
-  caption: [Ball-and-stick, spacefill, and molecular surface representations of the same benzene XYZ data.],
-)
-
-#warning-alert[
-  The Surface panel exposes a known maquette 0.1.3 rendering limitation.
-  Molfig exports the molecular-surface geometry together with indexed OBJ
-  corner normals, but maquette reduces the normal indices of each face to one
-  triangle normal before smooth shading. Its rendered result can therefore
-  contain triangular fringes, faceted patches, or shading that differs from
-  Mol\*, even when the exported geometry is correct. This is not specific to
-  XYZ: the same limitation applies to Surface meshes originating from PDB,
-  mmCIF, and BinaryCIF. For a strict visual comparison, export OBJ and use a
-  renderer that preserves indexed corner normals.
-]
-
-#info-alert[
-  Coordinate sources: the style example uses
-  #link("https://pubchem.ncbi.nlm.nih.gov/compound/241")[PubChem CID 241]
-  (benzene), conformer #ic("000000F100000001"). Both comparisons use this same
-  XYZ record. The 3D SDF was
-  retrieved through #link("https://pubchem.ncbi.nlm.nih.gov/docs/pug-rest")[PubChem PUG REST]
-  on 2026-08-24 and transcribed to XYZ without changing atom order or coordinates.
-  General PubChem citation: Kim et al. (2025),
-  #link("https://doi.org/10.1093/nar/gkae1059")[doi:10.1093/nar/gkae1059].
-]
+The Rust regression test also compares explicit #ic("format: \"xyz\"") parsing
+with auto-detection, including atom identities, coordinates, inferred endpoints,
+bond metadata, ring counts, and aromatic-bond counts. Finally, a real
+Chrome/WebGL run at pinned Mol\* commit
+#ic("1b8117d3f10f7c978aabb5a0d3d47370635aefe4") exports the default
+ball-and-stick representation. Molfig's OBJ is required to match that text
+exactly and its binary STL is required to match byte for byte for all four
+corpus records.
 
 #pagebreak()
 
@@ -408,9 +357,6 @@ render, render-object, export, and metadata commands unless noted otherwise.
   arg("format", _value: values.value.with("auto")),
   arg("mesh-format", _value: values.value.with("obj")),
   arg("representation", _value: values.value.with("default")),
-  arg("color-theme", _value: values.value.with("chain-id")),
-  arg("style", _value: values.value.with("default")),
-  arg("style-params", _value: values.value.with((:))),
   arg("config", _value: values.value.with((:))),
   arg("width", _value: values.value.with("auto")),
   arg("height", _value: values.value.with("auto")),
@@ -563,7 +509,7 @@ synthetic CIF text.
 
 #option-table((
   option-row("assembly", ic("\"1\""), [Biological assembly id. Use #ic("\"asymmetric-unit\""), #ic("\"none\""), or an empty string for source coordinates without assembly operators.]),
-  option-row("alt-loc", ic("\"\""), [Alternate location id or policy. The empty value follows Mol\* and includes all locations; concrete ids such as #ic("\"A\""), #ic("\"highest-occupancy\""), and #ic("\"all\"") are also supported.]),
+  option-row("alt-loc", ic("\"\""), [Alternate location id or policy. Supports concrete ids such as #ic("\"A\""), plus #ic("\"highest-occupancy\"") and #ic("\"all\"").]),
   option-row("infer-bonds", ic("true"), [Infer covalent bonds when explicit bond data are absent.]),
   option-row("center", ic("true"), [Recenters exported vertices around Mol\*-style visible export bounds.]),
 ))
@@ -578,8 +524,6 @@ are static mesh formats.
 #option-table((
   option-row("representation", ic("\"default\""), [Uses the Mol\* Viewer configured default preset, falling back to its automatic size-dependent selection. Use #ic("\"cartoon\"") to pin Viewer Quick Styles Cartoon or #ic("\"polymer-cartoon\"") for the standalone Cartoon provider.]),
   option-row("color-theme", ic("\"chain-id\""), [Selects #ic("\"chain-id\""), #ic("\"element-symbol\""), #ic("\"entity-id\""), #ic("\"operator-name\""), #ic("\"plddt-confidence\""), #ic("\"qmean-score\""), or #ic("\"sb-ncbr-partial-charges\""). Color is serialized through OBJ material references and the companion MTL output. STL and the current PLY output do not carry these colors, so themed document rendering requires #ic("mesh-format: \"obj\"").]),
-  option-row("style", ic("\"default\""), [Selects #ic("\"default\"") or #ic("\"illustrative\""). Style is independent of #arg[representation] and #arg[color-theme], so the same flat-light, outline, and occlusion treatment can be applied to Cartoon, Spacefill, Ball-and-stick, Surface, Ribbon, or Backbone geometry without changing their material colors.]),
-  option-row("style-params", ic("(:)"), [Configures Illustrative rendering with #ic("ignore-light"), #ic("outline"), and #ic("occlusion"); all three default to #ic("true").]),
   option-row("theme", ic("(:)"), [Applies Mol\* Viewer preset overrides. Supported keys are #ic("globalName"), #ic("carbonColor"), and #ic("symmetryColor"). An empty dictionary preserves the preset's normal component-specific themes.]),
 ))
 
@@ -620,70 +564,6 @@ solvent-excluded molecular envelope computed by the CPU molecular-surface path.
     Academy of Sciences] 81, 6014--6018 (1984),
     #link("https://doi.org/10.1073/pnas.81.19.6014")[doi:10.1073/pnas.81.19.6014].],
 )
-
-=== Illustrative Style <sec:illustrative-style>
-
-#arg[style] is a renderer treatment, not a representation or color theme.
-Molfig first constructs the selected #arg[representation] and resolves the
-selected #arg[color-theme]. With #ic("style: \"illustrative\""), it preserves
-that geometry and those material colors, then asks maquette to approximate the
-Mol\* Quick Styles neutral unlit colors, dark outlines, ambient occlusion, and
-disabled shadows.
-
-#warning-alert[
-  Illustrative rendering is not pixel-identical to the Mol\* WebGL renderer.
-  Molfig reproduces Mol\*-derived static geometry and material selection, but
-  OBJ, STL, and PLY do not carry Mol\*'s camera-dependent outline,
-  screen-space ambient occlusion, depth reconstruction, blur, or final color
-  composition. Maquette computes those effects with its own rasterizer and
-  post-processing algorithms. Simple XYZ atom-and-bond figures can therefore
-  look very close to Mol\*, while folded polymer Cartoon, Ribbon, and Backbone
-  geometry can show more visible differences in internal contours and
-  occlusion shading. The limitation follows the realized geometry; PDB, mmCIF,
-  and BinaryCIF representations of the same structure are subject to the same
-  renderer difference.
-]
-
-#code(
-  "typ",
-  read("../examples/illustrative.typ"),
-  title: "Apply Illustrative style without changing representation or color theme",
-  file: "illustrative.typ",
-)
-
-#example-result(
-  rendered-illustrative-pdf,
-  [RCSB PDB entry 9Z4O rendered twice with identical Cartoon geometry and chain-id colors; only the renderer style changes.],
-  "9Z4O",
-  "https://doi.org/10.2210/pdb9Z4O/pdb",
-  width: 78%,
-  source-note: [Structural data from the wwPDB archive.],
-)
-
-For @cmd:render[-] and @cmd:render-object[-], #ic("ignore-light: true")
-uses maquette's #ic("shading: \"flat\"") path, fixes both hemispheric ambient
-poles to white at neutral intensity, supplies a zero-intensity directional light,
-and disables specular and Fresnel terms. This preserves the Mol\* material's
-sRGB base color instead of tinting it through maquette's default environment.
-#ic("outline: true") requests an outline for every representation. Molfig maps
-the Mol\* Quick Style intent to maquette's AA-quantized depth-edge
-detector: polymer geometry uses width 0.9; small atomistic and surface figures
-use a black width-1.5 contour; dense atomistic figures use a near-black
-width-1.0 contour to avoid multiplying internal mesh edges into a black cast.
-The choice is derived from realized geometry and atom-count metadata, not from
-the input format. This renderer adaptation keeps the style API independent of
-the selected representation, but it does not reproduce Mol\*'s outline shader.
-#ic("occlusion: true") enables
-maquette SSAO, and shadows
-are disabled. Mol\* and maquette use different SSAO radius units and kernels,
-so Molfig maps the same Quick Style to a broad polymer kernel and a local
-atomistic/surface kernel instead of copying the numeric radius. The resulting
-shading is an approximation because the two renderers reconstruct depth,
-sample occlusion, blur, and compose color differently.
-User-supplied #arg[config] keys take precedence
-over all of these defaults. SSAO is available for PNG rendering; SVG retains the flat lighting
-and silhouette outline. Because these are renderer effects, OBJ and MTL output
-is identical for default and Illustrative styles.
 
 === Viewer Theme Overrides <sec:viewer-theme-overrides>
 
@@ -731,6 +611,10 @@ PLY schema have no material color channel.
 === Chain ID Color Rules <sec:chain-id-colors>
 
 The #ic("\"chain-id\"") theme follows these rules:
+
+The Viewer #ic("\"spacefill\"") preset intentionally overrides this option
+with Mol\* illustrative entity-id coloring. It lightens carbon colors in CIE
+Lab and forces water entities to #color-code("#ff0d0d").
 
 - For atomic models, the author chain id (#ic("auth_asym_id")) is used when it
   is present; otherwise the label chain id (#ic("label_asym_id")) is used. PDB
@@ -790,7 +674,7 @@ these MTL opacity values.
   row4([#ic("\"auto\"")], [Explicit automatic selection], [Atomic detail, polymer Cartoon, or a Gaussian surface according to structure size], [Huge/Gigantic routing follows the ViewerAuto size thresholds.]),
   row4([#ic("\"cartoon\"")], [General figures], [Polymer Cartoon plus atomic detail for non-polymers and carbohydrate visuals], [Pins the Mol\* Viewer Quick Styles Cartoon preset.]),
   row4([#ic("\"polymer-cartoon\"")], [Polymer-only figures], [Polymer trace, nucleotide ring, and polymer gap visuals], [Standalone Mol\* Cartoon provider defaults.]),
-  row4([#ic("\"spacefill\"")], [Atomic packing], [Atom spheres], [Matches Viewer Quick Styles Spacefill: entity-id base colors with carbon lightening when no theme override is supplied. #arg[style] remains an independent renderer treatment.]),
+  row4([#ic("\"spacefill\"")], [Atomic packing], [Atom spheres], [Viewer Quick Styles Spacefill with illustrative entity-id colors and water override.]),
   row4([#ic("\"surface\"")], [Solvent-accessible shape], [CPU molecular-surface field and marching-cubes mesh], [Viewer Quick Styles Surface with entity-id colors and red water override.]),
   row4([#ic("\"ball-and-stick\"")], [Ligands and small molecules], [Atom spheres plus bond cylinders], [Good for local chemistry and explicit bond inspection.]),
   row4([#ic("\"ribbon\"")], [Backbone shape], [Ribbon-oriented polymer geometry], [Good for broad fold visibility.]),
@@ -822,12 +706,6 @@ Quality presets override the explicit numeric tessellation controls. Use
 slowly. #arg[decimate] is applied after the quality preset, so it can be used
 as an additional opt-in geometry budget without changing representation
 selection.
-
-The sphere-detail column below describes the representation-side visual
-quality. For static sphere primitives, Molfig now also follows Mol\* Geo
-Export: automatic export detail is 3 below 2,000 spheres, 2 below 20,000, and
-1 otherwise. #ic("quality: \"custom\"") continues to honor an explicit
-#arg[sphere-detail].
 
 #table4([Preset], [Sphere detail], [Radial segments], [Linear segments], (
   row4([#ic("\"highest\"")], [3], [36], [18]),
@@ -910,19 +788,9 @@ The #arg[config] dictionary is JSON-encoded and passed through. For OBJ,
 Molfig derives maquette's #ic("materials") dictionary from the exported
 material ids so #ic("color-theme: \"chain-id\"") is visible in the document.
 User-supplied material entries are merged last and therefore take precedence.
-With Illustrative style, user-supplied maquette lighting, ambient, specular,
-Fresnel, outline, SSAO, and shadow keys take precedence over Molfig's defaults.
 STL has no material channel, and Molfig's current PLY schema contains no vertex
 or face color properties. Consequently, maquette renders STL and PLY without
 the selected color theme.
-
-#warning-alert[
-  In maquette 0.1.3, OBJ and PLY corner normals are not retained with their
-  original per-corner indexing through smooth shading. Curved Surface meshes
-  are particularly sensitive to this and may show shading artifacts that are
-  absent in Mol\*. The raw Molfig mesh and the in-document maquette rendering
-  must therefore be evaluated separately when checking Surface parity.
-]
 
 The complete 1FYY #ic("render-object") example above demonstrates camera,
 background, dimensions, and raster-output passthrough, and its rendered result
@@ -961,7 +829,7 @@ Mol\*-parity layer grows, but the current major groups are:
   row3([#ic("source_data")], [dictionary], [Input source categories, row counts, and original source kind.]),
   row3([#ic("structure")], [dictionary], [Model/Structure/Unit counts, boundary, conformation, segments, ranges, and lookup3d summary.]),
   row3([#ic("secondary_structure")], [dictionary], [Helix and sheet ranges.]),
-  row3([#ic("representation")], [dictionary], [Selected and realized visual names, plus the selected style and resolved Illustrative parameters.]),
+  row3([#ic("representation")], [dictionary], [Selected and realized visual names.]),
   row3([#ic("render_objects")], [array], [Semantic render-object spans with geometry type, visual, chain, residue range, group id, component, representation tag/order, provider color-theme metadata, and value-cell style counts.]),
   row3([#ic("bond_metadata")], [dictionary], [Counts by bond source and flags such as struct_conn, index_pair, chem_comp, aromatic, and resonance.]),
   row3([#ic("bounds")], [dictionary], [Expanded coordinate bounds before export centering.]),
@@ -1046,7 +914,6 @@ artifacts outside Typst.
   row3([A large assembly compiles slowly.], [High tessellation or too much assembly geometry.], [Use #ic("quality: \"auto\""), #arg[decimate], lower #arg[radial-segments] and #arg[linear-segments], or choose a lighter representation.]),
   row3([SVG parsing fails with #ic("\"nodes limit reached\"").], [A high-poly mesh, commonly a large spacefill representation, expands to more SVG nodes than Typst accepts.], [Use #ic("output-format: \"png\""). If vector output is required, reduce #arg[quality], #arg[sphere-detail], #arg[linear-segments], or #arg[radial-segments].]),
   row3([Bonds are missing.], [The file lacks explicit bonds and inference is disabled.], [Leave #arg[infer-bonds] as #value(true), or inspect #ic("bond_metadata") to see available bond sources.]),
-  row3([Surface has triangular fringes or faceted shading.], [maquette 0.1.3 does not preserve indexed OBJ/PLY corner normals through smooth shading.], [Treat this as a renderer limitation; compare the exported OBJ in a renderer that preserves corner normals.]),
   row3([Rendered view differs from external OBJ inspection.], [Different camera, centering, or mesh format.], [Pin #arg[center], #arg[mesh-format], maquette #arg[config], and representation quality options.]),
 ))
 
@@ -1099,7 +966,7 @@ documentation:
   row2([#ic("package/molfig.wasm")], [Checked-in WebAssembly plugin consumed by Typst.]),
 ))
 
-#shell("cd wasm-plugin\ncargo fmt --check\ncargo test\ncargo build --release --target wasm32-unknown-unknown\ncp target/wasm32-unknown-unknown/release/molfig.wasm ../package/molfig.wasm\ncd ../package\njust docs")
+#shell("cd wasm-plugin\ncargo fmt --check\ncargo test\nnode tests/validate-pubchem-xyz.mjs\ncargo build --release --target wasm32-unknown-unknown\ncp target/wasm32-unknown-unknown/release/molfig.wasm ../package/molfig.wasm\ncd ../package\njust docs")
 
 Regenerate #ic("package/molfig.wasm") after Rust changes that affect the Typst plugin.
 Regenerate this PDF after documentation or public API changes.

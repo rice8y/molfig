@@ -29,10 +29,10 @@ category|assembly-altloc-helix.bcif|pdbx_struct_oper_list|rows=2|columns=id,type
 typed|assembly-altloc-helix.bcif|entry.id|kind=string|rows=1|valueKind=0|str=assembly-altloc-helix
 typed|assembly-altloc-helix.bcif|pdbx_entity_branch_link.link_id|kind=int|rows=1|valueKind=0|str=1|int=1
 typed|assembly-altloc-helix.bcif|atom_site.id|kind=int|rows=14|valueKind=0,0,0|str=1,2,14|int=1,2,14
-typed|assembly-altloc-helix.bcif|atom_site.Cartn_x|kind=float|rows=14|valueKind=0,0,0|str=0,1.4500000476837158,7.699999809265137|float=0,1.45,7.7
+typed|assembly-altloc-helix.bcif|atom_site.Cartn_x|kind=float|rows=14|valueKind=0,0,0|str=0,1.45,7.7|float=0,1.45,7.7
 typed|assembly-altloc-helix.bcif|atom_site.auth_atom_id|kind=string|rows=14|valueKind=0,0,0|str=NX,CAX,OX
 typed|assembly-altloc-helix.bcif|atom_site.pdbx_PDB_ins_code|kind=string|rows=14|valueKind=0,0,0|str=A,.,B
-typed|assembly-altloc-helix.bcif|chem_comp.formula_weight|kind=float|rows=3|valueKind=0,0,0|str=89.08999633789063,105.08999633789063,75.06999969482422|float=89.09,105.09,75.07
+typed|assembly-altloc-helix.bcif|chem_comp.formula_weight|kind=float|rows=3|valueKind=0,0,0|str=89.09,105.09,75.07|float=89.09,105.09,75.07
 typed|assembly-altloc-helix.bcif|chem_comp_bond.pdbx_ordinal|kind=int|rows=4|valueKind=0,0,0|str=101,102,104|int=101,102,104
 fixture|ihm-only.bcif
 category|ihm-only.bcif|ihm_model_list|rows=1|columns=model_id,model_name,assembly_id,protocol_id,representation_id

@@ -33,7 +33,6 @@ pub struct Atom {
     pub b_iso: f32,
     pub formal_charge: i32,
     pub position: Vec3,
-    pub position64: [f64; 3],
     pub het: bool,
     pub operator_name: String,
 }
@@ -1408,11 +1407,6 @@ impl Molecule {
                 };
                 let mut atom = source_atom.clone();
                 atom.position = unit.operator.transform.apply(source_atom.position);
-                atom.position64 = unit.operator.transform.apply64([
-                    source_atom.position.x as f64,
-                    source_atom.position.y as f64,
-                    source_atom.position.z as f64,
-                ]);
                 atom.operator_name = unit.operator.name.clone();
                 expanded_indices.push((unit.id, atom_index));
                 atoms.push(atom);
@@ -1691,7 +1685,6 @@ impl AtomicStructure {
         let mut units = structure_units(molecule, &model, &coarse, &ranges);
         let (intra_unit_bond_count, inter_unit_bonds, inter_unit_bond_graph) = assign_unit_bonds(
             &mut units,
-            &model.hierarchy,
             &molecule.bonds,
             &molecule.bond_metadata,
             molecule.index_pair_bonds.as_ref(),
@@ -2075,42 +2068,7 @@ pub struct AtomicModel {
 }
 
 fn sorted_model_atoms(atoms: &[Atom]) -> Vec<&Atom> {
-    let mut entity_buckets = Vec::<(String, Vec<&Atom>)>::new();
-    for atom in atoms {
-        if let Some((_, bucket)) = entity_buckets
-            .iter_mut()
-            .find(|(entity_id, _)| entity_id == &atom.entity_id)
-        {
-            bucket.push(atom);
-        } else {
-            entity_buckets.push((atom.entity_id.clone(), vec![atom]));
-        }
-    }
-
-    let mut sorted = Vec::with_capacity(atoms.len());
-    for (_, entity_atoms) in entity_buckets {
-        let mut chain_buckets = Vec::<(String, Vec<&Atom>)>::new();
-        for atom in entity_atoms {
-            if let Some((_, bucket)) = chain_buckets
-                .iter_mut()
-                .find(|(chain, _)| chain == &atom.chain)
-            {
-                bucket.push(atom);
-            } else {
-                chain_buckets.push((atom.chain.clone(), vec![atom]));
-            }
-        }
-        for (_, mut chain_atoms) in chain_buckets {
-            if chain_atoms
-                .first()
-                .is_some_and(|atom| !atom.residue_seq.is_empty())
-            {
-                chain_atoms.sort_by_key(|atom| atom.residue_seq.parse::<i32>().unwrap_or(0));
-            }
-            sorted.extend(chain_atoms);
-        }
-    }
-    sorted
+    atoms.iter().collect()
 }
 
 static MOLSTAR_UUID_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -2239,11 +2197,6 @@ impl AtomicModel {
                 alt_id: atom.alt_id.clone(),
                 operator_name: atom_operator_name(atom),
                 position: atom.position,
-                position64: [
-                    atom.position.x as f64,
-                    atom.position.y as f64,
-                    atom.position.z as f64,
-                ],
                 residue_index,
                 chain_index,
             });
@@ -2896,7 +2849,6 @@ pub struct AtomicAtom {
     pub alt_id: String,
     pub operator_name: String,
     pub position: Vec3,
-    pub position64: [f64; 3],
     pub residue_index: usize,
     pub chain_index: usize,
 }
@@ -3013,7 +2965,6 @@ pub struct SecondaryStructureType {
 
 impl SecondaryStructureType {
     pub const NONE: SecondaryStructureType = SecondaryStructureType { bits: 0x0 };
-    pub const NA: SecondaryStructureType = SecondaryStructureType { bits: 0x20000000 };
     pub const HELIX: SecondaryStructureType = SecondaryStructureType { bits: 0x2 };
     pub const BETA: SecondaryStructureType = SecondaryStructureType { bits: 0x4 };
     pub const BETA_SHEET: SecondaryStructureType = SecondaryStructureType {
@@ -3040,27 +2991,21 @@ fn secondary_range_start_residue(
     let chain = hierarchy.chains.get(chain_index)?;
     (chain.start_residue..chain.end_residue.min(hierarchy.residues.len())).find(|&residue_index| {
         let residue = &hierarchy.residues[residue_index];
-        secondary_range_residue_seq_id(residue) == Some(range.start)
+        secondary_residue_seq_id(residue) == Some(range.start)
             && residue.insertion_code == range.start_insertion_code
     })
 }
 
 fn secondary_range_reaches_end(residue: &AtomicResidue, range: &SecondaryRange) -> bool {
-    let seq_id = secondary_range_residue_seq_id(residue);
-    let Some(seq_id) = seq_id else {
+    let Some(seq_id) = secondary_residue_seq_id(residue) else {
         return false;
     };
     seq_id > range.end
         || (seq_id == range.end && residue.insertion_code == range.end_insertion_code)
 }
 
-fn secondary_range_residue_seq_id(residue: &AtomicResidue) -> Option<i32> {
-    residue
-        .label_seq_id
-        .trim()
-        .parse()
-        .ok()
-        .or_else(|| residue.auth_seq_id.trim().parse().ok())
+fn secondary_residue_seq_id(residue: &AtomicResidue) -> Option<i32> {
+    residue.label_seq_id.trim().parse().ok()
 }
 
 #[derive(Clone, Debug, Default)]
@@ -3616,22 +3561,16 @@ impl UnitProps {
         let mut nucleotide_elements = Vec::new();
         let mut water_elements = Vec::new();
         let mut positions = Vec::new();
-        let mut positions64 = Vec::new();
         let mut invariant_positions = Vec::new();
         let mut radii = Vec::new();
         for &element in elements {
             if let Some(atom) = hierarchy.atoms.get(element) {
                 invariant_positions.push(atom.position);
                 positions.push(operator.transform.apply(atom.position));
-                positions64.push(operator.transform.apply64([
-                    atom.position.x as f64,
-                    atom.position.y as f64,
-                    atom.position.z as f64,
-                ]));
                 radii.push(molstar_vdw_radius(&atom.type_symbol));
             }
         }
-        let boundary = Boundary::from_positions64_and_radii(&positions64, &radii);
+        let boundary = Boundary::from_positions_and_radii(&positions, &radii);
         let principal_axes = PrincipalAxes::of_positions(&invariant_positions);
         let lookup3d = UnitLookup3D::new(positions, boundary.clone());
         let polymer_elements = atomic_polymer_elements(hierarchy, ranges, elements);
@@ -3874,31 +3813,6 @@ impl Boundary {
         Boundary::from_positions_and_optional_radii(positions, Some(radii))
     }
 
-    pub(crate) fn from_positions64_and_radii(positions: &[[f64; 3]], radii: &[f32]) -> Self {
-        if positions.is_empty() {
-            return Boundary::default();
-        }
-        let mut helper = BoundaryHelper::new(if positions.len() > 10_000 {
-            EposQuality::Coarse
-        } else {
-            EposQuality::Fine
-        });
-        for (index, &position) in positions.iter().enumerate() {
-            helper.include_position64_radius(
-                position,
-                radii.get(index).copied().unwrap_or(0.0) as f64,
-            );
-        }
-        helper.finished_include_step();
-        for (index, &position) in positions.iter().enumerate() {
-            helper.radius_position64_radius(
-                position,
-                radii.get(index).copied().unwrap_or(0.0) as f64,
-            );
-        }
-        helper.boundary()
-    }
-
     fn from_positions_and_optional_radii(positions: &[Vec3], radii: Option<&[f32]>) -> Self {
         if positions.is_empty() {
             return Boundary::default();
@@ -4079,13 +3993,6 @@ impl BoundaryHelper {
         self.include_position_vec3d(Vec3d::from(point));
     }
 
-    fn include_position64_radius(&mut self, center: [f64; 3], radius: f64) {
-        let center = Vec3d::from(center);
-        for i in 0..self.directions.len() {
-            self.compute_sphere_extrema(i, center, radius);
-        }
-    }
-
     fn include_position_vec3d(&mut self, point: Vec3d) {
         for i in 0..self.directions.len() {
             self.compute_extrema(i, point);
@@ -4155,11 +4062,6 @@ impl BoundaryHelper {
 
     fn radius_position64(&mut self, point: [f64; 3]) {
         self.radius_position_vec3d(Vec3d::from(point));
-    }
-
-    fn radius_position64_radius(&mut self, center: [f64; 3], radius: f64) {
-        let distance = Vec3d::from(center).distance(self.center) + radius;
-        self.radius_sq = self.radius_sq.max(distance * distance);
     }
 
     fn radius_position_vec3d(&mut self, point: Vec3d) {
@@ -6025,7 +5927,6 @@ fn unit_endpoints_by_source_atom(units: &[StructureUnit]) -> Vec<Vec<UnitEndpoin
 
 fn assign_unit_bonds(
     units: &mut [StructureUnit],
-    hierarchy: &AtomicHierarchy,
     bonds: &[Bond],
     metadata: &[BondMetadata],
     index_pair_bonds: Option<&IndexPairBonds>,
@@ -6036,7 +5937,6 @@ fn assign_unit_bonds(
         .map(|_| IntraUnitBondBuild::default())
         .collect::<Vec<_>>();
     let endpoints_by_atom = unit_endpoints_by_source_atom(units);
-    let struct_conn_unit_pairs = struct_conn_unit_pairs(bonds, metadata, &endpoints_by_atom);
     for (source_bond, bond) in bonds.iter().enumerate() {
         let endpoints_a = endpoints_by_atom
             .get(bond.a)
@@ -6076,9 +5976,6 @@ fn assign_unit_bonds(
                     &bond_metadata,
                     &units[*unit_a_index],
                     &units[*unit_b_index],
-                    hierarchy,
-                    struct_conn_unit_pairs
-                        .contains(&canonical_unit_pair(*unit_a_index, *unit_b_index)),
                 ) && metadata_allows_bond_distance(
                     &bond_metadata,
                     source_bond,
@@ -6128,46 +6025,6 @@ fn assign_unit_bonds(
     (intra_count, inter, inter_graph)
 }
 
-fn struct_conn_unit_pairs(
-    bonds: &[Bond],
-    metadata: &[BondMetadata],
-    endpoints_by_atom: &[Vec<UnitEndpoint>],
-) -> BTreeSet<(usize, usize)> {
-    let mut pairs = BTreeSet::new();
-    for (source_bond, bond_metadata) in metadata.iter().enumerate() {
-        if bond_metadata.struct_conn.is_none() {
-            continue;
-        }
-        let Some(bond) = bonds.get(source_bond) else {
-            continue;
-        };
-        let endpoints_a = endpoints_by_atom
-            .get(bond.a)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
-        let endpoints_b = endpoints_by_atom
-            .get(bond.b)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
-        for (_, unit_a_index, _) in endpoints_a {
-            for (_, unit_b_index, _) in endpoints_b {
-                if unit_a_index != unit_b_index {
-                    pairs.insert(canonical_unit_pair(*unit_a_index, *unit_b_index));
-                }
-            }
-        }
-    }
-    pairs
-}
-
-fn canonical_unit_pair(unit_a: usize, unit_b: usize) -> (usize, usize) {
-    if unit_a <= unit_b {
-        (unit_a, unit_b)
-    } else {
-        (unit_b, unit_a)
-    }
-}
-
 fn metadata_allows_intra_bond(metadata: &BondMetadata, unit: &StructureUnit) -> bool {
     if let Some(struct_conn) = &metadata.struct_conn {
         return normalized_symmetry(&struct_conn.partner_a_symmetry)
@@ -6185,8 +6042,6 @@ fn metadata_allows_inter_unit_bond(
     metadata: &BondMetadata,
     unit_a: &StructureUnit,
     unit_b: &StructureUnit,
-    hierarchy: &AtomicHierarchy,
-    units_have_common_struct_conn: bool,
 ) -> bool {
     if metadata.struct_conn.is_some() {
         return true;
@@ -6203,27 +6058,7 @@ fn metadata_allows_inter_unit_bond(
         return operator_matches_key(&unit_a.operator, metadata.operator_a)
             && operator_matches_key(&unit_b.operator, metadata.operator_b);
     }
-    if !units_have_common_struct_conn
-        && (unit_is_water_or_ion(unit_a, hierarchy) || unit_is_water_or_ion(unit_b, hierarchy))
-    {
-        return false;
-    }
     unit_a.operator.instance_id == unit_b.operator.instance_id
-}
-
-fn unit_is_water_or_ion(unit: &StructureUnit, hierarchy: &AtomicHierarchy) -> bool {
-    let molecule_type = unit
-        .elements
-        .first()
-        .and_then(|&element| hierarchy.atoms.get(element))
-        .and_then(|atom| {
-            hierarchy
-                .derived
-                .residue
-                .molecule_type
-                .get(atom.residue_index)
-        });
-    matches!(molecule_type, Some(MoleculeType::Water | MoleculeType::Ion))
 }
 
 fn metadata_allows_bond_distance(

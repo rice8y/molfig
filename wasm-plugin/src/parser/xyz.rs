@@ -44,10 +44,9 @@ pub(crate) fn parse_xyz(text: &str) -> Result<Molecule, String> {
                     atom_index + 1
                 ));
             }
-            let x64 = parse_coordinate(fields[1], model_num, atom_index, "x")?;
-            let y64 = parse_coordinate(fields[2], model_num, atom_index, "y")?;
-            let z64 = parse_coordinate(fields[3], model_num, atom_index, "z")?;
-            let (x, y, z) = (x64 as f32, y64 as f32, z64 as f32);
+            let x = parse_coordinate(fields[1], model_num, atom_index, "x")?;
+            let y = parse_coordinate(fields[2], model_num, atom_index, "y")?;
+            let z = parse_coordinate(fields[3], model_num, atom_index, "z")?;
             let type_symbol = fields[0].to_string();
             let element = normalize_element(type_symbol.clone());
             let source_index = atoms.len();
@@ -74,7 +73,6 @@ pub(crate) fn parse_xyz(text: &str) -> Result<Molecule, String> {
                 b_iso: 0.0,
                 formal_charge: 0,
                 position: Vec3 { x, y, z },
-                position64: [x as f64, y as f64, z as f64],
                 het: false,
                 operator_name: String::new(),
             });
@@ -120,14 +118,14 @@ fn parse_coordinate(
     model_num: i32,
     atom_index: usize,
     axis: &str,
-) -> Result<f64, String> {
+) -> Result<f32, String> {
     let value = value.parse::<f64>().map_err(|_| {
         format!(
             "invalid XYZ {axis} coordinate for model {} atom {}: {value}",
             model_num + 1,
             atom_index + 1
         )
-    })?;
+    })? as f32;
     if !value.is_finite() {
         return Err(format!(
             "invalid XYZ {axis} coordinate for model {} atom {}: {value}",

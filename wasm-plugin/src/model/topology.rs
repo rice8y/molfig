@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use super::derived::{is_dna_residue, is_protein_residue, is_rna_residue};
 use super::{Atom, Bond, BondFlags, BondMetadata, BondSource, Molecule, Vec3};
@@ -63,9 +63,8 @@ pub(super) fn apply_chemical_component_bonds(molecule: &mut Molecule) {
     let mut existing = molecule
         .bonds
         .iter()
-        .enumerate()
-        .map(|(index, bond)| (normalized_bond_pair(bond.a, bond.b), index))
-        .collect::<BTreeMap<_, _>>();
+        .map(|bond| normalized_bond_pair(bond.a, bond.b))
+        .collect::<HashSet<_>>();
     let mut residue_atoms = Vec::<(i32, String, String, String, String, Vec<usize>)>::new();
     for (atom_index, atom) in molecule.atoms.iter().enumerate() {
         let key = (
@@ -116,42 +115,21 @@ pub(super) fn apply_chemical_component_bonds(molecule: &mut Molecule) {
                         continue;
                     }
                     let pair = normalized_bond_pair(a, b);
-                    let mut flags = BondFlags::COVALENT.union(chem_bond.flags);
-                    if BondMetadata::computed_for_atoms(&molecule.atoms[a], &molecule.atoms[b])
-                        .flags
-                        .contains(BondFlags::METALLIC_COORDINATION)
-                    {
-                        flags = flags
-                            .without(BondFlags::COVALENT)
-                            .union(BondFlags::METALLIC_COORDINATION);
-                    }
-                    let chem_metadata = BondMetadata {
-                        source: BondSource::ChemComp,
-                        order: chem_bond.order,
-                        flags,
-                        key: chem_bond.ordinal.unwrap_or(0),
-                        distance: None,
-                        operator_a: -1,
-                        operator_b: -1,
-                        struct_conn: None,
-                    };
-                    if let Some(&bond_index) = existing.get(&pair) {
-                        if let Some(metadata) = molecule.bond_metadata.get_mut(bond_index) {
-                            if !matches!(
-                                metadata.source,
-                                BondSource::StructConn | BondSource::IndexPair
-                            ) {
-                                *metadata = chem_metadata;
-                            }
-                        }
-                    } else {
-                        let bond_index = molecule.bonds.len();
+                    if existing.insert(pair) {
                         molecule.bonds.push(Bond {
                             a: pair.0,
                             b: pair.1,
                         });
-                        molecule.bond_metadata.push(chem_metadata);
-                        existing.insert(pair, bond_index);
+                        molecule.bond_metadata.push(BondMetadata {
+                            source: BondSource::ChemComp,
+                            order: chem_bond.order,
+                            flags: BondFlags::COVALENT.union(chem_bond.flags),
+                            key: chem_bond.ordinal.unwrap_or(0),
+                            distance: None,
+                            operator_a: -1,
+                            operator_b: -1,
+                            struct_conn: None,
+                        });
                     }
                 }
             }
@@ -820,10 +798,7 @@ fn ring_planarity_deviation(molecule: &Molecule, atom_indices: &[usize]) -> f32 
         zz += delta.z * delta.z;
     }
     let lambda = smallest_symmetric_3x3_eigenvalue(xx, xy, xz, yy, yz, zz).max(0.0);
-    // PrincipalAxes.calculateMomentsAxes scales singular directions with
-    // sqrt(W / (row_count / 3)); UnitRing.isAromatic compares the magnitude
-    // of that scaled third direction, not the RMS orthogonal deviation.
-    (lambda / (atom_indices.len() as f32 / 3.0)).sqrt()
+    (lambda / atom_indices.len() as f32).sqrt()
 }
 
 fn smallest_symmetric_3x3_eigenvalue(xx: f32, xy: f32, xz: f32, yy: f32, yz: f32, zz: f32) -> f32 {

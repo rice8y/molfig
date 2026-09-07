@@ -18,8 +18,8 @@
   center: true,
   output-format: "svg",
   config: (
-    azimuth: 125,
-    elevation: 40,
+    azimuth: 35,
+    elevation: 24,
     background: "",
   ),
   width: 74mm,
