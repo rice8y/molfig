@@ -129,7 +129,7 @@ _pdbx_struct_oper_list.vector[3]
 }
 
 #[test]
-fn molstar_model_split_uses_sorted_atom_site_order_and_frame_local_source_indices() {
+fn molstar_model_split_preserves_source_order_and_source_indices_are_frame_local() {
     let cif = b"data_demo
 loop_
 _atom_site.group_PDB
@@ -174,7 +174,7 @@ ATOM 12 C CA CAZ B SER SRY A Z 1 1 10 . 9.000 0.000 0.000 0.25 99.00 0 2
     assert_eq!(structure.model.model_num, 1);
     assert_eq!(structure.model.hierarchy.atoms.len(), 2);
     assert_eq!(structure.model.hierarchy.chains.len(), 1);
-    assert_eq!(structure.model.hierarchy.chains[0].auth_id, "Y");
+    assert_eq!(structure.model.hierarchy.chains[0].auth_id, "X");
     assert_eq!(structure.model.hierarchy.chains[0].id, "A");
     assert_eq!(structure.model.hierarchy.chains[0].entity_id, "1");
     assert_eq!(
@@ -189,7 +189,7 @@ ATOM 12 C CA CAZ B SER SRY A Z 1 1 10 . 9.000 0.000 0.000 0.25 99.00 0 2
                 atom.alt_id.as_str()
             ))
             .collect::<Vec<_>>(),
-        vec![("CA", "CAY", "A"), ("CA", "CAX", "")]
+        vec![("CA", "CAX", ""), ("CA", "CAY", "A")]
     );
     assert_eq!(
         structure
@@ -208,23 +208,23 @@ ATOM 12 C CA CAZ B SER SRY A Z 1 1 10 . 9.000 0.000 0.000 0.25 99.00 0 2
             })
             .collect::<Vec<_>>(),
         vec![
-            ("ALA", "ALY", "1", "10", "A"),
-            ("GLY", "GLX", "2", "20", "")
+            ("GLY", "GLX", "2", "20", ""),
+            ("ALA", "ALY", "1", "10", "A")
         ]
     );
-    assert_eq!(structure.model.conformation.atom_ids, vec![11, 10]);
+    assert_eq!(structure.model.conformation.atom_ids, vec![10, 11]);
     assert_eq!(
         structure.model.conformation.positions,
-        vec![vec3(1.0, 0.0, 0.0), vec3(2.0, 0.0, 0.0)]
+        vec![vec3(2.0, 0.0, 0.0), vec3(1.0, 0.0, 0.0)]
     );
-    assert_eq!(structure.model.conformation.x, vec![1.0, 2.0]);
+    assert_eq!(structure.model.conformation.x, vec![2.0, 1.0]);
     assert_eq!(structure.model.conformation.y, vec![0.0, 0.0]);
     assert_eq!(structure.model.conformation.z, vec![0.0, 0.0]);
-    assert_eq!(structure.model.conformation.occupancies, vec![0.5, 0.75]);
-    assert_eq!(structure.model.conformation.b_iso, vec![10.5, 12.25]);
-    assert_eq!(structure.model.conformation.formal_charges, vec![1, -1]);
-    assert_eq!(structure.model.hierarchy.atom_source_index, vec![1, 0]);
-    assert_eq!(structure.model.hierarchy.residue_source_index, vec![1, 0]);
+    assert_eq!(structure.model.conformation.occupancies, vec![0.75, 0.5]);
+    assert_eq!(structure.model.conformation.b_iso, vec![12.25, 10.5]);
+    assert_eq!(structure.model.conformation.formal_charges, vec![-1, 1]);
+    assert_eq!(structure.model.hierarchy.atom_source_index, vec![0, 1]);
+    assert_eq!(structure.model.hierarchy.residue_source_index, vec![0, 1]);
     assert_eq!(
         structure.model.hierarchy.residue_atom_segments.offsets,
         vec![0, 1, 2]
@@ -241,21 +241,21 @@ ATOM 12 C CA CAZ B SER SRY A Z 1 1 10 . 9.000 0.000 0.000 0.25 99.00 0 2
         structure.model.hierarchy.chain_atom_segments.index,
         vec![0, 0]
     );
-    assert_eq!(structure.properties.atom_source_index, vec![1, 0]);
-    assert_eq!(structure.properties.atom_id, vec![11, 10]);
+    assert_eq!(structure.properties.atom_source_index, vec![0, 1]);
+    assert_eq!(structure.properties.atom_id, vec![10, 11]);
     assert_eq!(structure.properties.label_atom_id, vec!["CA", "CA"]);
-    assert_eq!(structure.properties.auth_atom_id, vec!["CAY", "CAX"]);
-    assert_eq!(structure.properties.label_alt_id, vec!["A", ""]);
-    assert_eq!(structure.properties.label_comp_id, vec!["ALA", "GLY"]);
-    assert_eq!(structure.properties.auth_comp_id, vec!["ALY", "GLX"]);
-    assert_eq!(structure.properties.label_seq_id, vec!["1", "2"]);
-    assert_eq!(structure.properties.auth_seq_id, vec!["10", "20"]);
-    assert_eq!(structure.properties.pdbx_pdb_ins_code, vec!["A", ""]);
+    assert_eq!(structure.properties.auth_atom_id, vec!["CAX", "CAY"]);
+    assert_eq!(structure.properties.label_alt_id, vec!["", "A"]);
+    assert_eq!(structure.properties.label_comp_id, vec!["GLY", "ALA"]);
+    assert_eq!(structure.properties.auth_comp_id, vec!["GLX", "ALY"]);
+    assert_eq!(structure.properties.label_seq_id, vec!["2", "1"]);
+    assert_eq!(structure.properties.auth_seq_id, vec!["20", "10"]);
+    assert_eq!(structure.properties.pdbx_pdb_ins_code, vec!["", "A"]);
     assert_eq!(structure.properties.label_asym_id, vec!["A", "A"]);
-    assert_eq!(structure.properties.auth_asym_id, vec!["Y", "Y"]);
+    assert_eq!(structure.properties.auth_asym_id, vec!["X", "X"]);
     assert_eq!(structure.properties.label_entity_id, vec!["1", "1"]);
 
-    assert_eq!(structure.models[0].hierarchy.atom_source_index, vec![1, 0]);
+    assert_eq!(structure.models[0].hierarchy.atom_source_index, vec![0, 1]);
     assert_eq!(structure.models[1].model_num, 2);
     assert_eq!(structure.models[1].hierarchy.atom_source_index, vec![2]);
     assert_eq!(structure.models[1].conformation.atom_ids, vec![12]);

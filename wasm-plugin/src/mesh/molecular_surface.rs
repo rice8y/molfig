@@ -11,21 +11,13 @@ use super::surface::{marching_cubes_mesh, GaussianDensityGrid};
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct MolecularSurfacePoint {
-    pub(super) position: [f64; 3],
+    pub(super) position: Vec3,
     pub(super) radius: f64,
     pub(super) group_id: usize,
 }
 
 impl MolecularSurfacePoint {
     pub(super) const fn new(position: Vec3, radius: f64, group_id: usize) -> Self {
-        Self {
-            position: [position.x as f64, position.y as f64, position.z as f64],
-            radius,
-            group_id,
-        }
-    }
-
-    pub(super) const fn new64(position: [f64; 3], radius: f64, group_id: usize) -> Self {
         Self {
             position,
             radius,
@@ -143,9 +135,7 @@ pub(super) fn build_molecular_surface_grid_in_box64(
     let mut max_radius = 0.0_f64;
     for point in points {
         assert!(
-            point.position.iter().all(|value| value.is_finite())
-                && point.radius.is_finite()
-                && point.radius >= 0.0,
+            point.position.is_finite() && point.radius.is_finite() && point.radius >= 0.0,
             "Molecular surface input must be finite"
         );
         positions.push(point.position);
@@ -221,7 +211,7 @@ pub(super) fn build_molecular_surface_grid_in_box64(
 }
 
 struct MolecularSurfaceState<'a> {
-    positions: &'a [[f64; 3]],
+    positions: &'a [Vec3],
     radii: &'a [f32],
     ids: &'a [f32],
     lookup: &'a RadiusLookupGrid,
@@ -264,9 +254,9 @@ impl MolecularSurfaceState<'_> {
     fn single_atom_obscures(&self, index: usize, x: f64, y: f64, z: f64) -> bool {
         let radius = self.radii[index] as f64;
         let point = self.positions[index];
-        let dx = point[0] - x;
-        let dy = point[1] - y;
-        let dz = point[2] - z;
+        let dx = point.x as f64 - x;
+        let dy = point.y as f64 - y;
+        let dz = point.z as f64 - z;
         dx * dx + dy * dy + dz * dz < radius * radius
     }
 
@@ -277,9 +267,9 @@ impl MolecularSurfaceState<'_> {
 
         for point_index in 0..self.positions.len() {
             let point = self.positions[point_index];
-            let vx = point[0];
-            let vy = point[1];
-            let vz = point[2];
+            let vx = point.x as f64;
+            let vy = point.y as f64;
+            let vz = point.z as f64;
             let radius = self.radii[point_index] as f64;
             let radius_sq = radius * radius;
             let extended = grid_extension > 0;
@@ -346,9 +336,12 @@ impl MolecularSurfaceState<'_> {
     fn project_torii(&mut self) {
         for a in 0..self.positions.len() {
             let point = self.positions[a];
-            self.neighbours = self
-                .lookup
-                .find(point[0], point[1], point[2], self.radii[a] as f64);
+            self.neighbours = self.lookup.find(
+                point.x as f64,
+                point.y as f64,
+                point.z as f64,
+                self.radii[a] as f64,
+            );
             let neighbours = self.neighbours.clone();
             for b in neighbours {
                 if a < b {
@@ -363,7 +356,11 @@ impl MolecularSurfaceState<'_> {
         let radius_b = self.radii[b] as f64;
         let pa = self.positions[a];
         let pb = self.positions[b];
-        let mut atob = [pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]];
+        let mut atob = [
+            pb.x as f64 - pa.x as f64,
+            pb.y as f64 - pa.y as f64,
+            pb.z as f64 - pa.z as f64,
+        ];
         let distance_sq = dot(atob, atob);
         let distance = distance_sq.sqrt();
         let cosine_a = (radius_a * radius_a + distance * distance - radius_b * radius_b)
@@ -380,7 +377,11 @@ impl MolecularSurfaceState<'_> {
         scale(&mut normal_a, intersection_radius);
         scale(&mut normal_b, intersection_radius);
         scale(&mut atob, midpoint_distance);
-        let midpoint = [atob[0] + pa[0], atob[1] + pa[1], atob[2] + pa[2]];
+        let midpoint = [
+            atob[0] + pa.x as f64,
+            atob[1] + pa.y as f64,
+            atob[2] + pa.z as f64,
+        ];
         self.last_clip = None;
 
         let grid_radius = 2 + (self.probe_radius * self.scale_factor).floor() as isize;
@@ -438,7 +439,7 @@ impl MolecularSurfaceState<'_> {
 
 #[derive(Clone, Debug)]
 struct RadiusLookupGrid {
-    positions: Vec<[f64; 3]>,
+    positions: Vec<Vec3>,
     radii: Vec<f32>,
     size: [usize; 3],
     min: [f64; 3],
@@ -452,7 +453,7 @@ struct RadiusLookupGrid {
 
 impl RadiusLookupGrid {
     fn new(
-        positions: &[[f64; 3]],
+        positions: &[Vec3],
         radii: &[f32],
         box_min: [f64; 3],
         box_max: [f64; 3],
@@ -493,11 +494,11 @@ impl RadiusLookupGrid {
         let mut bucket_indices = Vec::with_capacity(positions.len());
         let mut bucket_count = 0_usize;
         for position in positions {
-            let x = (((position[0] - min[0]) / delta[0]).floor() as isize)
+            let x = (((position.x as f64 - min[0]) / delta[0]).floor() as isize)
                 .clamp(0, size[0] as isize - 1) as usize;
-            let y = (((position[1] - min[1]) / delta[1]).floor() as isize)
+            let y = (((position.y as f64 - min[1]) / delta[1]).floor() as isize)
                 .clamp(0, size[1] as isize - 1) as usize;
-            let z = (((position[2] - min[2]) / delta[2]).floor() as isize)
+            let z = (((position.z as f64 - min[2]) / delta[2]).floor() as isize)
                 .clamp(0, size[2] as isize - 1) as usize;
             let offset = ((x * size[1]) + y) * size[2] + z;
             grid[offset] += 1;
@@ -589,9 +590,9 @@ impl RadiusLookupGrid {
                             continue;
                         }
                         let point = self.positions[index];
-                        let dx = point[0] - x;
-                        let dy = point[1] - y;
-                        let dz = point[2] - z;
+                        let dx = point.x as f64 - x;
+                        let dy = point.y as f64 - y;
+                        let dz = point.z as f64 - z;
                         let distance_sq = dx * dx + dy * dy + dz * dz;
                         if distance_sq <= radius_sq
                             && distance_sq.sqrt() - self.radii[index] as f64 <= input_radius
@@ -725,7 +726,11 @@ mod tests {
 
     #[test]
     fn radius_lookup_uses_molstar_bucket_and_radius_order() {
-        let positions = [[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+        let positions = [
+            Vec3::new(-1.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        ];
         let radii = [2.0, 2.0, 2.0];
         let lookup = RadiusLookupGrid::new(
             &positions,

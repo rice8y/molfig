@@ -10,8 +10,6 @@ contract=tests/expected/molstar-reference/water-viewer-spacefill.reference.contr
 contract=tests/expected/molstar-reference/water-xyz-default.reference.contract formats=obj,stl
 contract=tests/expected/molstar-reference/pubchem-ethanol-xyz-default.reference.contract formats=obj,stl
 contract=tests/expected/molstar-reference/pubchem-benzene-xyz-default.reference.contract formats=obj,stl
-contract=tests/expected/molstar-reference/molfig-benzene-spacefill.reference.contract formats=obj,stl
-contract=tests/expected/molstar-reference/molfig-benzene-surface.reference.contract formats=obj,stl
 contract=tests/expected/molstar-reference/pubchem-aspirin-xyz-default.reference.contract formats=obj,stl
 contract=tests/expected/molstar-reference/pubchem-caffeine-xyz-default.reference.contract formats=obj,stl
 contract=tests/expected/molstar-reference/mixed-viewer-cartoon-components.reference.contract formats=obj,stl

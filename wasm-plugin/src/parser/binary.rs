@@ -212,7 +212,7 @@ pub(super) fn validate_bcif_mask(
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ColumnData {
     Int(Vec<i32>),
-    Float(Vec<f64>),
+    Float(Vec<f32>),
     Str(Vec<String>),
     Bytes(Vec<u8>),
     Masked(Box<ColumnData>, Vec<i32>),
@@ -246,7 +246,7 @@ impl ColumnData {
     pub(crate) fn f32_at(&self, row: usize) -> Option<f32> {
         match self {
             Self::Int(v) => v.get(row).copied().map(|value| value as f32),
-            Self::Float(v) => v.get(row).copied().map(|value| value as f32),
+            Self::Float(v) => v.get(row).copied(),
             Self::Str(v) => v
                 .get(row)
                 .map(|value| clean_cif_value(value))
@@ -259,29 +259,10 @@ impl ColumnData {
         }
     }
 
-    pub(crate) fn f64_at(&self, row: usize) -> Option<f64> {
-        match self {
-            Self::Int(v) => v.get(row).copied().map(f64::from),
-            Self::Float(v) => v.get(row).copied(),
-            Self::Str(v) => v
-                .get(row)
-                .map(|value| clean_cif_value(value))
-                .and_then(|value| value.parse::<f64>().ok()),
-            Self::Bytes(v) => v.get(row).copied().map(f64::from),
-            Self::Masked(data, mask) => match mask.get(row).copied().unwrap_or(0) {
-                0 => data.f64_at(row),
-                _ => None,
-            },
-        }
-    }
-
     pub(crate) fn i32_at(&self, row: usize) -> Option<i32> {
         match self {
             Self::Int(v) => v.get(row).copied(),
-            Self::Float(v) => v
-                .get(row)
-                .copied()
-                .and_then(|value| float_to_i32(value as f32)),
+            Self::Float(v) => v.get(row).copied().and_then(float_to_i32),
             Self::Str(v) => v
                 .get(row)
                 .map(|value| clean_cif_value(value))
@@ -300,10 +281,7 @@ impl ColumnData {
                 .get(row)
                 .copied()
                 .and_then(|value| usize::try_from(value).ok()),
-            Self::Float(v) => v
-                .get(row)
-                .copied()
-                .and_then(|value| float_to_usize(value as f32)),
+            Self::Float(v) => v.get(row).copied().and_then(float_to_usize),
             Self::Str(v) => v
                 .get(row)
                 .map(|value| clean_cif_value(value))
@@ -389,21 +367,21 @@ pub(super) fn decode_bcif_step(data: ColumnData, encoding: &MpValue) -> Result<C
             let factor = encoding
                 .get("factor")
                 .and_then(MpValue::as_f64)
-                .unwrap_or(1.0);
+                .unwrap_or(1.0) as f32;
             Ok(ColumnData::Float(
                 data.to_i32_vec()
                     .into_iter()
-                    .map(|v| v as f64 / factor)
+                    .map(|v| v as f32 / factor)
                     .collect(),
             ))
         }
         "IntervalQuantization" => {
-            let min = encoding.get("min").and_then(MpValue::as_f64).unwrap_or(0.0);
-            let max = encoding.get("max").and_then(MpValue::as_f64).unwrap_or(0.0);
+            let min = encoding.get("min").and_then(MpValue::as_f64).unwrap_or(0.0) as f32;
+            let max = encoding.get("max").and_then(MpValue::as_f64).unwrap_or(0.0) as f32;
             let steps = encoding
                 .get("numSteps")
                 .and_then(MpValue::as_f64)
-                .unwrap_or(1.0);
+                .unwrap_or(1.0) as f32;
             let delta = if steps > 1.0 {
                 (max - min) / (steps - 1.0)
             } else {
@@ -412,7 +390,7 @@ pub(super) fn decode_bcif_step(data: ColumnData, encoding: &MpValue) -> Result<C
             Ok(ColumnData::Float(
                 data.to_i32_vec()
                     .into_iter()
-                    .map(|v| min + delta * v as f64)
+                    .map(|v| min + delta * v as f32)
                     .collect(),
             ))
         }
@@ -570,12 +548,14 @@ pub(super) fn decode_byte_array(bytes: &[u8], ty: i32) -> Result<ColumnData, Str
         )),
         32 => Ok(ColumnData::Float(
             byte_chunks(bytes, 4, ty)?
-                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f64)
+                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
                 .collect(),
         )),
         33 => Ok(ColumnData::Float(
             byte_chunks(bytes, 8, ty)?
-                .map(|b| f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+                .map(|b| {
+                    f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]) as f32
+                })
                 .collect(),
         )),
         _ => Err(format!("unsupported BinaryCIF byte array type: {ty}")),

@@ -789,7 +789,7 @@ fn molecule_info_json_with_summaries(
         bond_metadata_json(&geometry.bond_metadata),
         molecule.assemblies.len(),
         json_string_array(available_alt_locs),
-        json_escape(if options.alt_loc.is_empty() { "all" } else { &options.alt_loc }),
+        json_escape(if options.alt_loc.is_empty() { "default" } else { &options.alt_loc }),
         json_string_array(available_alt_locs),
         assemblies,
         json_escape(assembly_id),
