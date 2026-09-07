@@ -21,19 +21,14 @@ The contract and integration tests cover:
 - stable render-object shape for module-split work;
 - assembly selection;
 - alternate-location selection;
-- Viewer `default`, `auto`, `cartoon`, and illustrative `spacefill` presets,
-  plus `polymer-cartoon`, `ball-and-stick`, `ribbon`, and `backbone` representations;
-- ViewerAuto pLDDT annotation dispatch from text CIF and BinaryCIF, plus an
-  explicitly selected QMEAN color theme;
-- Mol*-style `selected_visuals` and `realized_visuals` representation
-  metadata;
-- cartoon tuning options: `helix-profile`, `round-cap`, and
-  `sheet-arrow-factor`;
+- Viewer `default`, `auto`, `cartoon`, and illustrative `spacefill` presets, plus `polymer-cartoon`, `ball-and-stick`, `ribbon`, and `backbone` representations;
+- ViewerAuto pLDDT annotation dispatch from text CIF and BinaryCIF, plus an explicitly selected QMEAN color theme;
+- Mol*-style `selected_visuals` and `realized_visuals` representation metadata;
+- cartoon tuning options: `helix-profile`, `round-cap`, and `sheet-arrow-factor`;
 - semantic render-object metadata for `dashed-tube` and `sheet` geometry;
 - `render(...)` and `render-object(...)` maquette integration;
 - maquette config passthrough for mesh metadata and render-object content.
-- self-contained 9R1O PDB to OBJ generation and maquette rendering without a
-  checked-in reference OBJ.
+- self-contained 9R1O PDB to OBJ generation and maquette rendering without a checked-in reference OBJ.
 
 Negative compile-failure tests are intentionally expected to fail compilation:
 

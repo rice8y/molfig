@@ -75,12 +75,9 @@ Structural data source: RCSB PDB / wwPDB, PDB ID `9R1O`, DOI [`10.2210/pdb9R1O/p
 
 ![Ethanol rendered from a PubChem3D XYZ conformer with Molfig](examples/ethanol-xyz.png)
 
-Coordinate data source: PubChem CID [`702`](https://pubchem.ncbi.nlm.nih.gov/compound/702),
-PubChem3D conformer `000002BE00000001`, retrieved through
-[PubChem PUG REST](https://pubchem.ncbi.nlm.nih.gov/docs/pug-rest).
+Coordinate data source: PubChem CID [`702`](https://pubchem.ncbi.nlm.nih.gov/compound/702), PubChem3D conformer `000002BE00000001`, retrieved through [PubChem PUG REST](https://pubchem.ncbi.nlm.nih.gov/docs/pug-rest).
 
-Use `format: "mmcif"`, `format: "bcif"`, or `format: "xyz"` for text mmCIF, BinaryCIF, and XYZ inputs.
-For reproducible documents, prefer explicit `format`, `representation`, `assembly`, `alt-loc`, `mesh-format`, and geometry quality options instead of relying on auto-detection.
+Use `format: "mmcif"`, `format: "bcif"`, or `format: "xyz"` for text mmCIF, BinaryCIF, and XYZ inputs. For reproducible documents, prefer explicit `format`, `representation`, `assembly`, `alt-loc`, `mesh-format`, and geometry quality options instead of relying on auto-detection.
 
 ## Examples
 

@@ -75,8 +75,7 @@ Scope in this repository:
 - `package/examples/*.pdf` files generated from these data files
 - Documentation examples that display or cite these data files
 
-RCSB PDB states that data files in the PDB archive are available under CC0 1.0.
-RCSB PDB also encourages attribution to the original structure-data authors where possible. CC0 does not imply endorsement by the authors, RCSB PDB, wwPDB, or Creative Commons, and the data are provided without warranty.
+RCSB PDB states that data files in the PDB archive are available under CC0 1.0. RCSB PDB also encourages attribution to the original structure-data authors where possible. CC0 does not imply endorsement by the authors, RCSB PDB, wwPDB, or Creative Commons, and the data are provided without warranty.
 
 Example data attribution:
 
