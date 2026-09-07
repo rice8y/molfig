@@ -993,3 +993,24 @@ fn binary_cif_test_block_with_mask(header: &str, entry_id: &str, mask: Option<Mp
         ),
     ])
 }
+
+#[test]
+fn published_7qpd_partial_charge_data_parses() {
+    let source = include_str!("../../../package/examples/data/7qpd.fw2.cif");
+    let tables = cif_tables(&cif_tokens(source)).unwrap();
+    let polymers = table(&tables, "entity_poly");
+    let strand = polymers.header_index("_entity_poly.pdbx_strand_id").unwrap();
+    assert_eq!(
+        polymers
+            .row_indices()
+            .map(|row| polymers.raw_at(row, strand))
+            .collect::<Vec<_>>(),
+        ["B", "T", "E", "M", "C"]
+    );
+    let molecule = parse_cif(source).unwrap();
+    assert_eq!(molecule.atoms.len(), 11_521);
+    assert_eq!(molecule.entity_polymers.len(), 5);
+    assert!(molecule.partial_charges.is_applicable);
+    assert!(molecule.partial_charges.atom.iter().all(Option::is_some));
+    assert!(molecule.partial_charges.residue.iter().all(Option::is_some));
+}
