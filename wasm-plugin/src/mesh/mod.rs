@@ -4448,12 +4448,15 @@ fn apply_molstar_default_materials(
 ) {
     let molecule = geometry.molecule;
     let viewer_annotation_theme = molstar_viewer_annotation_theme(molecule, options);
-    if viewer_annotation_theme.is_none()
+    let use_component_defaults = viewer_annotation_theme.is_none()
         && options.theme_global_name.is_none()
-        && options.color_theme == ColorTheme::ChainId
-    {
-        let chain_materials = molstar_chain_materials_for_geometry(geometry);
-        for object in objects {
+        && options.color_theme == ColorTheme::ChainId;
+    let symmetry_theme = options
+        .theme_symmetry_color
+        .filter(|_| molstar_molecule_has_crystal_symmetry(molecule));
+    let chain_materials = molstar_chain_materials_for_geometry(geometry);
+    if use_component_defaults {
+        for object in objects.iter_mut() {
             if let RenderObject::SurfaceMesh {
                 mesh,
                 group_atoms,
@@ -4487,23 +4490,33 @@ fn apply_molstar_default_materials(
                 ));
             }
         }
-        return;
+        if options.theme_carbon_color == ColorTheme::ChainId && symmetry_theme.is_none() {
+            return;
+        }
     }
     let global_theme = viewer_annotation_theme
         .or(options.theme_global_name)
         .unwrap_or(options.color_theme);
-    let chain_materials = molstar_chain_materials_for_geometry(geometry);
     let entity_materials = molstar_entity_materials_for_geometry(geometry);
     let operator_materials = molstar_operator_materials_for_geometry(geometry);
-    let has_symmetry = molstar_geometry_has_crystal_symmetry(geometry);
 
     for object in objects {
-        let theme = if object.tag == "polymer" && has_symmetry {
-            options.theme_symmetry_color.unwrap_or(global_theme)
+        let carbon_theme = molstar_component_carbon_theme(object, options.theme_carbon_color);
+        let theme = if let Some(theme) = symmetry_theme.filter(|_| object.tag == "polymer") {
+            theme
+        } else if use_component_defaults {
+            // Individual overrides do not select a global theme. Keep the
+            // component presets (including SNFG and illustrative colors), and
+            // recolor only element-symbol components whose carbon theme changed.
+            if object.color_theme != "element-symbol"
+                || object.carbon_color_theme == molstar_color_theme_name(carbon_theme)
+            {
+                continue;
+            }
+            ColorTheme::ElementSymbol
         } else {
             global_theme
         };
-        let carbon_theme = molstar_component_carbon_theme(object, options.theme_carbon_color);
         let alpha_tenths = object
             .material
             .map(|material| material.alpha_tenths)
@@ -4729,7 +4742,10 @@ fn molstar_component_carbon_theme(
 ) -> ColorTheme {
     match object.tag {
         "water" | "ion" | "lipid" => ColorTheme::ElementSymbol,
-        "ligand" | "non-standard" | "branched-ball-and-stick" => configured,
+        // Whole-structure representations use "all" rather than the Viewer
+        // ligand tags. They must honor the same explicit carbon-color option;
+        // its chain-id default keeps their existing default colors unchanged.
+        "ligand" | "non-standard" | "branched-ball-and-stick" | "all" => configured,
         _ => ColorTheme::ChainId,
     }
 }
@@ -4971,22 +4987,13 @@ fn molstar_atom_operator_key(atom: &crate::model::Atom) -> String {
 }
 
 fn molstar_molecule_has_crystal_symmetry(molecule: &Molecule) -> bool {
+    // Biological assembly operators, including GeometryView's virtual
+    // instances, must not activate the crystal-only color override.
     molecule.selected_assembly.is_none()
         && molecule.atoms.iter().any(|atom| {
             let operator = molstar_atom_operator_key(atom);
             operator != "1_555" && operator != "1"
         })
-}
-
-fn molstar_geometry_has_crystal_symmetry(geometry: &GeometryView<'_>) -> bool {
-    if geometry.virtualize_assembly {
-        geometry.atoms().any(|atom| {
-            let operator = atom.operator_name();
-            operator != "1_555" && operator != "1"
-        })
-    } else {
-        molstar_molecule_has_crystal_symmetry(geometry.molecule)
-    }
 }
 
 fn molstar_chain_materials(molecule: &Molecule) -> BTreeMap<String, MeshMaterial> {

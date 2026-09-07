@@ -4,6 +4,8 @@
 
 It accepts PDB, mmCIF, BinaryCIF, and XYZ input, converts structures through a CPU-side [Mol*](https://molstar.org/)-style Model/Structure/Unit layer, exports static OBJ/STL/PLY mesh bytes, and delegates final document rendering to [`maquette`](https://typst.app/universe/package/maquette).
 
+You can try the [web demo](https://bernsteining.github.io/maquette/?a=9R1O) by [maquette's author](https://github.com/bernsteining) to adjust the scene and copy the Typst source.
+
 ![Gallery of molecular structures rendered with Molfig](examples/gallery.png)
 
 ## Quickstart

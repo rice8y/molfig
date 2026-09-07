@@ -240,11 +240,9 @@ pub(super) fn cif_tokens(text: &str) -> Vec<String> {
             let mut line_start = true;
             while let Some(c) = chars.next() {
                 if line_start && c == ';' {
-                    for c2 in chars.by_ref() {
-                        if c2 == '\n' {
-                            break;
-                        }
-                    }
+                    // A closing delimiter can be followed by more loop values
+                    // on the same line (for example, 7QPD's "; B ?").
+                    // Leave those values in the stream instead of dropping them.
                     break;
                 }
                 line_start = c == '\n' || c == '\r';
@@ -254,7 +252,7 @@ pub(super) fn cif_tokens(text: &str) -> Vec<String> {
                 value.pop();
             }
             out.push(value);
-            at_line_start = true;
+            at_line_start = false;
             continue;
         }
         at_line_start = false;

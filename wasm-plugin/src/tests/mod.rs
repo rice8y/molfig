@@ -11765,6 +11765,351 @@ fn configured_viewer_theme_overrides_semantic_metadata_and_obj_materials() {
     assert!(symmetry_summary.contains(r#""color_theme":"chain-id""#));
 }
 
+mod carbon_color {
+    use super::*;
+
+    const LIGAND_PDB: &[u8] =
+        b"HETATM    1  C1  LIG A   1       0.000   0.000   0.000  1.00 10.00           C\n\
+    HETATM    2  N1  LIG A   1       1.400   0.000   0.000  1.00 10.00           N\n\
+    HETATM    3  O1  LIG A   1       2.800   0.000   0.000  1.00 10.00           O\n\
+    END\n";
+    const LIGAND_XYZ: &[u8] = b"3\nCarbon-color regression\nC 0 0 0\nN 1.4 0 0\nO 2.8 0 0\n";
+
+    fn bundle(data: &[u8], format: &str, representation: &str, theme: &str) -> Vec<u8> {
+        preset_bundle(
+            data,
+            format,
+            representation,
+            &format!(r#", "color-theme":"element-symbol"{theme}"#),
+        )
+    }
+
+    fn preset_bundle(data: &[u8], format: &str, representation: &str, theme: &str) -> Vec<u8> {
+        let options = format!(
+            r#"{{"format":"{format}","representation":"{representation}","mesh-format":"obj","assembly":"asymmetric-unit","quality":"low"{theme}}}"#
+        );
+        crate::api::convert_to_render_object_bundle(data, options.as_bytes()).unwrap()
+    }
+
+    fn obj_geometry(obj: &[u8]) -> Vec<&str> {
+        std::str::from_utf8(obj)
+            .unwrap()
+            .lines()
+            .filter(|line| {
+                line.starts_with("v ") || line.starts_with("vn ") || line.starts_with("f ")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn carbon_color_override_reaches_materials_and_metadata_across_representations() {
+        for (format, data) in [("pdb", LIGAND_PDB), ("xyz", LIGAND_XYZ)] {
+            for representation in ["default", "auto", "cartoon", "ball-and-stick", "spacefill"] {
+                let default = bundle(data, format, representation, "");
+                let chain = bundle(
+                    data,
+                    format,
+                    representation,
+                    r#", "carbon-color":"chain-id""#,
+                );
+                assert_eq!(default, chain, "{format}/{representation}: default changed");
+                let (chain_materials, _, chain_obj) = split_render_object_bundle(&chain);
+                assert!(std::str::from_utf8(chain_materials)
+                    .unwrap()
+                    .contains("#1b9e77"));
+
+                // Exercise the public Typst theme dictionary and the flat option
+                // emitted by maquette's web demo. Both must reach the same path.
+                let grey = bundle(
+                    data,
+                    format,
+                    representation,
+                    r#", "theme":{"carbonColor":"element-symbol"}"#,
+                );
+                assert_eq!(
+                    grey,
+                    bundle(
+                        data,
+                        format,
+                        representation,
+                        r#", "carbon-color":"element-symbol""#
+                    ),
+                    "{format}/{representation}: option aliases disagree"
+                );
+                let (materials, info, obj) = split_render_object_bundle(&grey);
+                let materials = std::str::from_utf8(materials).unwrap();
+                assert!(
+                    materials.contains("#999999"),
+                    "{format}/{representation}: missing grey carbon: {materials}"
+                );
+                assert!(!materials.contains("#1b9e77"), "{format}/{representation}");
+                // Non-carbon element colors must not change with carbonColor.
+                for color in ["#4259ff", "#ff2618"] {
+                    assert!(
+                        materials.contains(color),
+                        "{format}/{representation}: {color}"
+                    );
+                }
+                let info = std::str::from_utf8(info).unwrap();
+                assert!(info.contains(r#""carbon_color_theme":"element-symbol""#));
+                assert!(!info.contains(r#""carbon_color_theme":"chain-id""#));
+                assert!(std::str::from_utf8(obj)
+                    .unwrap()
+                    .contains("usemtl 0x9999991"));
+                assert_eq!(obj_geometry(chain_obj), obj_geometry(obj));
+            }
+        }
+    }
+
+    #[test]
+    fn carbon_color_operator_override_does_not_fall_back_to_chain_colors() {
+        let mut molecule = parse_molecule(LIGAND_PDB, InputFormat::Pdb).unwrap();
+        // Two carbon atoms in one chain but under different operators distinguish
+        // operator coloring from the old unconditional chain-color fallback.
+        molecule.atoms[1].element = "C".to_string();
+        molecule.atoms[1].type_symbol = "C".to_string();
+        for (index, atom) in molecule.atoms.iter_mut().enumerate() {
+            atom.operator_name = if index == 1 { "2_555" } else { "1_555" }.to_string();
+        }
+        for (representation, color_theme) in [
+            (Representation::BallAndStick, ColorTheme::ChainId),
+            (Representation::BallAndStick, ColorTheme::ElementSymbol),
+            (Representation::Spacefill, ColorTheme::ElementSymbol),
+        ] {
+            let options = MeshOptions {
+                representation,
+                color_theme,
+                theme_carbon_color: ColorTheme::OperatorName,
+                assembly: None,
+                sphere_detail: 1,
+                ..MeshOptions::default()
+            };
+            let colors: Vec<_> = render_materials(&molecule, &options)
+                .iter()
+                .map(|material| material.color)
+                .collect();
+            assert!(colors.contains(&0x1b9e77), "{representation:?}: {colors:?}");
+            assert!(colors.contains(&0xd95f02), "{representation:?}: {colors:?}");
+            let chain_colors = render_materials(
+                &molecule,
+                &MeshOptions {
+                    theme_carbon_color: ColorTheme::ChainId,
+                    ..options
+                },
+            );
+            assert!(!chain_colors
+                .iter()
+                .any(|material| material.color == 0xd95f02));
+        }
+    }
+
+    #[test]
+    fn carbon_color_override_preserves_viewer_cartoon_component_rules() {
+        let molecule = parse_molecule(
+            include_bytes!("../../tests/fixtures/cif/mixed-viewer-cartoon-components.cif"),
+            InputFormat::Cif,
+        )
+        .unwrap();
+        let options = MeshOptions {
+            representation: Representation::Cartoon,
+            color_theme: ColorTheme::ElementSymbol,
+            theme_carbon_color: ColorTheme::OperatorName,
+            assembly: None,
+            ..MeshOptions::default()
+        };
+        let summary = render_object_summary_json(&molecule, &options);
+        for (tag, expected) in [
+            ("polymer", "chain-id"),
+            ("ligand", "operator-name"),
+            ("water", "element-symbol"),
+            ("ion", "element-symbol"),
+        ] {
+            let tag_field = format!(r#""tag":"{tag}""#);
+            let objects: Vec<_> = summary
+                .split("},{")
+                .filter(|object| object.contains(&tag_field))
+                .collect();
+            assert!(!objects.is_empty(), "fixture must contain {tag}");
+            for object in objects {
+                assert!(
+                    object.contains(&format!(r#""carbon_color_theme":"{expected}""#)),
+                    "{object}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn carbon_color_only_override_reaches_default_element_themes() {
+        for representation in ["default", "auto", "cartoon", "ball-and-stick"] {
+            let default = preset_bundle(LIGAND_PDB, "pdb", representation, "");
+            let grey = preset_bundle(
+                LIGAND_PDB,
+                "pdb",
+                representation,
+                r#", "theme":{"carbonColor":"element-symbol"}"#,
+            );
+            let (materials, info, obj) = split_render_object_bundle(&grey);
+            let materials = std::str::from_utf8(materials).unwrap();
+            assert!(
+                materials.contains("#999999"),
+                "{representation}: {materials}"
+            );
+            assert!(
+                !materials.contains("#1b9e77"),
+                "{representation}: {materials}"
+            );
+            for color in ["#4259ff", "#ff2618"] {
+                assert!(materials.contains(color), "{representation}: {color}");
+            }
+            assert!(std::str::from_utf8(info)
+                .unwrap()
+                .contains(r#""carbon_color_theme":"element-symbol""#));
+            assert_eq!(
+                obj_geometry(split_render_object_bundle(&default).2),
+                obj_geometry(obj)
+            );
+            assert_eq!(
+                grey,
+                preset_bundle(
+                    LIGAND_PDB,
+                    "pdb",
+                    representation,
+                    r#", "carbon-color":"element-symbol""#
+                ),
+            );
+        }
+        // A carbon subtheme must not replace the spacefill illustrative preset.
+        assert_eq!(
+            preset_bundle(LIGAND_PDB, "pdb", "spacefill", ""),
+            preset_bundle(
+                LIGAND_PDB,
+                "pdb",
+                "spacefill",
+                r#", "theme":{"carbonColor":"element-symbol"}"#
+            ),
+        );
+    }
+}
+
+mod component_theme_overrides {
+    use super::*;
+    use crate::mesh::build_semantic_render_objects;
+    use crate::model::MeshMaterial;
+
+    #[test]
+    fn individual_overrides_preserve_unaffected_component_presets() {
+        let mut molecule = parse_molecule(
+            include_bytes!("../../tests/fixtures/cif/mixed-viewer-cartoon-components.cif"),
+            InputFormat::Cif,
+        )
+        .unwrap();
+        for atom in &mut molecule.atoms {
+            atom.operator_name = if atom.chain == "A" { "2_555" } else { "1_555" }.to_string();
+        }
+        let defaults = MeshOptions {
+            representation: Representation::Cartoon,
+            assembly: None,
+            sphere_detail: 1,
+            ..MeshOptions::default()
+        };
+        let baseline = build_semantic_render_objects(&molecule, &defaults);
+        for tag in [
+            "polymer",
+            "ligand",
+            "non-standard",
+            "branched-ball-and-stick",
+            "branched-snfg-3d",
+            "water",
+            "ion",
+            "lipid",
+        ] {
+            assert!(
+                baseline.iter().any(|object| object.tag == tag),
+                "missing {tag}"
+            );
+        }
+        for (carbon, symmetry) in [(true, false), (false, true), (true, true)] {
+            let options = MeshOptions {
+                theme_carbon_color: if carbon {
+                    ColorTheme::ElementSymbol
+                } else {
+                    ColorTheme::ChainId
+                },
+                // Missing scores give a distinct grey polymer color, so this
+                // tests actual materials as well as theme metadata.
+                theme_symmetry_color: symmetry.then_some(ColorTheme::QmeanScore),
+                ..defaults.clone()
+            };
+            let actual = build_semantic_render_objects(&molecule, &options);
+            assert_eq!(actual.len(), baseline.len());
+            for (before, after) in baseline.iter().zip(&actual) {
+                assert_eq!(before.tag, after.tag);
+                let expected = if symmetry && before.tag == "polymer" {
+                    ("qmean-score", "", Some(MeshMaterial::opaque(0xaaaaaa)))
+                } else if carbon
+                    && matches!(
+                        before.tag,
+                        "ligand" | "non-standard" | "branched-ball-and-stick"
+                    )
+                {
+                    let atom = &molecule.atoms[before.atom_index.expect("atomistic component")];
+                    let material = if atom.type_symbol == "C" {
+                        Some(MeshMaterial::with_alpha_tenths(
+                            0x999999,
+                            before.material.unwrap().alpha_tenths,
+                        ))
+                    } else {
+                        before.material
+                    };
+                    ("element-symbol", "element-symbol", material)
+                } else {
+                    (
+                        before.color_theme,
+                        before.carbon_color_theme,
+                        before.material,
+                    )
+                };
+                assert_eq!(
+                    (after.color_theme, after.carbon_color_theme, after.material),
+                    expected,
+                    "carbon={carbon}, symmetry={symmetry}, tag={}",
+                    before.tag,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn biological_assembly_does_not_activate_crystal_symmetry_color() {
+        let fixture = include_bytes!("../../tests/fixtures/cif/assembly-altloc-helix.cif");
+        for assembly in ["asymmetric-unit", "1"] {
+            for global in ["", r#", "globalName":"chain-id""#] {
+                let bundle = |symmetry: &str| {
+                    let options = format!(
+                        r#"{{"format":"cif","representation":"cartoon","assembly":"{assembly}","quality":"low","mesh-format":"obj","theme":{{"carbonColor":"chain-id"{global}{symmetry}}}}}"#
+                    );
+                    crate::api::convert_to_render_object_bundle(fixture, options.as_bytes())
+                        .unwrap()
+                };
+                let baseline = bundle("");
+                assert!(std::str::from_utf8(split_render_object_bundle(&baseline).1)
+                    .unwrap()
+                    .contains(r#""tag":"polymer""#));
+                for symmetry in [
+                    r#", "symmetryColor":"operator-name""#,
+                    r#", "symmetryColor":"qmean-score""#,
+                ] {
+                    assert!(
+                        baseline == bundle(symmetry),
+                        "assembly={assembly}, global={global}, symmetry={symmetry}"
+                    );
+                }
+            }
+        }
+    }
+}
+
 const VIEWER_ANNOTATION_CIF: &[u8] = br#"data_annotations
 loop_
 _atom_site.group_PDB
