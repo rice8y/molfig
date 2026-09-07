@@ -61,6 +61,12 @@ type BrowserReferenceRequest = {
     structurePreset?: string
     representation?: string
     style?: string
+    renderingOverrides?: {
+        ignoreLight?: boolean
+        occlusion?: boolean
+        outline?: boolean
+        antialiasing?: 'smaa' | 'off'
+    }
     quality?: string
     theme?: ViewerTheme
     sizeThresholds?: Partial<Structure.SizeThresholds>
@@ -112,6 +118,7 @@ type RenderObjectSummary = {
 
 type BrowserReferenceResult = {
     id: string
+    molstarCommit: string
     renderObjects: RenderObjectSummary[]
     structures: ReturnType<typeof summarizeStructures>
     polymerTraceBoundaries?: ReturnType<typeof summarizePolymerTraceBoundaries>
@@ -126,6 +133,20 @@ type BrowserReferenceResult = {
         webgl2: boolean
         fragDepth: boolean
         textureFloat: boolean
+        textureHalfFloat: boolean
+        colorBufferFloat: boolean
+        colorBufferHalfFloat: boolean
+        version?: string
+        shadingLanguageVersion?: string
+        vendor?: string
+        renderer?: string
+        unmaskedVendor?: string
+        unmaskedRenderer?: string
+    }
+    environment: {
+        userAgent: string
+        platform: string
+        devicePixelRatio: number
     }
     debug?: {
         stlFacets: StlFacetDebug[]
@@ -165,6 +186,7 @@ type StlFacetDebug = {
 declare global {
     interface Window {
         molfigBrowserReferenceExport: (request: BrowserReferenceRequest) => Promise<BrowserReferenceResult>
+        molfigBrowserReferenceCaptureCanvas: () => string
     }
 }
 
@@ -201,6 +223,10 @@ window.molfigBrowserReferenceExport = async (request: BrowserReferenceRequest) =
     const plugin = await getPlugin();
     plugin.canvas3d?.setProps({
         transparentBackground: false,
+        enableAnimation: false,
+        camera: {
+            helper: { axes: { name: 'off', params: {} } },
+        },
         renderer: { backgroundColor: Color(0xfcfbfa) },
     });
     const sizeThresholds = { ...Structure.DefaultSizeThresholds, ...(request.sizeThresholds ?? {}) };
@@ -217,6 +243,7 @@ window.molfigBrowserReferenceExport = async (request: BrowserReferenceRequest) =
     await updateGaussianSurfaceParams(plugin, request.gaussianSurfaceParams);
     await updateMolecularSurfaceParams(plugin, request.molecularSurfaceParams);
     await applyRequestedStyle(plugin, request.style);
+    await applyRenderingOverrides(plugin, request.renderingOverrides);
     plugin.canvas3d?.commit(true);
     await animationFrames(3);
 
@@ -261,6 +288,7 @@ window.molfigBrowserReferenceExport = async (request: BrowserReferenceRequest) =
 
     return {
         id: request.id,
+        molstarCommit: '1b8117d3f10f7c978aabb5a0d3d47370635aefe4',
         ...summary,
         structures: summarizeStructures(plugin, sizeThresholds),
         polymerTraceBoundaries: request.renderObjectReport
@@ -270,33 +298,76 @@ window.molfigBrowserReferenceExport = async (request: BrowserReferenceRequest) =
         rendering: summarizeRendering(plugin),
         uploads,
         webgl: webglSummary(plugin),
+        environment: {
+            userAgent: navigator.userAgent,
+            platform: navigator.platform,
+            devicePixelRatio: window.devicePixelRatio,
+        },
         debug,
     };
 };
 
 function summarizeRendering(plugin: PluginContext) {
-    const camera = plugin.canvas3d?.camera.getSnapshot();
-    const postprocessing = plugin.canvas3d?.props.postprocessing;
-    const viewport = plugin.canvas3d?.camera.viewport;
+    const canvas3d = plugin.canvas3d;
+    const camera = canvas3d?.camera;
+    const snapshot = camera?.getSnapshot();
+    const props = canvas3d?.props;
+    const postprocessing = props?.postprocessing;
+    const viewport = camera?.viewport;
     return {
         ignoreLight: plugin.managers.structure.component.state.options.ignoreLight,
-        camera: camera ? {
-            mode: camera.mode,
-            fov: camera.fov,
-            position: Array.from(camera.position),
-            target: Array.from(camera.target),
-            up: Array.from(camera.up),
-            radius: camera.radius,
-            radiusMax: camera.radiusMax,
+        camera: snapshot && camera ? {
+            mode: snapshot.mode,
+            fov: snapshot.fov,
+            position: Array.from(snapshot.position),
+            target: Array.from(snapshot.target),
+            up: Array.from(snapshot.up),
+            radius: snapshot.radius,
+            radiusMax: snapshot.radiusMax,
+            fog: snapshot.fog,
+            clipFar: snapshot.clipFar,
+            minNear: snapshot.minNear,
+            minFar: snapshot.minFar,
+            near: camera.near,
+            far: camera.far,
+            fogNear: camera.fogNear,
+            fogFar: camera.fogFar,
+            view: Array.from(camera.view),
+            projection: Array.from(camera.projection),
+            projectionView: Array.from(camera.projectionView),
+            inverseProjectionView: Array.from(camera.inverseProjectionView),
         } : undefined,
         viewport: viewport ? { width: viewport.width, height: viewport.height } : undefined,
+        canvas: plugin.canvas3dContext ? {
+            width: plugin.canvas3dContext.canvas.width,
+            height: plugin.canvas3dContext.canvas.height,
+            pixelRatio: plugin.canvas3dContext.pixelRatio,
+            transparency: plugin.canvas3dContext.props.transparency,
+        } : undefined,
+        renderer: props ? {
+            backgroundColor: props.renderer.backgroundColor,
+            exposure: props.renderer.exposure,
+            light: props.renderer.light,
+            ambientColor: props.renderer.ambientColor,
+            ambientIntensity: props.renderer.ambientIntensity,
+        } : undefined,
+        transparentBackground: props?.transparentBackground,
+        enableAnimation: props?.enableAnimation,
+        multiSample: props?.multiSample,
         postprocessing: postprocessing ? {
             outline: postprocessing.outline,
             occlusion: postprocessing.occlusion,
             shadow: postprocessing.shadow,
+            antialiasing: postprocessing.antialiasing,
         } : undefined,
     };
 }
+
+window.molfigBrowserReferenceCaptureCanvas = () => {
+    const canvas = plugin?.canvas3dContext?.canvas;
+    if (!canvas) throw new Error('Mol* canvas is not initialized');
+    return canvas.toDataURL('image/png');
+};
 
 function summarizePolymerTraceBoundaries(plugin: PluginContext) {
     const summaries: Array<Record<string, unknown>> = [];
@@ -397,6 +468,41 @@ async function applyRequestedStyle(plugin: PluginContext, value: string | undefi
                     },
             },
             shadow: { name: 'off', params: {} },
+        },
+    });
+}
+
+async function applyRenderingOverrides(
+    plugin: PluginContext,
+    overrides: BrowserReferenceRequest['renderingOverrides'],
+) {
+    if (!overrides) return;
+    if (overrides.ignoreLight !== undefined) {
+        await plugin.managers.structure.component.setOptions({
+            ...plugin.managers.structure.component.state.options,
+            ignoreLight: overrides.ignoreLight,
+        });
+    }
+    const canvas3d = plugin.canvas3d;
+    const current = canvas3d?.props.postprocessing;
+    if (!canvas3d || !current) return;
+    canvas3d.setProps({
+        postprocessing: {
+            occlusion: overrides.occlusion === undefined
+                ? current.occlusion
+                : overrides.occlusion
+                    ? current.occlusion
+                    : { name: 'off', params: {} },
+            outline: overrides.outline === undefined
+                ? current.outline
+                : overrides.outline
+                    ? current.outline
+                    : { name: 'off', params: {} },
+            antialiasing: overrides.antialiasing === undefined
+                ? current.antialiasing
+                : overrides.antialiasing === 'smaa'
+                    ? current.antialiasing
+                    : { name: 'off', params: {} },
         },
     });
 }
@@ -898,10 +1004,21 @@ function value<T>(cell: ValueCell<T> | undefined): T | undefined {
 
 function webglSummary(plugin: PluginContext) {
     const webgl = plugin.canvas3d!.webgl;
+    const gl = webgl.gl;
+    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
     return {
         webgl2: Boolean(webgl.isWebGL2),
         fragDepth: Boolean(webgl.extensions.fragDepth),
         textureFloat: Boolean(webgl.extensions.textureFloat),
+        textureHalfFloat: Boolean(webgl.extensions.textureHalfFloat),
+        colorBufferFloat: Boolean(webgl.extensions.colorBufferFloat),
+        colorBufferHalfFloat: Boolean(webgl.extensions.colorBufferHalfFloat),
+        version: String(gl.getParameter(gl.VERSION) ?? ''),
+        shadingLanguageVersion: String(gl.getParameter(gl.SHADING_LANGUAGE_VERSION) ?? ''),
+        vendor: String(gl.getParameter(gl.VENDOR) ?? ''),
+        renderer: String(gl.getParameter(gl.RENDERER) ?? ''),
+        unmaskedVendor: debugInfo ? String(gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) ?? '') : undefined,
+        unmaskedRenderer: debugInfo ? String(gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) ?? '') : undefined,
     };
 }
 

@@ -456,7 +456,9 @@ async function runBrowserConversion(args, plan, bundlePath) {
     for (const item of plan) {
       console.log(`Converting ${item.fixture}`);
       const result = await runFixtureInBrowser(cdp, args, item, server.url);
-      if (args.captureImages) await captureBrowserImage(cdp, args, item);
+      if (args.captureImages) {
+        await captureBrowserImage(cdp, args, item);
+      }
       writeBrowserReport(args, item, result);
       const contractChecks = validateBrowserContract(item, result);
       for (const check of contractChecks) console.log(check.message);
@@ -498,15 +500,30 @@ async function runBrowserConversion(args, plan, bundlePath) {
 }
 
 async function captureBrowserImage(cdp, args, item) {
-  const response = await cdp.call('Page.captureScreenshot', {
-    format: 'png',
-    fromSurface: true,
-    captureBeyondViewport: false,
-  }, args.timeoutMs);
-  if (!response.data) throw new Error(`${item.contractPath}: Chrome returned no screenshot data`);
+  const capture = async () => {
+    const response = await cdp.call('Runtime.evaluate', {
+      expression: 'window.molfigBrowserReferenceCaptureCanvas()',
+      awaitPromise: true,
+      returnByValue: true,
+    }, args.timeoutMs);
+    if (response.exceptionDetails) {
+      throw new Error(`${item.contractPath}: raw Mol* canvas capture failed: ${JSON.stringify(response.exceptionDetails)}`);
+    }
+    const dataUrl = response.result?.value;
+    const prefix = 'data:image/png;base64,';
+    if (typeof dataUrl !== 'string' || !dataUrl.startsWith(prefix)) {
+      throw new Error(`${item.contractPath}: raw Mol* canvas capture returned no PNG data URL`);
+    }
+    return Buffer.from(dataUrl.slice(prefix.length), 'base64');
+  };
+  const first = await capture();
+  const second = await capture();
+  if (!first.equals(second)) {
+    throw new Error(`${item.contractPath}: repeated raw Mol* canvas captures are not byte-identical`);
+  }
   const outputPath = path.join(resolveInputPath(args.outDir), `${item.stem}.png`);
-  writeFileSync(outputPath, Buffer.from(response.data, 'base64'));
-  console.log(`- PASS ${item.stem}: browser image ${Buffer.byteLength(response.data, 'base64')} bytes`);
+  writeFileSync(outputPath, first);
+  console.log(`- PASS ${item.stem}: deterministic raw canvas image ${first.byteLength} bytes`);
 }
 
 function launchChrome(args, debugPort, profileDir, url) {
@@ -545,6 +562,7 @@ async function runFixtureInBrowser(cdp, args, item, baseUrl) {
     structurePreset: item.options['structure-preset'] ?? item.options.structure_preset,
     representation: String(item.options.representation ?? 'default'),
     style: String(item.options.style ?? 'default'),
+    renderingOverrides: item.options.rendering ?? item.options.renderingOverrides ?? item.options.rendering_overrides,
     quality: String(item.options.quality ?? 'auto'),
     theme: browserTheme(item.options),
     sizeThresholds: browserObjectOption(item.options, 'viewer-size-thresholds', 'viewerSizeThresholds'),
@@ -630,6 +648,8 @@ function writeBrowserReport(args, item, result) {
     ? result.structures
     : result.structures.map(({ polymerResidueCount, sizeClass, sizeThresholds, ...legacy }) => legacy);
   const report = {
+    molstarCommit: result.molstarCommit,
+    environment: result.environment,
     ...(item.options['structure-preset'] || item.options.structure_preset || item.browserExpectation
       ? { structures }
       : {}),
