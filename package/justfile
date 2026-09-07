@@ -1,4 +1,6 @@
 TOML_FILE := "typst.toml"
+wasm := "../wasm-plugin/target/wasm32-unknown-unknown/release/molfig.wasm"
+package-wasm := "molfig.wasm"
 
 get_value_from_toml key:
   #!/bin/bash
@@ -60,6 +62,11 @@ clean:
   else
     echo "Directory $TARGET_DIR does not exist."
   fi
+
+plugin:
+  cargo build --manifest-path ../wasm-plugin/Cargo.toml --release --locked --target wasm32-unknown-unknown
+  # Allow instructions emitted by Rust even when target-feature metadata is stripped.
+  wasm-opt -Os --enable-bulk-memory --enable-nontrapping-float-to-int {{wasm}} -o {{package-wasm}}
 
 docs: # Typst 0.14.2
   nix shell github:NixOS/nixpkgs/1412caf7bf9e660f2f962917c14b1ea1c3bc695e#typst -c typst c --root .. docs/documentation.typ
