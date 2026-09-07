@@ -109,6 +109,52 @@
 #assert(themed-info.render_objects.all(object => object.color_theme == "element-symbol"))
 #assert(themed-info.render_objects.all(object => object.carbon_color_theme == "element-symbol"))
 
+// Explicit carbon colors must survive both the Viewer ligand path and
+// whole-structure atomistic representations, including the distributed WASM.
+#let ligand-pdb = "HETATM    1  C1  LIG A   1       0.000   0.000   0.000  1.00 10.00           C\nHETATM    2  O1  LIG A   1       1.400   0.000   0.000  1.00 10.00           O\nEND\n"
+#for (representation, global-options) in (
+  ("cartoon", (:)),
+  ("ball-and-stick", (:)),
+  ("cartoon", (color-theme: "element-symbol")),
+  ("ball-and-stick", (color-theme: "element-symbol")),
+  ("spacefill", (color-theme: "element-symbol")),
+) {
+  let options = (
+    format: "pdb",
+    representation: representation,
+    ..global-options,
+    theme: (carbonColor: "element-symbol"),
+    assembly: "asymmetric-unit",
+    sphere-detail: 1,
+  )
+  let info = molfig.info(ligand-pdb, ..options)
+  assert(info.render_objects.len() > 0)
+  assert(info.render_objects.all(object => object.carbon_color_theme == "element-symbol"))
+  let obj = str(molfig.to-obj(ligand-pdb, ..options))
+  assert(obj.contains("usemtl 0x9999991"))
+  assert(not obj.contains("usemtl 0x1b9e771"))
+  assert(str(molfig.to-mtl(ligand-pdb, ..options)).contains("newmtl 0x9999991"))
+}
+
+// Biological assembly operators must not activate the crystal-only override.
+#let assembly-cif = read("../fixtures/cif/assembly-altloc-helix.cif", encoding: none)
+#for global-options in ((:), (globalName: "chain-id")) {
+  let options = (
+    format: "cif",
+    representation: "cartoon",
+    assembly: "1",
+    quality: "low",
+  )
+  let default-info = molfig.info(assembly-cif, theme: global-options, ..options)
+  let default-obj = molfig.to-obj(assembly-cif, theme: global-options, ..options)
+  assert(default-info.render_objects.any(object => object.tag == "polymer"))
+  for symmetry in ("operator-name", "qmean-score") {
+    let theme = (..global-options, symmetryColor: symmetry)
+    assert.eq(molfig.info(assembly-cif, theme: theme, ..options), default-info)
+    assert.eq(molfig.to-obj(assembly-cif, theme: theme, ..options), default-obj)
+  }
+}
+
 #let colored-object = molfig.render-object(
   water-pdb,
   format: "pdb",
