@@ -1,4 +1,5 @@
 #import "@preview/mantys:1.0.2": *
+#import "../examples/theme-samples.typ" as theme-samples
 
 #let manifest = toml(read("../typst.toml", encoding: none))
 #let package-id = manifest.package.name
@@ -9,7 +10,6 @@
 #let rendered-ethanol-xyz-pdf = "../examples/ethanol-xyz.pdf"
 #let rendered-representations-pdf = "../examples/representations.pdf"
 #let rendered-render-object-pdf = "../examples/render-object.pdf"
-#let rendered-theme-pdf = "../examples/theme.pdf"
 #let rendered-decimate-pdf = "../examples/decimate.pdf"
 #let rendered-exports-pdf = "../examples/exports.pdf"
 #let rendered-metadata-pdf = "../examples/metadata.pdf"
@@ -570,22 +570,111 @@ solvent-excluded molecular envelope computed by the CPU molecular-surface path.
 Mol\* Viewer presets accept a #ic("theme") dictionary through their common
 representation parameters. #ic("globalName") replaces the provider theme for each component,
 #ic("carbonColor") controls carbon atoms in ball-and-stick ligand,
-non-standard, and branched components, and #ic("symmetryColor") replaces the
+non-standard, branched, and whole-structure element-symbol components, and #ic("symmetryColor") replaces the
 polymer theme only for non-assembly crystallographic symmetry units. Water,
 ion, and lipid components keep element-symbol carbon coloring as in the Viewer
-preset.
+preset. Individual overrides do not require #ic("globalName") and preserve
+unaffected component presets, including carbohydrate symbols and illustrative
+spacefill coloring.
 
-#code("typ", "#import \"" + package-import + "\"\n\n// Structural data: RCSB PDB / wwPDB entry 1CRN.\n// https://doi.org/10.2210/pdb1CRN/pdb (CC0 1.0)\n#molfig.render(\n  read(\"1CRN.bcif\", encoding: none),\n  format: \"bcif\",\n  representation: \"cartoon\",\n  theme: (\n    globalName: \"element-symbol\",\n    carbonColor: \"chain-id\",\n    symmetryColor: \"operator-name\",\n  ),\n  mesh-format: \"obj\",\n  quality: \"high\",\n  center: true,\n  output-format: \"svg\",\n  config: (azimuth: 35, elevation: 24, background: \"\"),\n  width: 92mm,\n  height: 68mm,\n)", title: "Apply Mol* Viewer theme overrides to RCSB PDB entry 1CRN", file: "theme.typ")
+==== Executable Theme Gallery <sec:theme-gallery>
 
-#example-result(
-  rendered-theme-pdf,
-  [RCSB PDB entry 1CRN with the Viewer theme override example applied.],
-  "1CRN",
-  "https://doi.org/10.2210/pdb1CRN/pdb",
-  width: 66%,
-  source-note: [Primary citation: Teeter (1984),
-    #link("https://doi.org/10.1073/pnas.81.19.6014")[doi:10.1073/pnas.81.19.6014].],
+Each panel below pairs code with its actual rendering. The code and rendering
+use the same option dictionaries in #ic("examples/theme-samples.typ"), loaded
+against this checkout's #ic("lib.typ") and #ic("molfig.wasm"). Recompiling this
+document checks expected material colors and semantic theme metadata before
+printing the results; it does not embed cached theme screenshots.
+
+The examples use published data: RCSB PDB 1HHO for chain, entity, operator,
+element, and carbon coloring; AlphaFold human insulin precursor
+AF-P01308-F1 (model v6) for pLDDT; the official SWISS-MODEL QMEAN
+example model_001 for local quality; Mol\*'s charge-annotated 7QPD for
+partial charges; and the existing 1CRN example for symmetry no-op controls.
+Prediction scores and computed charges are real annotations, not experimental
+measurements. No coordinates or scores were invented for this gallery.
+Sources, licenses, and retrieval details are in #ic("examples/data/README.md").
+The QMEAN CIF is reproducibly converted from the official processed PDB and
+JSON, preserving coordinates and full-precision local scores.
+
+The QMEAN data and rendered panel are adapted from SWISS-MODEL,
+Computational Structural Biology Group, SIB / University of Basel, under
+#link("https://creativecommons.org/licenses/by-sa/4.0/")[CC BY-SA 4.0].
+QMEAN: Benkert et al. (2011),
+#link("https://doi.org/10.1093/bioinformatics/btq662")[doi:10.1093/bioinformatics/btq662].
+AlphaFold: Jumper et al. (2021),
+#link("https://doi.org/10.1038/s41586-021-03819-2")[doi:10.1038/s41586-021-03819-2],
+data under #link("https://creativecommons.org/licenses/by/4.0/")[CC BY 4.0].
+
+Use this shared setup once, then append any panel's render call. The color
+swatches below each image show its unlit OBJ material colors; lighting may
+change their appearance on the molecular surface.
+
+#code("typ", theme-samples.common-code(package-import),
+  title: "Shared data, camera, and export settings", file: "theme.typ",
 )
+
+==== All Seven Global Themes <sec:global-theme-gallery>
+
+Every supported color-theme name is shown below. #ic("theme.globalName") makes
+the global override explicit: unlike the default
+#ic("color-theme: \"chain-id\""), #ic("globalName: \"chain-id\"") forces chain
+coloring on every component. Structural themes use ball-and-stick; per-residue
+annotation themes use cartoon. Explicit representation selection prevents
+ViewerAuto's annotation priority from replacing the requested theme. Element-symbol additionally sets
+grey carbon explicitly; its default carbon subtheme is chain-id.
+
+#for item in theme-samples.global-samples {
+  theme-samples.panel(item)
+  v(6pt)
+}
+
+==== All Three Carbon Subthemes <sec:carbon-theme-gallery>
+
+These examples set #ic("carbonColor") alone. The chain-id, operator-name, and
+element-symbol choices change only carbon atoms; nitrogen and oxygen keep
+their element colors. They exercise the standalone override path without
+#ic("globalName") or #ic("color-theme").
+
+#for item in theme-samples.carbon-samples {
+  theme-samples.panel(item)
+  v(6pt)
+}
+
+==== Spacefill Preset Control <sec:spacefill-theme-gallery>
+
+A carbon subtheme alone does not replace spacefill's illustrative preset.
+The first panel is checked against an empty theme dictionary; the second
+explicitly selects element-symbol coloring with grey carbon.
+
+#for item in theme-samples.preset-samples {
+  theme-samples.panel(item)
+  v(6pt)
+}
+
+==== Assembly Is Not Crystal Symmetry <sec:symmetry-theme-gallery>
+
+The three panels below must match. They contain polymer geometry and assembly
+operators, so they detect accidental application of #ic("symmetryColor") to a
+biological assembly, both alone and with #ic("globalName"). The build compares
+the complete OBJ geometry/material assignments with the baseline. These controls
+use the bundled RCSB PDB 1CRN biological assembly 1.
+
+#block(breakable: false, info-alert[
+  The public Typst API currently has no crystal-contacts or crystallographic
+  symmetry-expansion option. These panels are negative controls for biological
+  assemblies, not positive examples of a generated crystal-symmetry scene.
+  In contrast, the global #ic("operator-name") sample above intentionally
+  colors assembly copies by operator.
+])
+
+#for item in theme-samples.symmetry-samples {
+  theme-samples.panel(item)
+  v(6pt)
+}
+
+To rerun the standalone gallery and its checks from the repository root:
+
+#shell("typst compile --root . package/examples/theme.typ package/examples/theme.pdf")
 
 === Annotation Color Rules <sec:annotation-colors>
 
