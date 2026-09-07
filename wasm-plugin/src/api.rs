@@ -8,7 +8,7 @@ use crate::json::{json_escape, json_string_array};
 use crate::mesh::{
     build_mesh, build_mesh_with_visible_bounding_sphere,
     build_mesh_with_visible_bounding_sphere_and_operator_snapshot,
-    build_render_scene_with_summaries, render_materials,
+    build_native_render_scene_with_summaries, build_render_scene_with_summaries, render_materials,
     render_object_stl_facet_context_for_geometry_json_timed, render_object_stl_facet_context_json,
     render_object_stl_facet_context_json_timed, render_summaries_json,
     visible_renderable_bounding_sphere_for_export_with_structure,
@@ -22,6 +22,10 @@ use crate::model::{
 use crate::options::MeshOptions;
 use crate::parser::{
     parse_molecule_with_options, parse_molecule_with_options_and_metadata, ParsedMolecule,
+};
+use crate::render::{
+    encode_render_output, native_render_objects_json, render_scene, RenderOutputFormat,
+    RendererOptions,
 };
 
 pub fn convert_to_obj(data: &[u8], options_json: &[u8]) -> Result<Vec<u8>, String> {
@@ -130,6 +134,7 @@ pub fn convert_to_render_object_bundle(
         &available_alt_locs,
         &molecule,
         Some(&scene.summaries),
+        None,
     );
 
     match mesh_format {
@@ -167,6 +172,105 @@ pub fn convert_to_render_object_bundle(
             )
         }
     }
+}
+
+/// Render molecular data directly to a versioned RGBA8 bundle.
+///
+/// Geometry and renderer options are separate arguments so the strict nested
+/// renderer schema cannot collide with the legacy flat geometry-option parser.
+pub fn convert_to_render_result(
+    data: &[u8],
+    options_json: &[u8],
+    renderer_options_json: &[u8],
+    output_format: &[u8],
+) -> Result<Vec<u8>, String> {
+    let output_format = RenderOutputFormat::parse(output_format)?;
+    let mut options = MeshOptions::from_json(options_json)?;
+    // Camera fitting owns render-time centering. Export functions retain the
+    // independent `center` option, but native rendering always preserves the
+    // semantic scene's source coordinates.
+    options.center = false;
+    let renderer_options = RendererOptions::from_json(renderer_options_json)?;
+    let ParsedMolecule {
+        molecule,
+        available_alt_locs,
+    } = parse_molecule_with_options_and_metadata(data, &options)?;
+    let scene = build_native_render_scene_with_summaries(&molecule, &options);
+    // A render result reports the actual grouped Mol* render-object handoff,
+    // not every export-expanded semantic atom/bond part. Besides matching the
+    // renderer contract, this keeps large line/point fallback structures from
+    // duplicating tens of megabytes of per-primitive diagnostics in `info`.
+    // Standalone `molecule_info` intentionally retains its detailed semantic
+    // render-object array.
+    let render_objects_json = native_render_objects_json(&scene);
+    let info_json = molecule_info_json_with_summaries(
+        &options,
+        &available_alt_locs,
+        &molecule,
+        Some(&scene.summaries),
+        Some(&render_objects_json),
+    );
+    let rendered = render_scene(&scene, &options, &renderer_options)?;
+    let encoded_image = encode_render_output(
+        output_format,
+        rendered.width,
+        rendered.height,
+        &rendered.rgba,
+    )?;
+    native_render_bundle(
+        rendered.width,
+        rendered.height,
+        &rendered.rgba,
+        &encoded_image,
+        info_json.as_bytes(),
+        rendered.render_info_json.as_bytes(),
+    )
+}
+
+fn native_render_bundle(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+    encoded_image: &[u8],
+    info_json: &[u8],
+    render_info_json: &[u8],
+) -> Result<Vec<u8>, String> {
+    const MAGIC: &[u8; 4] = b"MFRG";
+    const VERSION: u32 = 2;
+    let expected_rgba = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| "render target dimensions overflow".to_string())?;
+    if rgba.len() != expected_rgba {
+        return Err(format!(
+            "render target byte length mismatch: expected {expected_rgba}, got {}",
+            rgba.len()
+        ));
+    }
+    let rgba_len = u32::try_from(rgba.len())
+        .map_err(|_| "render target is too large for the bundle format".to_string())?;
+    let image_len = u32::try_from(encoded_image.len())
+        .map_err(|_| "encoded image is too large for the bundle format".to_string())?;
+    let info_len = u32::try_from(info_json.len())
+        .map_err(|_| "molecular metadata is too large for the bundle format".to_string())?;
+    let render_info_len = u32::try_from(render_info_json.len())
+        .map_err(|_| "renderer metadata is too large for the bundle format".to_string())?;
+    let mut out = Vec::with_capacity(
+        32 + rgba.len() + encoded_image.len() + info_json.len() + render_info_json.len(),
+    );
+    out.extend_from_slice(MAGIC);
+    out.extend_from_slice(&VERSION.to_le_bytes());
+    out.extend_from_slice(&width.to_le_bytes());
+    out.extend_from_slice(&height.to_le_bytes());
+    out.extend_from_slice(&rgba_len.to_le_bytes());
+    out.extend_from_slice(&image_len.to_le_bytes());
+    out.extend_from_slice(&info_len.to_le_bytes());
+    out.extend_from_slice(&render_info_len.to_le_bytes());
+    out.extend_from_slice(rgba);
+    out.extend_from_slice(encoded_image);
+    out.extend_from_slice(info_json);
+    out.extend_from_slice(render_info_json);
+    Ok(out)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -721,7 +825,7 @@ pub fn molecule_info(data: &[u8], options_json: &[u8]) -> Result<Vec<u8>, String
         available_alt_locs,
     } = parse_molecule_with_options_and_metadata(data, &options)?;
     Ok(
-        molecule_info_json_with_summaries(&options, &available_alt_locs, &molecule, None)
+        molecule_info_json_with_summaries(&options, &available_alt_locs, &molecule, None, None)
             .into_bytes(),
     )
 }
@@ -731,6 +835,7 @@ fn molecule_info_json_with_summaries(
     available_alt_locs: &[String],
     molecule: &Molecule,
     summaries: Option<&RenderSummaries>,
+    render_objects_json: Option<&str>,
 ) -> String {
     let assemblies = molecule
         .assemblies
@@ -758,6 +863,7 @@ fn molecule_info_json_with_summaries(
         &summaries_storage
     };
     let geometry = &summaries.geometry;
+    let render_objects_json = render_objects_json.unwrap_or(&summaries.render_objects_json);
     let (min, max) = geometry.bounds.unwrap_or_default();
     let assembly_id = options.assembly.as_deref().unwrap_or("asymmetric-unit");
     format!(
@@ -798,7 +904,7 @@ fn molecule_info_json_with_summaries(
         helices,
         sheets,
         summaries.representation_json,
-        summaries.render_objects_json,
+        render_objects_json,
         min.x,
         min.y,
         min.z,

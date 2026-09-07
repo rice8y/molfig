@@ -104,6 +104,7 @@ pub(super) fn build_gaussian_density_grid_in_box(
     build_gaussian_density_grid_with_boundary(points, params, Some((box_min, box_max)))
 }
 
+#[allow(clippy::needless_range_loop)]
 fn build_gaussian_density_grid_with_boundary(
     points: &[GaussianDensityPoint],
     params: GaussianDensityParams,
@@ -289,6 +290,7 @@ fn fill_grid_dimension(length: usize, start: f64, step: f64) -> Vec<f32> {
         .collect()
 }
 
+#[allow(clippy::approx_constant)]
 fn faster_exp(value: f64) -> f32 {
     faster_pow2(1.442_695_040 * value)
 }
@@ -330,7 +332,7 @@ impl<'a> MarchingCubesState<'a> {
     fn clear_edge_vertex_index_slice(&mut self, z: usize) {
         let [nx, ny, _] = self.grid.dimensions;
         let half = 3 * nx * ny;
-        let range = if z % 2 == 0 {
+        let range = if z.is_multiple_of(2) {
             0..half
         } else {
             half..self.vertices_on_edges.len()
@@ -518,6 +520,7 @@ impl<'a> MarchingCubesState<'a> {
             normals: self.normals,
             faces: self.faces,
             vertex_groups,
+            vertex_colors: Vec::new(),
             face_groups,
             face_materials: Vec::new(),
             sections: Vec::new(),

@@ -30,7 +30,11 @@ pub(super) fn apply_mesh_color_smoothing(
         return;
     }
 
-    let vertex_colors = smooth_vertex_colors(mesh, group_colors, params);
+    let (vertex_colors, render_vertex_colors) = smooth_vertex_colors(mesh, group_colors, params);
+    // The native renderer consumes the same per-vertex `vColor` values as the
+    // Mol* mesh shader. Keep these before the exporter-only face selection and
+    // median-cut quantization below.
+    mesh.vertex_colors = render_vertex_colors;
     let mut face_colors = mesh
         .faces
         .iter()
@@ -47,7 +51,7 @@ fn smooth_vertex_colors(
     mesh: &Mesh,
     group_colors: &[u32],
     params: ColorSmoothingParams,
-) -> Vec<u32> {
+) -> (Vec<u32>, Vec<[f32; 3]>) {
     let resolution = params.resolution;
     let pad = 1.0 + resolution;
     let min = [
@@ -142,12 +146,103 @@ fn smooth_vertex_colors(
         }
     }
 
-    mesh.vertices
+    let export_colors = mesh
+        .vertices
         .iter()
         .map(|&vertex| interpolate_grid_color(vertex, min, scale_factor, grid_dim, width, &grid))
-        .collect()
+        .collect();
+    let render_colors = mesh
+        .vertices
+        .iter()
+        .map(|&vertex| {
+            sample_grid_color_shader(vertex, min, scale_factor, grid_dim, width, height, &grid)
+        })
+        .collect();
+    (export_colors, render_colors)
 }
 
+/// Port of `texture3dFrom2dLinear` for the normalized uint8 color grid used by
+/// Mol*'s WebGL mesh path. Unlike `getTrilinearlyInterpolated`, this preserves
+/// the filtered sub-byte value visible to the vertex shader instead of writing
+/// the result through a `Uint8Array` for geometry export.
+fn sample_grid_color_shader(
+    vertex: Vec3,
+    min: [f64; 3],
+    scale_factor: f64,
+    grid_dim: [usize; 3],
+    width: usize,
+    height: usize,
+    grid: &[u8],
+) -> [f32; 3] {
+    let min = min.map(|value| value as f32);
+    let scale_factor = scale_factor as f32;
+    let dim = grid_dim.map(|value| value as f32);
+    let position = [
+        ((vertex.x - min[0]) * scale_factor) / dim[0],
+        ((vertex.y - min[1]) * scale_factor) / dim[1],
+        ((vertex.z - min[2]) * scale_factor) / dim[2],
+    ];
+    let scaled_z = position[2] * dim[2];
+    let slice0 = scaled_z.floor() as isize;
+    let slice1 = slice0 + 1;
+    let color0 = sample_grid_slice_shader(position, slice0, grid_dim, width, height, grid);
+    let color1 = sample_grid_slice_shader(position, slice1, grid_dim, width, height, grid);
+    let delta = (scaled_z - slice0 as f32).abs();
+    [0, 1, 2].map(|channel| (color1[channel] - color0[channel]).mul_add(delta, color0[channel]))
+}
+
+fn sample_grid_slice_shader(
+    position: [f32; 3],
+    slice: isize,
+    grid_dim: [usize; 3],
+    width: usize,
+    height: usize,
+    grid: &[u8],
+) -> [f32; 3] {
+    let xn = grid_dim[0];
+    let yn = grid_dim[1];
+    let slice_offset = slice.saturating_mul(xn as isize);
+    let column = slice_offset.rem_euclid(width as isize) / xn as isize;
+    let row = slice_offset.div_euclid(width as isize);
+    let uv = [
+        (column as f32 * xn as f32 + position[0] * xn as f32) / width as f32,
+        (row as f32 * yn as f32 + position[1] * yn as f32) / height as f32,
+    ];
+    sample_normalized_rgb8_linear(uv, width, height, grid)
+}
+
+fn sample_normalized_rgb8_linear(
+    uv: [f32; 2],
+    width: usize,
+    height: usize,
+    grid: &[u8],
+) -> [f32; 3] {
+    let x = uv[0] * width as f32 - 0.5;
+    let y = uv[1] * height as f32 - 0.5;
+    let x0 = x.floor() as isize;
+    let y0 = y.floor() as isize;
+    let tx = x - x0 as f32;
+    let ty = y - y0 as f32;
+    let texel = |sx: isize, sy: isize, channel: usize| {
+        let sx = sx.clamp(0, width.saturating_sub(1) as isize) as usize;
+        let sy = sy.clamp(0, height.saturating_sub(1) as isize) as usize;
+        grid.get((sy * width + sx) * 3 + channel)
+            .copied()
+            .unwrap_or(0) as f32
+    };
+    [0, 1, 2].map(|channel| {
+        let upper_left = texel(x0, y0, channel);
+        let upper_right = texel(x0 + 1, y0, channel);
+        let lower_left = texel(x0, y0 + 1, channel);
+        let lower_right = texel(x0 + 1, y0 + 1, channel);
+        let upper = (upper_right - upper_left).mul_add(tx, upper_left);
+        let lower = (lower_right - lower_left).mul_add(tx, lower_left);
+        let byte = (lower - upper).mul_add(ty, upper);
+        (byte * 16.0).round() / (16.0 * 255.0)
+    })
+}
+
+#[allow(clippy::needless_range_loop)]
 fn interpolate_grid_color(
     vertex: Vec3,
     min: [f64; 3],
@@ -449,6 +544,7 @@ mod tests {
             normals: vec![Vec3::default(); 3],
             faces: vec![Face { a: 2, b: 0, c: 1 }],
             vertex_groups: vec![0, 1, 0],
+            vertex_colors: Vec::new(),
             face_groups: vec![0],
             face_materials: Vec::new(),
             sections: Vec::new(),
@@ -466,6 +562,12 @@ mod tests {
             },
         );
         let color = mesh.face_materials[0].color;
+        assert_eq!(mesh.vertex_colors.len(), mesh.vertices.len());
+        assert!(mesh
+            .vertex_colors
+            .iter()
+            .flatten()
+            .all(|channel| channel.is_finite() && (0.0..=1.0).contains(channel)));
         assert_ne!(color, 0xff0000);
         assert_ne!(color, 0x0000ff);
         assert_eq!(mesh.face_materials[0].alpha_tenths, 10);
@@ -476,5 +578,19 @@ mod tests {
         let mut colors = vec![0x112233, 0x445566];
         quantize_obj_face_colors(&mut colors, 1024);
         assert_eq!(colors, vec![0x112233, 0x445566]);
+    }
+
+    #[test]
+    fn normalized_rgb8_sampler_keeps_sub_byte_vertex_shader_values() {
+        let grid = [
+            0, 0, 0, // upper left
+            255, 0, 0, // upper right
+            0, 255, 0, // lower left
+            0, 0, 255, // lower right
+        ];
+        assert_eq!(
+            sample_normalized_rgb8_linear([0.5, 0.5], 2, 2, &grid),
+            [0.25; 3]
+        );
     }
 }

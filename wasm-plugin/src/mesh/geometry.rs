@@ -1623,6 +1623,7 @@ mod tests {
             normals: vec![Vec3::new(0.0, -1.0, 0.0)],
             faces: vec![Face { a: 0, b: 0, c: 0 }],
             vertex_groups: Vec::new(),
+            vertex_colors: Vec::new(),
             face_groups: Vec::new(),
             face_materials: Vec::new(),
             sections: Vec::new(),
@@ -1681,6 +1682,7 @@ mod tests {
             normals: vec![Vec3::new(0.0, 0.0, 1.0); 4],
             faces: vec![Face { a: 0, b: 1, c: 2 }],
             vertex_groups: Vec::new(),
+            vertex_colors: Vec::new(),
             face_groups: Vec::new(),
             face_materials: Vec::new(),
             sections: Vec::new(),
@@ -2090,6 +2092,30 @@ mod tests {
     }
 
     #[test]
+    fn sheet_vertex_rounds_only_at_molstar_float32_buffer_write() {
+        let mut mesh = Mesh::default();
+        let samples = CurveSamples {
+            centers: vec![
+                Vec3::new(115.045_11, 0.0, 0.0),
+                Vec3::new(116.045_11, 0.0, 0.0),
+            ],
+            normals: vec![Vec3::new(-0.155_244_47, 1.0, 0.0); 2],
+            binormals: vec![Vec3::new(0.181_380_39, 0.0, 1.0); 2],
+            widths: vec![2.510_801; 2],
+            heights: vec![0.470_151_84; 2],
+        };
+
+        add_sheet_samples(&mut mesh, &samples, 0.0, false, false);
+
+        assert_eq!(mesh.vertices[1].x.to_bits(), 0x42e5_088f);
+        assert_ne!(
+            mesh.vertices[1].x.to_bits(),
+            0x42e5_088e,
+            "Mol* keeps sheet temporaries as JS numbers until caAdd3 writes Float32"
+        );
+    }
+
+    #[test]
     fn tube_caps_use_raw_molstar_cross_normals() {
         let mut mesh = Mesh::default();
         add_profile_tube_for_test(
@@ -2278,6 +2304,15 @@ mod tests {
         let (cos, sin) = molstar_tube_cos_sin(28, true);
         assert_eq!(cos[8].to_bits(), 0xbfd5_234a_ca69_a9f9);
         assert_eq!(sin[8].to_bits(), 0x3fee_344a_d05d_3f87);
+    }
+
+    #[test]
+    fn coil_tube_trig_values_match_javascript_for_residual_face() {
+        let (cos, sin) = molstar_tube_cos_sin(20, false);
+        assert_eq!(cos[15].to_bits(), 0xbcaa_7939_4c9e_8a0a);
+        assert_eq!(sin[15].to_bits(), 0xbff0_0000_0000_0000);
+        assert_eq!(cos[16].to_bits(), 0x3fd3_c6ef_372f_e94c);
+        assert_eq!(sin[16].to_bits(), 0xbfee_6f0e_1344_5500);
     }
 
     #[test]
@@ -5070,22 +5105,24 @@ fn add_ribbon_samples(mesh: &mut Mesh, samples: &CurveSamples, arrow_height: f32
     let base = mesh.vertices.len();
 
     for i in 0..samples.centers.len() {
-        let center = samples.centers[i];
+        let center = DVec3::from_vec3(samples.centers[i]);
         let actual_height = if arrow_height == 0.0 {
-            samples.heights[i]
+            samples.heights[i] as f64
         } else {
-            arrow_height * (1.0 - i as f32 / linear_segments as f32)
+            arrow_height as f64 * (1.0 - i as f64 / linear_segments as f64)
         };
-        let vertical = samples.normals[i] * actual_height;
+        let vertical = DVec3::from_vec3(samples.normals[i]) * actual_height;
         let torsion = samples.binormals[i];
 
-        mesh.vertices.push(center + vertical);
+        // Mol* performs these Vec3 operations in JavaScript Number precision
+        // and rounds only when ChunkedArray writes the Float32 vertex buffer.
+        mesh.vertices.push((center + vertical).to_vec3());
         mesh.normals.push(torsion * -1.0);
-        mesh.vertices.push(center - vertical);
+        mesh.vertices.push((center - vertical).to_vec3());
         mesh.normals.push(torsion * -1.0);
-        mesh.vertices.push(center + vertical);
+        mesh.vertices.push((center + vertical).to_vec3());
         mesh.normals.push(torsion);
-        mesh.vertices.push(center - vertical);
+        mesh.vertices.push((center - vertical).to_vec3());
         mesh.normals.push(torsion);
     }
 
@@ -5144,53 +5181,54 @@ fn add_sheet_samples(
     let base = mesh.vertices.len();
     let arrow_height = arrow_height.max(0.0);
     let offset_length = if arrow_height > 0.0 {
-        let length = samples.centers[0].distance(*samples.centers.last().unwrap());
-        if length > 0.000_001 {
-            arrow_height / length
-        } else {
-            0.0
-        }
+        arrow_height as f64
+            / DVec3::from_vec3(samples.centers[0])
+                .distance(DVec3::from_vec3(*samples.centers.last().unwrap()))
     } else {
         0.0
     };
 
     for i in 0..samples.centers.len() {
-        let center = samples.centers[i];
-        let normal = samples.normals[i];
-        let binormal = samples.binormals[i];
-        let width = samples.widths[i];
-        let height = samples.heights[i];
+        let center = DVec3::from_vec3(samples.centers[i]);
+        let normal = DVec3::from_vec3(samples.normals[i]);
+        let binormal = DVec3::from_vec3(samples.binormals[i]);
+        let width = samples.widths[i] as f64;
+        let height = samples.heights[i] as f64;
         let actual_height = if arrow_height == 0.0 {
             height
         } else {
-            arrow_height * (1.0 - i as f32 / linear_segments as f32)
+            arrow_height as f64 * (1.0 - i as f64 / linear_segments as f64)
         };
         let vertical = normal * actual_height;
         let horizontal = binormal * width;
         let normal_offset = if arrow_height > 0.0 {
             normal.cross(binormal) * offset_length
         } else {
-            Vec3::default()
+            DVec3::default()
         };
-        let torsion = binormal;
+        let torsion = samples.binormals[i];
 
-        let p_top_right = center + horizontal + vertical;
-        let p_top_left = center - horizontal + vertical;
-        let p_bottom_left = center - horizontal - vertical;
-        let p_bottom_right = center + horizontal - vertical;
+        // Match the nested Vec3.add/sub calls in Mol* exactly: all temporary
+        // vectors have double-backed JS arrays, while only caAdd3 stores f32.
+        let p_top_right = (center + horizontal + vertical).to_vec3();
+        let p_top_left = (center - horizontal + vertical).to_vec3();
+        let p_bottom_left = (center - horizontal - vertical).to_vec3();
+        let p_bottom_right = (center + horizontal - vertical).to_vec3();
+        let upper_normal = (normal + normal_offset).to_vec3();
+        let lower_normal = (normal * -1.0 + normal_offset).to_vec3();
 
         mesh.vertices.push(p_top_right);
-        mesh.normals.push(normal + normal_offset);
+        mesh.normals.push(upper_normal);
         mesh.vertices.push(p_top_left);
-        mesh.normals.push(normal + normal_offset);
+        mesh.normals.push(upper_normal);
         mesh.vertices.push(p_top_left);
         mesh.normals.push(torsion * -1.0);
         mesh.vertices.push(p_bottom_left);
         mesh.normals.push(torsion * -1.0);
         mesh.vertices.push(p_bottom_left);
-        mesh.normals.push(normal * -1.0 + normal_offset);
+        mesh.normals.push(lower_normal);
         mesh.vertices.push(p_bottom_right);
-        mesh.normals.push(normal * -1.0 + normal_offset);
+        mesh.normals.push(lower_normal);
         mesh.vertices.push(p_bottom_right);
         mesh.normals.push(torsion);
         mesh.vertices.push(p_top_right);
@@ -5278,18 +5316,18 @@ fn add_sheet_cap(
     right_height: f32,
     flip: bool,
 ) {
-    let center = samples.centers[sample_index];
-    let normal = samples.normals[sample_index];
-    let binormal = samples.binormals[sample_index];
-    let vertical_left = normal * left_height;
-    let vertical_right = normal * right_height;
-    let horizontal = binormal * width;
-    let cap_normal = binormal.cross(normal);
+    let center = DVec3::from_vec3(samples.centers[sample_index]);
+    let normal = DVec3::from_vec3(samples.normals[sample_index]);
+    let binormal = DVec3::from_vec3(samples.binormals[sample_index]);
+    let vertical_left = normal * left_height as f64;
+    let vertical_right = normal * right_height as f64;
+    let horizontal = binormal * width as f64;
+    let cap_normal = binormal.cross(normal).to_vec3();
 
-    let p1 = center + horizontal + vertical_right;
-    let p2 = center + horizontal - vertical_left;
-    let p3 = center - horizontal - vertical_left;
-    let p4 = center - horizontal + vertical_right;
+    let p1 = (center + horizontal + vertical_right).to_vec3();
+    let p2 = (center + horizontal - vertical_left).to_vec3();
+    let p3 = (center - horizontal - vertical_left).to_vec3();
+    let p4 = (center - horizontal + vertical_right).to_vec3();
     let points = if left_height < right_height {
         [p4, p3, p2, p1]
     } else {

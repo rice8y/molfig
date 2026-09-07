@@ -141,6 +141,7 @@ pub(crate) fn atomic_number(element: &str) -> u8 {
     }
 }
 
+#[allow(dead_code)]
 fn covalent_radius(element: &str) -> f32 {
     match element {
         "H" => 0.31,
@@ -260,6 +261,7 @@ pub(crate) fn vdw_radius64(element: &str) -> f64 {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn infer_bonds(atoms: &[Atom]) -> Vec<Bond> {
     let mut bonds = Vec::new();
     for i in 0..atoms.len() {

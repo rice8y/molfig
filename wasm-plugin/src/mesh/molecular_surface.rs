@@ -57,6 +57,7 @@ pub(super) struct MolecularSurfaceGrid {
     pub(super) max_radius: f64,
 }
 
+#[allow(dead_code)]
 pub(super) fn build_molecular_surface_mesh_in_box(
     points: &[MolecularSurfacePoint],
     params: MolecularSurfaceParams,

@@ -1,6 +1,7 @@
 use crate::{
     convert_to_mtl, convert_to_obj, convert_to_obj_bundle, convert_to_ply,
-    convert_to_render_object_bundle, convert_to_stl, maquette_material_map, molecule_info,
+    convert_to_render_object_bundle, convert_to_render_result, convert_to_stl,
+    maquette_material_map, molecule_info,
 };
 
 #[link(wasm_import_module = "typst_env")]
@@ -16,6 +17,23 @@ fn call2(a_len: usize, b_len: usize, f: fn(&[u8], &[u8]) -> Result<Vec<u8>, Stri
     }
     let (a, b) = args.split_at(a_len);
     send_result(f(a, b))
+}
+
+fn call4(
+    a_len: usize,
+    b_len: usize,
+    c_len: usize,
+    d_len: usize,
+    f: fn(&[u8], &[u8], &[u8], &[u8]) -> Result<Vec<u8>, String>,
+) -> i32 {
+    let mut args = vec![0u8; a_len + b_len + c_len + d_len];
+    unsafe {
+        wasm_minimal_protocol_write_args_to_buffer(args.as_mut_ptr());
+    }
+    let (a, tail) = args.split_at(a_len);
+    let (b, tail) = tail.split_at(b_len);
+    let (c, d) = tail.split_at(c_len);
+    send_result(f(a, b, c, d))
 }
 
 fn send_result(result: Result<Vec<u8>, String>) -> i32 {
@@ -57,6 +75,22 @@ pub extern "C" fn to_obj_bundle(data_len: usize, options_len: usize) -> i32 {
 #[no_mangle]
 pub extern "C" fn render_object_bundle(data_len: usize, options_len: usize) -> i32 {
     call2(data_len, options_len, convert_to_render_object_bundle)
+}
+
+#[no_mangle]
+pub extern "C" fn render_result(
+    data_len: usize,
+    options_len: usize,
+    renderer_options_len: usize,
+    output_format_len: usize,
+) -> i32 {
+    call4(
+        data_len,
+        options_len,
+        renderer_options_len,
+        output_format_len,
+        convert_to_render_result,
+    )
 }
 
 #[no_mangle]

@@ -44,6 +44,10 @@ pub(crate) struct Mesh {
     pub(crate) normals: Vec<Vec3>,
     pub(crate) faces: Vec<Face>,
     pub(crate) vertex_groups: Vec<usize>,
+    /// RGB values read by Mol*'s vertex shader before perspective
+    /// interpolation. This remains separate from `face_materials`, whose
+    /// face-wise colors are retained for polygon export formats.
+    pub(crate) vertex_colors: Vec<[f32; 3]>,
     pub(crate) face_groups: Vec<usize>,
     pub(crate) face_materials: Vec<MeshMaterial>,
     pub(crate) sections: Vec<MeshSection>,
@@ -57,6 +61,10 @@ impl Mesh {
 
     pub(crate) fn face_material(&self, face_index: usize) -> Option<MeshMaterial> {
         self.face_materials.get(face_index).copied()
+    }
+
+    pub(crate) fn vertex_color(&self, vertex_index: usize) -> Option<[f32; 3]> {
+        self.vertex_colors.get(vertex_index).copied()
     }
 
     pub(crate) fn effective_group_count(&self) -> usize {

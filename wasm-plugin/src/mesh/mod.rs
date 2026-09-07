@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
+use std::ops::Range;
 
 use crate::chemistry::{vdw_radius, vdw_radius64};
 use crate::json::{json_escape, json_string_array};
@@ -201,6 +202,95 @@ pub(crate) struct RenderScene {
     pub(crate) assembly_operators: Vec<UnitOperator>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum NativePrimitive {
+    Point {
+        center: Vec3,
+        size: f32,
+        material: MeshMaterial,
+    },
+    Line {
+        start: Vec3,
+        end: Vec3,
+        size: f32,
+        material: MeshMaterial,
+    },
+    Sphere {
+        center: Vec3,
+        radius: f32,
+        material: MeshMaterial,
+    },
+    Cylinder {
+        start: Vec3,
+        end: Vec3,
+        radius: f32,
+        top_cap: bool,
+        bottom_cap: bool,
+        material: MeshMaterial,
+    },
+}
+
+pub(crate) struct NativeRenderScene {
+    pub(crate) mesh: Mesh,
+    pub(crate) primitives: Vec<NativePrimitive>,
+    /// Visible objects grouped at the Mol* visual/render-object boundary.
+    /// Rasterization consumes their constituent ranges in source order. The
+    /// later WebGL program/material sort remains a separate parity step.
+    pub(crate) render_objects: Vec<NativeRenderObject>,
+    pub(crate) visible_bounding_sphere: Option<BoundingSphere>,
+    pub(crate) summaries: RenderSummaries,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum NativeRenderGeometry {
+    Mesh {
+        ranges: Vec<NativeMeshRange>,
+    },
+    Primitives {
+        kind: &'static str,
+        indices: Vec<usize>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NativeMeshRange {
+    pub(crate) vertices: Range<usize>,
+    pub(crate) faces: Range<usize>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct NativeRenderObject {
+    pub(crate) order: usize,
+    pub(crate) geometry_kind: &'static str,
+    pub(crate) semantic_geometry_kinds: Vec<&'static str>,
+    pub(crate) visual: &'static str,
+    pub(crate) representation: &'static str,
+    pub(crate) representation_order: usize,
+    pub(crate) color_theme: &'static str,
+    pub(crate) component: &'static str,
+    pub(crate) tag: &'static str,
+    pub(crate) source_symmetry_group: Option<usize>,
+    pub(crate) geometry: NativeRenderGeometry,
+    pub(crate) draw_count: usize,
+    pub(crate) vertex_count: usize,
+    pub(crate) group_count: usize,
+    pub(crate) instance_count: Option<usize>,
+    pub(crate) material: Option<MeshMaterial>,
+    pub(crate) bounding_sphere: Option<BoundingSphere>,
+    pub(crate) alpha: f64,
+    pub(crate) alpha_factor: f64,
+    pub(crate) alpha_min: f32,
+    pub(crate) alpha_average: f32,
+    pub(crate) transparency_average: f64,
+    pub(crate) transparency_min: f64,
+    pub(crate) visible: bool,
+    pub(crate) opaque: bool,
+    pub(crate) write_depth: bool,
+    pub(crate) double_sided: bool,
+    pub(crate) flip_sided: bool,
+    pub(crate) backface_transparency: &'static str,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct RenderObjectMeshStats {
     draw_count: usize,
@@ -284,6 +374,837 @@ pub(crate) fn build_render_scene_with_summaries(
         visible_bounding_sphere,
         summaries,
         assembly_operators,
+    }
+}
+
+/// Build the renderer scene without export-format flattening for Mol* sphere
+/// and cylinder impostors. Complex polymer and surface objects remain indexed
+/// meshes and share the same semantic ordering and material resolution.
+pub(crate) fn build_native_render_scene_with_summaries(
+    molecule: &Molecule,
+    options: &MeshOptions,
+) -> NativeRenderScene {
+    let structure = molecule.atomic_structure();
+    let geometry = GeometryView::new(molecule, &structure, options);
+    let options = resolved_mesh_options_for_geometry(&geometry, options);
+    let mut objects = build_semantic_render_objects_resolved_limited(
+        molecule,
+        &options,
+        None,
+        Some(&structure),
+        Some(&geometry),
+        |_| {},
+    );
+    assign_semantic_source_symmetry_groups(&mut objects, &geometry, &structure);
+    let structure_sphere = molstar_visible_renderable_bounding_sphere_for_geometry(
+        molecule, &options, &structure, &geometry,
+    );
+    let quality_double_sided = molstar_quality_double_sided(
+        options.quality,
+        geometry.atom_count() + geometry.coarse_sphere_count() + geometry.coarse_gaussian_count(),
+        geometry.atom_count() == 0
+            && geometry.coarse_sphere_count() + geometry.coarse_gaussian_count() > 0,
+    );
+    let effective_representation = effective_representation(&structure, options.representation);
+    let unambiguous_single_instance =
+        structure.symmetry_groups.len() == 1 && structure.symmetry_groups[0].unit_ids.len() == 1;
+    let mut primitives = Vec::new();
+    let mut mesh_objects = Vec::new();
+    for object in &objects {
+        if let Some(primitive) = native_primitive(object) {
+            primitives.push(primitive);
+        } else {
+            mesh_objects.push(object.clone());
+        }
+    }
+    let (mesh, mesh_slice_sphere, mesh_object_stats) =
+        flatten_semantic_render_objects_with_visible_bounding_sphere_and_stats(
+            &mesh_objects,
+            molecule,
+            &options,
+            structure_sphere.is_none(),
+        );
+    let render_objects = native_render_objects(
+        &objects,
+        &primitives,
+        &mesh,
+        &mesh_object_stats,
+        quality_double_sided,
+        unambiguous_single_instance,
+        &structure
+            .symmetry_groups
+            .iter()
+            .map(|group| group.unit_ids.len())
+            .collect::<Vec<_>>(),
+    );
+    let render_objects = native_render_objects_with_visual_bounds(
+        render_objects,
+        molstar_visible_renderable_component_spheres_with_structure_mode(
+            molecule,
+            &options,
+            &structure,
+            geometry.virtualize_assembly,
+        ),
+    );
+    let render_objects = native_render_objects_with_carbohydrate_mesh_bounds(
+        render_objects,
+        molecule,
+        &options,
+        &structure,
+    );
+    let render_objects = native_render_objects_with_source_visual_state(
+        render_objects,
+        molecule,
+        &options,
+        &structure,
+    );
+    let visible_bounding_sphere = if effective_representation == Representation::Cartoon {
+        molstar_viewer_cartoon_scene_bounding_sphere_for_geometry(
+            molecule, &options, &structure, &geometry, &mesh,
+        )
+        .or(structure_sphere)
+        .or(mesh_slice_sphere)
+    } else {
+        structure_sphere.or(mesh_slice_sphere)
+    };
+    let geometry_snapshot = GeometryInfoSnapshot::from_geometry(&geometry);
+    // Native rendering reports its grouped render-object handoff directly.
+    // Do not serialize the export-expanded semantic object list here: line and
+    // point fallback structures can contain tens of thousands of parts even
+    // though the renderer consumes only a handful of grouped objects.
+    let summaries = RenderSummaries {
+        render_objects_json: String::new(),
+        representation_json: representation_summary_json_from_resolved(
+            &options, &structure, &objects,
+        ),
+        structure,
+        geometry: geometry_snapshot,
+    };
+    NativeRenderScene {
+        mesh,
+        primitives,
+        render_objects,
+        visible_bounding_sphere,
+        summaries,
+    }
+}
+
+fn native_render_objects_with_carbohydrate_mesh_bounds(
+    mut objects: Vec<NativeRenderObject>,
+    molecule: &Molecule,
+    options: &MeshOptions,
+    structure: &AtomicStructure,
+) -> Vec<NativeRenderObject> {
+    let source_sphere =
+        molstar_carbohydrate_symbol_source_bounding_sphere(molecule, options, structure);
+    for object in &mut objects {
+        if object.tag != "branched-snfg-3d"
+            || object.geometry_kind != "mesh"
+            || !object
+                .semantic_geometry_kinds
+                .contains(&"carbohydrate-symbol")
+        {
+            continue;
+        }
+        if let Some(sphere) = &source_sphere {
+            object.bounding_sphere = Some(sphere.clone());
+        }
+        // CarbohydrateSymbolVisual reserves two picking/color groups per
+        // carbohydrate element even when the chosen SNFG shape only emits
+        // the primary (whole) mesh part.
+        object.group_count = object
+            .group_count
+            .max(structure.carbohydrates.elements.len().saturating_mul(2));
+    }
+    objects
+}
+
+fn molstar_carbohydrate_symbol_source_bounding_sphere(
+    molecule: &Molecule,
+    options: &MeshOptions,
+    structure: &AtomicStructure,
+) -> Option<BoundingSphere> {
+    let selected = selected_visuals(structure, options);
+    let mut objects = Vec::new();
+    let mut group_id = 0;
+    add_carbohydrate_symbol_semantic_objects(
+        molecule,
+        structure,
+        Vec3::default(),
+        "carbohydrate",
+        &mut group_id,
+        &mut objects,
+        &selected,
+    );
+    if objects.is_empty() {
+        return None;
+    }
+    let (mesh, _, _) = flatten_semantic_render_objects_with_visible_bounding_sphere_and_stats(
+        &objects, molecule, options, false,
+    );
+    (!mesh.vertices.is_empty()).then(|| molstar_renderable_position_boundary_sphere(&mesh.vertices))
+}
+
+fn native_render_objects(
+    objects: &[SemanticRenderObject],
+    primitives: &[NativePrimitive],
+    mesh: &Mesh,
+    mesh_object_stats: &[RenderObjectMeshStats],
+    quality_double_sided: bool,
+    unambiguous_single_instance: bool,
+    symmetry_group_instance_counts: &[usize],
+) -> Vec<NativeRenderObject> {
+    let mut native_objects: Vec<NativeRenderObject> = Vec::with_capacity(objects.len());
+    let mut alpha_weights: Vec<usize> = Vec::with_capacity(objects.len());
+    let mut source_group_ids: Vec<BTreeSet<usize>> = Vec::with_capacity(objects.len());
+    let mut primitive_index = 0;
+    let mut mesh_object_index = 0;
+    let mut vertex_start = 0;
+    let mut face_start = 0;
+
+    for object in objects {
+        let material = object
+            .material
+            .unwrap_or_else(|| MeshMaterial::opaque(0xcccccc));
+        let (
+            geometry,
+            geometry_kind,
+            draw_count,
+            vertex_count,
+            group_count,
+            alpha_tenths,
+            alpha_min,
+            alpha_average,
+            alpha_weight,
+        ) = if native_primitive(object).is_some() {
+            let primitive = primitives
+                .get(primitive_index)
+                .expect("native primitive order matches semantic render objects");
+            let (draw_count, vertex_count) = native_primitive_geometry_info(primitive);
+            let alpha = f32::from(material.alpha_tenths) / 10.0;
+            let geometry_kind = match primitive {
+                NativePrimitive::Point { .. } => "points",
+                NativePrimitive::Line { .. } => "lines",
+                NativePrimitive::Sphere { .. } => "spheres",
+                NativePrimitive::Cylinder { .. } => "cylinders",
+            };
+            let geometry = NativeRenderGeometry::Primitives {
+                kind: geometry_kind,
+                indices: vec![primitive_index],
+            };
+            primitive_index += 1;
+            (
+                geometry,
+                geometry_kind,
+                draw_count,
+                vertex_count,
+                native_semantic_initial_group_count(object),
+                material.alpha_tenths,
+                alpha,
+                alpha,
+                1,
+            )
+        } else {
+            let stats = mesh_object_stats
+                .get(mesh_object_index)
+                .copied()
+                .expect("native mesh object stats match semantic render objects");
+            let vertices = vertex_start..vertex_start + stats.vertex_count;
+            let face_count = stats.draw_count / 3;
+            let faces = face_start..face_start + face_count;
+            let alpha_weight = faces.len().max(1);
+            let (alpha_tenths, alpha_min, alpha_average) =
+                native_mesh_alpha_stats(mesh, &faces, material);
+            vertex_start = vertices.end;
+            face_start = faces.end;
+            mesh_object_index += 1;
+            (
+                NativeRenderGeometry::Mesh {
+                    ranges: vec![NativeMeshRange { vertices, faces }],
+                },
+                "mesh",
+                stats.draw_count,
+                stats.vertex_count,
+                native_semantic_initial_group_count(object),
+                alpha_tenths,
+                alpha_min,
+                alpha_average,
+                alpha_weight,
+            )
+        };
+        let alpha = f64::from(alpha_tenths) / 10.0;
+        let existing = native_objects.iter().position(|native| {
+            native.geometry_kind == geometry_kind
+                && native.visual == object.visual
+                && native.representation == object.representation
+                && native.representation_order == object.representation_order
+                && native.color_theme == object.color_theme
+                && native.component == object.component
+                && native.tag == object.tag
+                && native.source_symmetry_group == object.source_symmetry_group
+        });
+        if let Some(index) = existing {
+            let native = &mut native_objects[index];
+            match (&mut native.geometry, geometry) {
+                (
+                    NativeRenderGeometry::Mesh { ranges },
+                    NativeRenderGeometry::Mesh {
+                        ranges: mut incoming,
+                    },
+                ) => ranges.append(&mut incoming),
+                (
+                    NativeRenderGeometry::Primitives { indices, .. },
+                    NativeRenderGeometry::Primitives {
+                        indices: mut incoming,
+                        ..
+                    },
+                ) => indices.append(&mut incoming),
+                _ => unreachable!("native render-object key includes geometry kind"),
+            }
+            native.draw_count += draw_count;
+            native.vertex_count += vertex_count;
+            source_group_ids[index].insert(object.group_id);
+            native.group_count = native.group_count.max(group_count);
+            if native.source_symmetry_group.is_some() {
+                let instance_count = native.instance_count.unwrap_or(1).max(1);
+                let source_group_count = source_group_ids[index].len().div_ceil(instance_count);
+                native.group_count = native.group_count.max(source_group_count);
+            }
+            if !native
+                .semantic_geometry_kinds
+                .contains(&object.geometry_type)
+            {
+                native.semantic_geometry_kinds.push(object.geometry_type);
+            }
+            if native.material != Some(material) {
+                native.material = None;
+            }
+            native.alpha_min = native.alpha_min.min(alpha_min);
+            let old_weight = alpha_weights[index];
+            let new_weight = old_weight.saturating_add(alpha_weight);
+            native.alpha_average = ((f64::from(native.alpha_average) * old_weight as f64
+                + f64::from(alpha_average) * alpha_weight as f64)
+                / new_weight as f64) as f32;
+            alpha_weights[index] = new_weight;
+            native.visible = native.draw_count > 0;
+            native.opaque = native.alpha >= 1.0 && native.alpha_min >= 1.0;
+            native.write_depth = native.opaque;
+            native.double_sided =
+                (native.geometry_kind == "lines" || quality_double_sided) && native.opaque;
+            continue;
+        }
+
+        alpha_weights.push(alpha_weight);
+        source_group_ids.push(BTreeSet::from([object.group_id]));
+        native_objects.push(NativeRenderObject {
+            order: native_objects.len(),
+            geometry_kind,
+            semantic_geometry_kinds: vec![object.geometry_type],
+            visual: object.visual,
+            representation: object.representation,
+            representation_order: object.representation_order,
+            color_theme: object.color_theme,
+            component: object.component,
+            tag: object.tag,
+            source_symmetry_group: object.source_symmetry_group,
+            geometry,
+            draw_count,
+            vertex_count,
+            group_count,
+            // The current semantic builder expands non-trivial unit
+            // instances. Report one only when the source structure proves
+            // that no visual instancing was involved; unknown is safer than
+            // conflating expanded geometry with Mol*'s aTransform count.
+            instance_count: object
+                .source_symmetry_group
+                .and_then(|group| symmetry_group_instance_counts.get(group).copied())
+                .or_else(|| unambiguous_single_instance.then_some(1)),
+            material: Some(material),
+            // A semantic mesh range or analytic primitive is not itself the
+            // source Mol* visual's handed-off sphere. Keep the grouped object
+            // bound absent until that value is carried from the visual layer.
+            bounding_sphere: None,
+            alpha,
+            alpha_factor: 1.0,
+            alpha_min,
+            alpha_average,
+            transparency_average: 0.0,
+            transparency_min: 1.0,
+            visible: draw_count > 0,
+            opaque: alpha >= 1.0 && alpha_min >= 1.0,
+            write_depth: alpha >= 1.0 && alpha_min >= 1.0,
+            double_sided: (geometry_kind == "lines" || quality_double_sided)
+                && alpha >= 1.0
+                && alpha_min >= 1.0,
+            flip_sided: false,
+            backface_transparency: "off",
+        });
+    }
+
+    debug_assert_eq!(primitive_index, primitives.len());
+    debug_assert_eq!(mesh_object_index, mesh_object_stats.len());
+    debug_assert_eq!(vertex_start, mesh.vertices.len());
+    debug_assert_eq!(face_start, mesh.faces.len());
+    native_objects
+}
+
+fn native_semantic_intrinsic_group_count(object: &SemanticRenderObject) -> usize {
+    match &object.object {
+        RenderObject::SurfaceMesh { mesh, .. } => mesh.group_count.max(1),
+        _ => 1,
+    }
+}
+
+fn native_semantic_initial_group_count(object: &SemanticRenderObject) -> usize {
+    let intrinsic = native_semantic_intrinsic_group_count(object);
+    if object.source_symmetry_group.is_some() {
+        intrinsic
+    } else {
+        intrinsic.max(object.group_id.saturating_add(1))
+    }
+}
+
+fn native_render_objects_with_visual_bounds(
+    mut objects: Vec<NativeRenderObject>,
+    visual_spheres: Vec<(&'static str, BoundingSphere)>,
+) -> Vec<NativeRenderObject> {
+    for index in 0..objects.len() {
+        let object = &objects[index];
+        let matched_labels = visual_spheres
+            .iter()
+            .map(|(label, _)| *label)
+            .filter(|label| native_visual_bound_matches(object, label))
+            .collect::<Vec<_>>();
+        let unambiguous_object = objects
+            .iter()
+            .filter(|candidate| {
+                matched_labels
+                    .iter()
+                    .any(|label| native_visual_bound_matches(candidate, label))
+            })
+            .count()
+            == 1;
+        if !unambiguous_object {
+            continue;
+        }
+        let spheres = visual_spheres
+            .iter()
+            .filter(|(label, _)| matched_labels.contains(label))
+            .map(|(_, sphere)| sphere.clone())
+            .collect::<Vec<_>>();
+        objects[index].bounding_sphere = match spheres.as_slice() {
+            [] => None,
+            [sphere] => Some(sphere.clone()),
+            _ => Some(Boundary::from_bounding_spheres(&spheres).sphere),
+        };
+    }
+    objects
+}
+
+fn assign_semantic_source_symmetry_groups(
+    objects: &mut [SemanticRenderObject],
+    geometry: &GeometryView<'_>,
+    structure: &AtomicStructure,
+) {
+    let mut group_by_unit = vec![None; structure.units.len()];
+    for (group_index, group) in structure.symmetry_groups.iter().enumerate() {
+        for &unit_id in &group.unit_ids {
+            if let Some(unit_index) = structure.unit_index_by_id(unit_id) {
+                group_by_unit[unit_index] = Some(group_index);
+            }
+        }
+    }
+
+    // Non-virtualized geometry indexes source atoms directly. Keep a source
+    // lookup as well, but reject atoms occurring in more than one symmetry
+    // group instead of assigning an arbitrary visual identity.
+    let mut group_by_source = vec![None; geometry.molecule.atoms.len()];
+    let mut ambiguous_source = vec![false; geometry.molecule.atoms.len()];
+    for (group_index, group) in structure.symmetry_groups.iter().enumerate() {
+        let Some(unit) = group
+            .unit_ids
+            .first()
+            .and_then(|unit_id| structure.unit_by_id(*unit_id))
+        else {
+            continue;
+        };
+        for &source_index in &unit.atom_indices {
+            let Some(slot) = group_by_source.get_mut(source_index) else {
+                continue;
+            };
+            if slot.is_some_and(|previous| previous != group_index) {
+                ambiguous_source[source_index] = true;
+            } else {
+                *slot = Some(group_index);
+            }
+        }
+    }
+
+    let mut unique_component_groups = BTreeMap::<&'static str, Option<usize>>::new();
+    for object in objects {
+        // These are StructureVisuals, not UnitVisuals; their transforms and
+        // bounds do not belong to either endpoint's symmetry group.
+        if matches!(
+            object.visual,
+            "inter-bond" | "structure-intra-bond" | "structure-element-sphere"
+        ) {
+            continue;
+        }
+        object.source_symmetry_group =
+            if let Some(atom) = object.atom_index.and_then(|index| geometry.atom(index)) {
+                if let Some(unit_index) = atom.unit_index {
+                    group_by_unit.get(unit_index).copied().flatten()
+                } else if ambiguous_source
+                    .get(atom.source_index)
+                    .copied()
+                    .unwrap_or(true)
+                {
+                    None
+                } else {
+                    group_by_source.get(atom.source_index).copied().flatten()
+                }
+            } else {
+                *unique_component_groups
+                    .entry(object.component)
+                    .or_insert_with(|| {
+                        unique_source_symmetry_group_for_component(
+                            geometry.molecule,
+                            structure,
+                            object.component,
+                        )
+                    })
+            };
+    }
+}
+
+fn unique_source_symmetry_group_for_component(
+    molecule: &Molecule,
+    structure: &AtomicStructure,
+    component: &str,
+) -> Option<usize> {
+    let mask = molstar_source_component_atom_mask(molecule, structure, component);
+    let mut matched = None;
+    for (group_index, group) in structure.symmetry_groups.iter().enumerate() {
+        let selected = group
+            .unit_ids
+            .first()
+            .and_then(|unit_id| structure.unit_by_id(*unit_id))
+            .is_some_and(|unit| {
+                unit.atom_indices
+                    .iter()
+                    .any(|&source_index| mask.get(source_index).copied().unwrap_or(false))
+            });
+        if !selected {
+            continue;
+        }
+        if matched.is_some() {
+            return None;
+        }
+        matched = Some(group_index);
+    }
+    matched
+}
+
+fn native_render_objects_with_source_visual_state(
+    mut objects: Vec<NativeRenderObject>,
+    molecule: &Molecule,
+    options: &MeshOptions,
+    structure: &AtomicStructure,
+) -> Vec<NativeRenderObject> {
+    for object in &mut objects {
+        let Some(group_index) = object.source_symmetry_group else {
+            continue;
+        };
+        if let Some(sphere) =
+            molstar_source_visual_bounding_sphere(molecule, options, structure, group_index, object)
+        {
+            object.bounding_sphere = Some(sphere);
+        }
+    }
+    objects
+}
+
+fn molstar_source_visual_bounding_sphere(
+    molecule: &Molecule,
+    options: &MeshOptions,
+    structure: &AtomicStructure,
+    group_index: usize,
+    object: &NativeRenderObject,
+) -> Option<BoundingSphere> {
+    let group = structure.symmetry_groups.get(group_index)?;
+    let units = group
+        .unit_ids
+        .iter()
+        .filter_map(|unit_id| structure.unit_by_id(*unit_id))
+        .collect::<Vec<_>>();
+    let unit = *units.first()?;
+    if unit.kind != UnitKind::Atomic {
+        return None;
+    }
+    let mask = molstar_source_component_atom_mask(molecule, structure, object.component);
+    let selected = unit
+        .atom_indices
+        .iter()
+        .copied()
+        .filter(|&source_index| mask.get(source_index).copied().unwrap_or(false))
+        .collect::<Vec<_>>();
+    if selected.is_empty() {
+        return None;
+    }
+
+    let mut positions = Vec::with_capacity(selected.len());
+    let mut radii = Vec::with_capacity(selected.len());
+    let mut max_theme_size = 0.0_f64;
+    for &source_index in &selected {
+        let atom = molecule.atoms.get(source_index)?;
+        positions.push([
+            atom.position.x as f64,
+            atom.position.y as f64,
+            atom.position.z as f64,
+        ]);
+        radii.push(vdw_radius(&atom.type_symbol));
+        max_theme_size = max_theme_size.max(vdw_radius64(&atom.type_symbol));
+    }
+    let unit_sphere = Boundary::from_positions64_and_radii(&positions, &radii).sphere;
+    let invariant_sphere = match (object.visual, object.geometry_kind) {
+        ("element-point", "points") | ("intra-bond", "lines") => {
+            // ElementPointParams and IntraUnitBondLineParams both use
+            // sizeFactor=2 in Mol*'s Line representation preset.
+            molstar_expand_bounding_sphere(&unit_sphere, 2.0)
+        }
+        ("element-sphere", "spheres") => {
+            let representation_size_factor = if object.representation == "spacefill" {
+                molstar_spacefill_size_factor(structure)
+            } else {
+                MOLSTAR_BALL_AND_STICK_SIZE_FACTOR64
+            };
+            let physical_radius =
+                max_theme_size * molstar_radius_scale64(options) * representation_size_factor;
+            let geometry_sphere =
+                molstar_expand_bounding_sphere(&unit_sphere, physical_radius + 0.05);
+            molstar_expand_bounding_sphere(&geometry_sphere, physical_radius)
+        }
+        ("intra-bond", "cylinders") => molstar_expand_bounding_sphere(
+            &unit_sphere,
+            MOLSTAR_BALL_AND_STICK_SIZE_FACTOR64 * molstar_radius_scale64(options),
+        ),
+        _ => return None,
+    };
+    Some(molstar_units_transform_bounding_sphere(
+        &invariant_sphere,
+        &units,
+    ))
+}
+
+fn molstar_source_component_atom_mask(
+    molecule: &Molecule,
+    structure: &AtomicStructure,
+    component: &str,
+) -> Vec<bool> {
+    match component {
+        "branched" => molstar_branched_atom_mask(molecule, structure),
+        "polymer" => molstar_viewer_polymer_atom_mask(structure),
+        "ligand" => molstar_ligand_atom_mask(molecule, structure),
+        "non-standard" => molstar_non_standard_atom_mask(molecule, structure),
+        "water" => molstar_water_atom_mask(structure),
+        "ion" => molstar_ion_atom_mask(structure),
+        "lipid" => molstar_lipid_atom_mask(structure),
+        _ => vec![true; molecule.atoms.len()],
+    }
+}
+
+fn native_visual_bound_matches(object: &NativeRenderObject, label: &str) -> bool {
+    object.visual == label
+        || matches!(
+            (object.visual, object.geometry_kind, label),
+            (
+                "intra-bond" | "inter-bond" | "structure-intra-bond",
+                "cylinders",
+                "bond"
+            ) | (
+                "nucleotide-ring" | "nucleotide-block" | "direction-wedge",
+                "mesh",
+                "nucleotide"
+            ) | (
+                "carbohydrate-symbol" | "carbohydrate-link" | "carbohydrate-terminal-link",
+                "mesh" | "cylinders",
+                "carbohydrate"
+            ) | ("structure-element-sphere", "spheres", "element-sphere")
+        )
+}
+
+fn molstar_quality_double_sided(
+    quality: Option<VisualQuality>,
+    element_count: usize,
+    is_coarse: bool,
+) -> bool {
+    match quality {
+        Some(
+            VisualQuality::Highest
+            | VisualQuality::Higher
+            | VisualQuality::High
+            | VisualQuality::Medium,
+        ) => true,
+        Some(VisualQuality::Auto) => {
+            let score = if is_coarse {
+                element_count.saturating_mul(10)
+            } else {
+                element_count
+            };
+            score <= 100_000
+        }
+        Some(
+            VisualQuality::Custom
+            | VisualQuality::Low
+            | VisualQuality::Lower
+            | VisualQuality::Lowest,
+        )
+        | None => false,
+    }
+}
+
+fn native_primitive_geometry_info(primitive: &NativePrimitive) -> (usize, usize) {
+    match primitive {
+        NativePrimitive::Point { center, size, .. } => {
+            let visible = center.is_finite() && size.is_finite() && *size > 0.0;
+            let count = usize::from(visible);
+            (count, count)
+        }
+        NativePrimitive::Line {
+            start, end, size, ..
+        } => {
+            let visible = start.is_finite()
+                && end.is_finite()
+                && size.is_finite()
+                && *size > 0.0
+                && start.distance(*end) > 0.0;
+            (usize::from(visible) * 6, usize::from(visible) * 4)
+        }
+        NativePrimitive::Sphere { center, radius, .. } => {
+            let visible = center.is_finite() && radius.is_finite() && *radius > 0.0;
+            let count = usize::from(visible) * 6;
+            (count, count)
+        }
+        NativePrimitive::Cylinder {
+            start, end, radius, ..
+        } => {
+            let length = start.distance(*end);
+            let visible = start.is_finite()
+                && end.is_finite()
+                && radius.is_finite()
+                && *radius > 0.0
+                && length > 0.0;
+            (usize::from(visible) * 12, usize::from(visible) * 6)
+        }
+    }
+}
+
+fn native_mesh_alpha_stats(
+    mesh: &Mesh,
+    faces: &Range<usize>,
+    fallback: MeshMaterial,
+) -> (u8, f32, f32) {
+    if faces.is_empty() {
+        let alpha = f32::from(fallback.alpha_tenths) / 10.0;
+        return (fallback.alpha_tenths, alpha, alpha);
+    }
+    let mut minimum = 10u8;
+    let mut sum = 0u64;
+    for face_index in faces.clone() {
+        let alpha = mesh
+            .face_material(face_index)
+            .unwrap_or(fallback)
+            .alpha_tenths;
+        minimum = minimum.min(alpha);
+        sum += u64::from(alpha);
+    }
+    let uniform = mesh
+        .face_material(faces.start)
+        .unwrap_or(fallback)
+        .alpha_tenths;
+    (
+        uniform,
+        f32::from(minimum) / 10.0,
+        (sum as f64 / faces.len() as f64 / 10.0) as f32,
+    )
+}
+
+fn native_primitive(object: &SemanticRenderObject) -> Option<NativePrimitive> {
+    let material = object
+        .material
+        .unwrap_or_else(|| MeshMaterial::opaque(0xcccccc));
+    match &object.object {
+        RenderObject::ExportPoint { center, .. } => Some(NativePrimitive::Point {
+            center: *center,
+            // Viewer Cartoon's Line representation overrides the inherited
+            // Points sizeFactor with LineParams.sizeFactor = 2. The shader
+            // interprets this as a non-attenuated drawing-buffer pixel size.
+            size: MOLSTAR_LINE_SIZE_FACTOR64 as f32,
+            material,
+        }),
+        RenderObject::ExportLine { start, end, .. } => Some(NativePrimitive::Line {
+            start: *start,
+            end: *end,
+            // Lines use the same LineParams.sizeFactor and disable size
+            // attenuation in the viewer preset.
+            size: MOLSTAR_LINE_SIZE_FACTOR64 as f32,
+            material,
+        }),
+        RenderObject::Sphere { center, radius } => Some(NativePrimitive::Sphere {
+            center: *center,
+            radius: *radius as f32,
+            material,
+        }),
+        RenderObject::Cylinder { start, end, radius }
+        | RenderObject::LinkCylinder { start, end, radius } => Some(NativePrimitive::Cylinder {
+            start: *start,
+            end: *end,
+            radius: *radius,
+            top_cap: false,
+            bottom_cap: false,
+            material,
+        }),
+        RenderObject::LinkCylinderWithSegments {
+            start, end, radius, ..
+        } => Some(NativePrimitive::Cylinder {
+            start: *start,
+            end: *end,
+            radius: *radius as f32,
+            top_cap: false,
+            bottom_cap: false,
+            material,
+        }),
+        RenderObject::ExportCylinderWithSegments {
+            start,
+            end,
+            radius,
+            top_cap,
+            bottom_cap,
+            ..
+        } => Some(NativePrimitive::Cylinder {
+            start: *start,
+            end: *end,
+            radius: *radius as f32,
+            top_cap: *top_cap,
+            bottom_cap: *bottom_cap,
+            material,
+        }),
+        RenderObject::ExportCylinderWithSegments64 {
+            start,
+            end,
+            radius,
+            top_cap,
+            bottom_cap,
+            ..
+        } => Some(NativePrimitive::Cylinder {
+            start: start.to_vec3(),
+            end: end.to_vec3(),
+            radius: *radius as f32,
+            top_cap: *top_cap,
+            bottom_cap: *bottom_cap,
+            material,
+        }),
+        _ => None,
     }
 }
 
@@ -550,7 +1471,7 @@ impl<'a> GeometryView<'a> {
             .map(|source_index| {
                 let start = source_instance_offsets[source_index];
                 let end = source_instance_offsets[source_index + 1];
-                (start < end).then_some(source_instances[start])
+                (start < end).then(|| source_instances[start])
             })
             .collect();
         let mut bond_instances = Vec::new();
@@ -845,6 +1766,7 @@ impl<'a> GeometryView<'a> {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) enum RenderObject {
     Sphere {
@@ -1102,6 +2024,7 @@ pub(crate) struct SemanticRenderObject {
     pub(crate) residue_end: Option<i32>,
     pub(crate) group_id: usize,
     pub(crate) atom_index: Option<usize>,
+    pub(crate) source_symmetry_group: Option<usize>,
     pub(crate) material: Option<MeshMaterial>,
     pub(crate) initial: bool,
     pub(crate) final_residue: bool,
@@ -3652,6 +4575,7 @@ fn mesh_with_capacity(estimate: RenderObjectMeshEstimate) -> Mesh {
         normals: Vec::with_capacity(estimate.vertices),
         faces: Vec::with_capacity(estimate.faces),
         vertex_groups: Vec::with_capacity(estimate.vertices),
+        vertex_colors: Vec::with_capacity(estimate.vertices),
         face_groups: Vec::with_capacity(estimate.faces),
         face_materials: Vec::new(),
         sections: Vec::new(),
@@ -4196,7 +5120,7 @@ fn build_semantic_render_objects_resolved_limited(
                         geometry,
                         options,
                         center,
-                        representation,
+                        molstar_component_representation_name(&ball_and_stick_component_visuals),
                         "ligand",
                         &ligand_mask,
                         &ball_and_stick_component_visuals,
@@ -4212,7 +5136,7 @@ fn build_semantic_render_objects_resolved_limited(
                         geometry,
                         options,
                         center,
-                        representation,
+                        molstar_component_representation_name(&ball_and_stick_component_visuals),
                         "non-standard",
                         &non_standard_mask,
                         &ball_and_stick_component_visuals,
@@ -4229,7 +5153,7 @@ fn build_semantic_render_objects_resolved_limited(
                         geometry,
                         options,
                         center,
-                        representation,
+                        molstar_component_representation_name(&ball_and_stick_component_visuals),
                         "branched",
                         branched,
                         &ball_and_stick_component_visuals,
@@ -4243,7 +5167,7 @@ fn build_semantic_render_objects_resolved_limited(
                         molecule,
                         structure,
                         center,
-                        representation,
+                        "carbohydrate",
                         &mut group_id,
                         &mut objects,
                         &selected,
@@ -4256,7 +5180,7 @@ fn build_semantic_render_objects_resolved_limited(
                         structure,
                         options,
                         center,
-                        representation,
+                        "carbohydrate",
                         &mut group_id,
                         &mut objects,
                         &selected,
@@ -4269,7 +5193,7 @@ fn build_semantic_render_objects_resolved_limited(
                         structure,
                         options,
                         center,
-                        representation,
+                        "carbohydrate",
                         &mut group_id,
                         &mut objects,
                         &selected,
@@ -4293,7 +5217,7 @@ fn build_semantic_render_objects_resolved_limited(
                         geometry,
                         options,
                         center,
-                        representation,
+                        molstar_component_representation_name(&water_visuals),
                         "water",
                         &water_mask,
                         &water_visuals,
@@ -4309,7 +5233,7 @@ fn build_semantic_render_objects_resolved_limited(
                         geometry,
                         options,
                         center,
-                        representation,
+                        molstar_component_representation_name(&ball_and_stick_component_visuals),
                         "ion",
                         &ion_mask,
                         &ball_and_stick_component_visuals,
@@ -4334,7 +5258,7 @@ fn build_semantic_render_objects_resolved_limited(
                         geometry,
                         options,
                         center,
-                        representation,
+                        molstar_component_representation_name(&lipid_visuals),
                         "lipid",
                         &lipid_mask,
                         &lipid_visuals,
@@ -4627,6 +5551,7 @@ fn push_semantic_with_group(
         residue_end: meta.residue_end,
         group_id,
         atom_index: meta.atom_index,
+        source_symmetry_group: None,
         initial: meta.trace_flags.initial,
         final_residue: meta.trace_flags.final_residue,
         sec_struc_first: meta.trace_flags.sec_struc_first,
@@ -4738,6 +5663,13 @@ fn apply_molstar_default_materials(
                     color
                 })
                 .collect::<Vec<_>>();
+            mesh.vertex_colors = mesh
+                .vertex_groups
+                .iter()
+                .map(|&group| {
+                    normalized_vertex_color(group_colors.get(group).copied().unwrap_or(0xcccccc))
+                })
+                .collect();
             mesh.face_materials = mesh
                 .faces
                 .iter()
@@ -5118,6 +6050,14 @@ fn molstar_interpolate_color(start: u32, end: u32, t: f32) -> u32 {
         (a + (b - a) * t) as u32
     };
     (channel(16) << 16) | (channel(8) << 8) | channel(0)
+}
+
+fn normalized_vertex_color(color: u32) -> [f32; 3] {
+    [
+        ((color >> 16) & 0xff) as f32 / 255.0,
+        ((color >> 8) & 0xff) as f32 / 255.0,
+        (color & 0xff) as f32 / 255.0,
+    ]
 }
 
 fn molstar_semantic_theme_atom<'a>(
@@ -6762,6 +7702,24 @@ fn molstar_polymer_atom_mask(structure: &AtomicStructure) -> Vec<bool> {
     })
 }
 
+fn molstar_viewer_polymer_atom_mask(structure: &AtomicStructure) -> Vec<bool> {
+    source_aligned_atom_mask(structure, |atom_index| {
+        let Some(atom) = structure.model.hierarchy.atoms.get(atom_index) else {
+            return false;
+        };
+        atom_entity_type(structure, atom_index) == Some("polymer")
+            && !structure
+                .model
+                .hierarchy
+                .derived
+                .residue
+                .is_non_standard
+                .get(atom.residue_index)
+                .copied()
+                .unwrap_or(false)
+    })
+}
+
 fn source_aligned_atom_mask(
     structure: &AtomicStructure,
     mut predicate: impl FnMut(usize) -> bool,
@@ -6789,6 +7747,7 @@ fn molstar_is_polymer_component_subtype(subtype: &str) -> bool {
     .any(|needle| subtype.contains(needle))
 }
 
+#[allow(clippy::field_reassign_with_default)]
 fn add_molecular_surface_semantic_objects(
     molecule: &Molecule,
     structure: &AtomicStructure,
@@ -7264,12 +8223,8 @@ fn molstar_coarse_surface_element(
         UnitKind::Atomic => return None,
     };
     let element_index = *unit.elements.get(local_index)?;
-    let in_polymer_range = component == "polymer"
-        && unit
-            .props
-            .polymer_elements
-            .iter()
-            .any(|&element| element == element_index);
+    let in_polymer_range =
+        component == "polymer" && unit.props.polymer_elements.contains(&element_index);
     if !in_polymer_range && !molstar_coarse_entity_in_component(molecule, entity_id, component) {
         return None;
     }
@@ -7312,6 +8267,7 @@ fn molstar_coarse_entity_in_component(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::field_reassign_with_default)]
 fn push_coarse_gaussian_surface_object(
     options: &MeshOptions,
     center: Vec3,
@@ -7409,6 +8365,7 @@ fn push_coarse_gaussian_surface_object(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::field_reassign_with_default)]
 fn push_gaussian_surface_symmetry_group_object(
     molecule: &Molecule,
     options: &MeshOptions,
@@ -7639,6 +8596,7 @@ fn molstar_gaussian_surface_resolution(base_resolution: f32, box_min: Vec3, box_
     resolution.clamp(0.1, 20.0) as f32
 }
 
+#[allow(dead_code)]
 fn molstar_molecular_surface_resolution(base_resolution: f64, box_min: Vec3, box_max: Vec3) -> f64 {
     molstar_molecular_surface_resolution64(
         base_resolution,
@@ -8033,6 +8991,7 @@ fn molstar_spacefill_atom_radius(atom: &crate::model::Atom, options: &MeshOption
     vdw_radius64(&atom.type_symbol) * molstar_radius_scale64(options)
 }
 
+#[allow(dead_code)]
 fn molstar_option_atom_radius64(options: &MeshOptions) -> f64 {
     let atom_radius = if options.atom_radius.to_bits() == 0.28f32.to_bits() {
         0.28
@@ -9678,6 +10637,7 @@ fn residue_position_cmp(
         .then_with(|| insertion_code.cmp(other_insertion_code))
 }
 
+#[allow(dead_code)]
 fn add_ball_and_stick_semantic_objects(
     geometry: &GeometryView<'_>,
     options: &MeshOptions,
@@ -9860,6 +10820,26 @@ fn add_molstar_component_semantic_objects(
             visual,
             objects,
         );
+    }
+}
+
+fn molstar_component_representation_name(selected: &[String]) -> &'static str {
+    let has_atom_visual = selected.iter().any(|visual| {
+        matches!(
+            visual.as_str(),
+            "element-sphere" | "structure-element-sphere" | "element-point"
+        )
+    });
+    if selected.iter().any(|visual| visual == "element-point")
+        || !has_atom_visual
+            && selected.len() == 1
+            && selected
+                .first()
+                .is_some_and(|visual| visual == "intra-bond")
+    {
+        "line"
+    } else {
+        "ball-and-stick"
     }
 }
 
@@ -12413,6 +13393,7 @@ fn append_render_object_to_mesh(
             let base = mesh.vertices.len();
             mesh.vertices.extend_from_slice(&surface.vertices);
             mesh.normals.extend_from_slice(&surface.normals);
+            mesh.vertex_colors.extend_from_slice(&surface.vertex_colors);
             mesh.faces.extend(surface.faces.iter().map(|face| Face {
                 a: base + face.a,
                 b: base + face.b,
@@ -12569,6 +13550,17 @@ impl MeshBuilderState {
                 .extend(std::iter::repeat_n(group, new_vertices));
         } else {
             debug_assert_eq!(self.mesh.vertex_groups.len(), self.mesh.vertices.len());
+        }
+        if self.mesh.vertex_colors.len() == vertex_start {
+            let color = normalized_vertex_color(
+                self.current_material
+                    .map_or(0xfafafa, |material| material.color),
+            );
+            self.mesh
+                .vertex_colors
+                .extend(std::iter::repeat_n(color, new_vertices));
+        } else {
+            debug_assert_eq!(self.mesh.vertex_colors.len(), self.mesh.vertices.len());
         }
         if self.mesh.face_groups.len() == face_start {
             self.mesh
@@ -13810,6 +14802,8 @@ fn add_molstar_triangle(mesh: &mut Mesh, a: Vec3, b: Vec3, c: Vec3) {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::field_reassign_with_default, clippy::needless_borrow)]
+
     use std::f32::consts::PI;
 
     use super::*;
@@ -13879,6 +14873,328 @@ mod tests {
             props,
             operator: Default::default(),
         }
+    }
+
+    fn native_scene_test_object(
+        order: usize,
+        geometry_type: &'static str,
+        material: MeshMaterial,
+        object: RenderObject,
+    ) -> SemanticRenderObject {
+        SemanticRenderObject {
+            geometry_type,
+            visual: "test-visual",
+            representation: "test-representation",
+            secondary_type: "test",
+            component: "all",
+            tag: "test",
+            representation_order: order,
+            color_theme: "uniform",
+            carbon_color_theme: "element-symbol",
+            chain: None,
+            residue_start: None,
+            residue_end: None,
+            group_id: order,
+            atom_index: None,
+            source_symmetry_group: None,
+            material: Some(material),
+            initial: false,
+            final_residue: false,
+            sec_struc_first: false,
+            sec_struc_last: false,
+            object,
+        }
+    }
+
+    #[test]
+    fn native_scene_handoff_preserves_semantic_mesh_and_primitive_order() {
+        let objects = vec![
+            native_scene_test_object(
+                0,
+                "sphere",
+                MeshMaterial::with_alpha_tenths(0xff0000, 10),
+                RenderObject::Sphere {
+                    center: Vec3::new(-2.0, 0.0, 0.0),
+                    radius: 0.5,
+                },
+            ),
+            native_scene_test_object(
+                1,
+                "direction-wedge",
+                MeshMaterial::with_alpha_tenths(0x00ff00, 7),
+                RenderObject::DirectionWedge {
+                    center: Vec3::default(),
+                    tangent: Vec3::new(1.0, 0.0, 0.0),
+                    up: Vec3::new(0.0, 1.0, 0.0),
+                    size: 0.5,
+                },
+            ),
+            native_scene_test_object(
+                2,
+                "cylinder",
+                MeshMaterial::with_alpha_tenths(0x0000ff, 4),
+                RenderObject::Cylinder {
+                    start: Vec3::new(2.0, -1.0, 0.0),
+                    end: Vec3::new(2.0, 1.0, 0.0),
+                    radius: 0.25,
+                },
+            ),
+        ];
+        let primitives = objects
+            .iter()
+            .filter_map(native_primitive)
+            .collect::<Vec<_>>();
+        let mesh_objects = objects
+            .iter()
+            .filter(|object| native_primitive(object).is_none())
+            .cloned()
+            .collect::<Vec<_>>();
+        let options = MeshOptions::default();
+        let (mesh, _, mesh_stats) =
+            flatten_semantic_render_objects_with_visible_bounding_sphere_and_stats(
+                &mesh_objects,
+                &Molecule::default(),
+                &options,
+                false,
+            );
+
+        let native =
+            native_render_objects(&objects, &primitives, &mesh, &mesh_stats, true, true, &[]);
+
+        assert_eq!(native.len(), objects.len());
+        assert_eq!(
+            native.iter().map(|object| object.order).collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+        assert_eq!(
+            native
+                .iter()
+                .map(|object| object.geometry_kind)
+                .collect::<Vec<_>>(),
+            vec!["spheres", "mesh", "cylinders"]
+        );
+        assert_eq!(
+            native[0].geometry,
+            NativeRenderGeometry::Primitives {
+                kind: "spheres",
+                indices: vec![0],
+            }
+        );
+        assert_eq!(
+            native[1].geometry,
+            NativeRenderGeometry::Mesh {
+                ranges: vec![NativeMeshRange {
+                    vertices: 0..mesh.vertices.len(),
+                    faces: 0..mesh.faces.len(),
+                }],
+            }
+        );
+        assert_eq!(
+            native[2].geometry,
+            NativeRenderGeometry::Primitives {
+                kind: "cylinders",
+                indices: vec![1],
+            }
+        );
+        assert_eq!(native[0].draw_count, 6);
+        assert_eq!(native[1].draw_count, mesh.faces.len() * 3);
+        assert_eq!(native[2].draw_count, 12);
+        assert_eq!(native[0].alpha_min.to_bits(), 1.0f32.to_bits());
+        assert_eq!(native[1].alpha_min.to_bits(), 0.7f32.to_bits());
+        assert_eq!(native[2].alpha_min.to_bits(), 0.4f32.to_bits());
+        assert!(native[0].double_sided);
+        assert!(!native[1].double_sided);
+        assert!(!native[2].double_sided);
+        assert!(native
+            .iter()
+            .all(|object| object.backface_transparency == "off"));
+        assert!(native.iter().all(|object| object.visible));
+        assert!(native[0].bounding_sphere.is_none());
+        assert!(native[1].bounding_sphere.is_none());
+        assert!(native[2].bounding_sphere.is_none());
+    }
+
+    #[test]
+    fn native_scene_handoff_groups_semantic_parts_at_visual_boundaries() {
+        let mut objects = vec![
+            native_scene_test_object(
+                0,
+                "sphere",
+                MeshMaterial::opaque(0xff0000),
+                RenderObject::Sphere {
+                    center: Vec3::new(-1.0, 0.0, 0.0),
+                    radius: 0.5,
+                },
+            ),
+            native_scene_test_object(
+                1,
+                "sphere",
+                MeshMaterial::opaque(0x00ff00),
+                RenderObject::Sphere {
+                    center: Vec3::new(1.0, 0.0, 0.0),
+                    radius: 0.5,
+                },
+            ),
+            native_scene_test_object(
+                2,
+                "cylinder",
+                MeshMaterial::opaque(0xff0000),
+                RenderObject::Cylinder {
+                    start: Vec3::new(-1.0, 0.0, 0.0),
+                    end: Vec3::new(0.0, 0.0, 0.0),
+                    radius: 0.2,
+                },
+            ),
+            native_scene_test_object(
+                3,
+                "cylinder",
+                MeshMaterial::opaque(0x00ff00),
+                RenderObject::Cylinder {
+                    start: Vec3::new(0.0, 0.0, 0.0),
+                    end: Vec3::new(1.0, 0.0, 0.0),
+                    radius: 0.2,
+                },
+            ),
+        ];
+        for object in &mut objects {
+            object.representation_order = 0;
+        }
+        let primitives = objects
+            .iter()
+            .filter_map(native_primitive)
+            .collect::<Vec<_>>();
+        let native = native_render_objects(
+            &objects,
+            &primitives,
+            &Mesh::default(),
+            &[],
+            true,
+            true,
+            &[],
+        );
+
+        assert_eq!(native.len(), 2);
+        assert_eq!(native[0].geometry_kind, "spheres");
+        assert_eq!(native[0].draw_count, 12);
+        assert_eq!(native[0].group_count, 2);
+        assert_eq!(native[0].material, None);
+        assert_eq!(
+            native[0].geometry,
+            NativeRenderGeometry::Primitives {
+                kind: "spheres",
+                indices: vec![0, 1],
+            }
+        );
+        assert_eq!(native[1].geometry_kind, "cylinders");
+        assert_eq!(native[1].draw_count, 24);
+        assert_eq!(native[1].group_count, 4);
+        assert_eq!(native[1].material, None);
+        assert_eq!(
+            native[1].geometry,
+            NativeRenderGeometry::Primitives {
+                kind: "cylinders",
+                indices: vec![2, 3],
+            }
+        );
+    }
+
+    #[test]
+    fn native_scene_handoff_keeps_molstar_point_and_line_geometry_kinds() {
+        let objects = vec![
+            native_scene_test_object(
+                0,
+                "point",
+                MeshMaterial::opaque(0xffffff),
+                RenderObject::ExportPoint {
+                    center: Vec3::new(-1.0, 0.0, 0.0),
+                    radius: 0.1,
+                },
+            ),
+            native_scene_test_object(
+                1,
+                "line",
+                MeshMaterial::opaque(0xffffff),
+                RenderObject::ExportLine {
+                    start: Vec3::new(0.0, 0.0, 0.0),
+                    end: Vec3::new(1.0, 0.0, 0.0),
+                    radius: 0.1,
+                },
+            ),
+        ];
+        let primitives = objects
+            .iter()
+            .filter_map(native_primitive)
+            .collect::<Vec<_>>();
+        let native = native_render_objects(
+            &objects,
+            &primitives,
+            &Mesh::default(),
+            &[],
+            false,
+            false,
+            &[],
+        );
+
+        assert_eq!(native.len(), 2);
+        assert_eq!(native[0].geometry_kind, "points");
+        assert_eq!(native[0].draw_count, 1);
+        assert_eq!(native[0].vertex_count, 1);
+        assert_eq!(native[0].group_count, 1);
+        assert_eq!(native[1].geometry_kind, "lines");
+        assert_eq!(native[1].draw_count, 6);
+        assert_eq!(native[1].vertex_count, 4);
+        assert_eq!(native[1].group_count, 2);
+        assert!(native[1].double_sided);
+        assert!(native.iter().all(|object| object.instance_count.is_none()));
+    }
+
+    #[test]
+    fn native_visual_bounds_stay_absent_when_a_label_maps_to_multiple_objects() {
+        let mut first = native_scene_test_object(
+            0,
+            "sphere",
+            MeshMaterial::opaque(0xffffff),
+            RenderObject::Sphere {
+                center: Vec3::new(-1.0, 0.0, 0.0),
+                radius: 0.5,
+            },
+        );
+        first.visual = "element-sphere";
+        first.component = "water";
+        first.tag = "water";
+        let mut second = first.clone();
+        second.component = "ion";
+        second.tag = "ion";
+        second.object = RenderObject::Sphere {
+            center: Vec3::new(1.0, 0.0, 0.0),
+            radius: 0.5,
+        };
+        let objects = vec![first, second];
+        let primitives = objects
+            .iter()
+            .filter_map(native_primitive)
+            .collect::<Vec<_>>();
+        let native = native_render_objects_with_visual_bounds(
+            native_render_objects(
+                &objects,
+                &primitives,
+                &Mesh::default(),
+                &[],
+                false,
+                true,
+                &[],
+            ),
+            vec![(
+                "element-sphere",
+                BoundingSphere {
+                    radius: 2.0,
+                    ..BoundingSphere::default()
+                },
+            )],
+        );
+
+        assert_eq!(native.len(), 2);
+        assert!(native.iter().all(|object| object.bounding_sphere.is_none()));
     }
 
     fn assert_render_object_mesh_estimate(
@@ -14894,6 +16210,7 @@ mod tests {
         );
         assert_eq!(mesh.vertices.len(), mesh.normals.len());
         assert_eq!(mesh.vertex_groups.len(), mesh.vertices.len());
+        assert_eq!(mesh.vertex_colors.len(), mesh.vertices.len());
         assert_eq!(mesh.vertex_groups, expected_vertex_groups);
         assert_eq!(mesh.face_groups, expected);
         assert_eq!(mesh.group_count, 3);

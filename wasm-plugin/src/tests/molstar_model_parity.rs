@@ -553,6 +553,21 @@ fn mixed_atomic_coarse_ihm_fixture_splits_each_kind_by_ihm_model_id() {
 }
 
 #[test]
+fn mixed_atomic_coarse_ihm_info_skips_atoms_absent_from_the_selected_model() {
+    let info = molecule_info(
+        include_bytes!("../../tests/fixtures/cif/mixed-atomic-coarse-ihm.cif"),
+        br#"{"format":"cif","center":false,"assembly":"asymmetric-unit"}"#,
+    )
+    .unwrap();
+    let info = String::from_utf8(info).unwrap();
+
+    assert!(info.contains(r#""atom_count":1"#), "{info}");
+    assert!(info.contains(r#""coarse_sphere_count":1"#));
+    assert!(info.contains(r#""coarse_gaussian_count":1"#));
+    assert!(info.contains(r#""unit_kind_counts":{"atomic":1,"spheres":1,"gaussians":1}"#));
+}
+
+#[test]
 fn molstar_atomic_numbers_treat_isotopes_and_late_elements_like_reference_table() {
     let cif = b"data_demo
 loop_
