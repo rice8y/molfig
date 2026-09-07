@@ -1,7 +1,6 @@
-// Compile-time integration test for generating and rendering Molfig's 9R1O OBJ.
+// Compile-time integration test for export and native rendering of 9R1O.
 
 #import "../../../package/lib.typ" as molfig
-#import "@preview/maquette:0.1.0": render-obj
 
 #let pdb = read("../../../package/examples/data/9R1O.pdb", encoding: none)
 #let obj = molfig.to-obj(
@@ -15,12 +14,15 @@
 
 #assert(obj.len() > 10000000)
 
-#render-obj(
-  obj,
-  json.encode((
-    azimuth: 25,
-    elevation: 18,
-    background: "",
-  )),
-  format: "svg",
+#molfig.render(
+  pdb,
+  format: "pdb",
+  representation: "cartoon",
+  assembly: "1",
+  quality: "auto",
+  renderer: (
+    viewport: (width: 320, height: 240),
+    camera: (view: (name: "orbit", params: (azimuth: 25, elevation: 18)),),
+    background: (color: "#ffffff", transparent: true),
+  ),
 )

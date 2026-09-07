@@ -1,6 +1,6 @@
 // Compile-time regression contract for a Rust module split.
 // The goal is to keep parser normalization, mesh export, metadata, and
-// maquette-facing render-object behavior stable while implementation files move.
+// native render-result behavior stable while implementation files move.
 
 #import "../../../package/lib.typ" as molfig
 
@@ -32,7 +32,6 @@
 #let options = (
   representation: "ball-and-stick",
   sphere-detail: 1,
-  center: true,
   assembly: "asymmetric-unit",
 )
 
@@ -51,22 +50,21 @@
 #assert(str(xyz-obj).contains("usemtl 0xff26181"))
 #assert(str(xyz-obj).contains("usemtl 0xffffff1"))
 
-#let object = molfig.render-object(
+#let result = molfig.render-result(
   peptide-cif,
   format: "mmcif",
-  mesh-format: "obj",
-  config: (
-    azimuth: 20,
-    elevation: 15,
-    background: "",
+  renderer: (
+    viewport: (width: 100, height: 80),
+    camera: (view: (name: "orbit", params: (azimuth: 20, elevation: 15)),),
+    background: (color: "#ffffff", transparent: true),
   ),
   width: 40mm,
   height: 32mm,
   ..options,
 )
 
-#assert.eq(object.kind, "render-object")
-#assert.eq(object.mesh_format, "obj")
-#assert.eq(object.info.atom_count, cif-info.atom_count)
-#assert(object.mesh.len() > 0)
-#assert(object.content != none)
+#assert.eq(result.kind, "render-result")
+#assert.eq(result.pixel-width, 100)
+#assert.eq(result.info.atom_count, cif-info.atom_count)
+#assert(result.render-info.analytic_primitive_count > 0)
+#assert(result.content != none)

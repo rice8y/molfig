@@ -1,5 +1,5 @@
 // Compile-time contract test for BinaryCIF, assembly, altLoc, cartoon/ribbon, and
-// render-object support.
+// native render-result support.
 
 #import "../../../package/lib.typ" as molfig
 
@@ -38,21 +38,21 @@
 #assert(str(cartoon-obj).contains("\nv "))
 #assert(str(ribbon-ply).starts-with("ply\n"))
 
-#let object = molfig.render-object(
+#let result = molfig.render-result(
   bcif,
   format: "bcif",
   representation: "cartoon",
   alt-loc: "A",
   assembly: "1",
-  mesh-format: "obj",
-  config: (
-    azimuth: 30,
-    elevation: 18,
-    background: "",
+  renderer: (
+    viewport: (width: 96, height: 72),
+    camera: (view: (name: "orbit", params: (azimuth: 30, elevation: 18)),),
+    background: (color: "#ffffff", transparent: true),
   ),
 )
 
-#assert.eq(object.format, "obj")
-#assert(object.info.render_objects.any(item => item.representation == "cartoon"))
-#assert(object.mesh.len() > 0)
-#assert(object.content != none)
+#assert.eq(result.kind, "render-result")
+#assert.eq(result.pixel-width, 96)
+#assert(result.info.render_objects.any(item => item.representation == "cartoon"))
+#assert(result.render-info.triangle_count > 0)
+#assert(result.content != none)

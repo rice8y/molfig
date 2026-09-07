@@ -185,39 +185,37 @@
 #assert(themed-info.render_objects.all(object => object.color_theme == "element-symbol"))
 #assert(themed-info.render_objects.all(object => object.carbon_color_theme == "element-symbol"))
 
-#let colored-object = molfig.render-object(
+#let render-result = molfig.render-result(
   water-pdb,
   format: "pdb",
   representation: "spacefill",
   color-theme: "chain-id",
-  mesh-format: "obj",
   sphere-detail: 1,
-  width: 24mm,
-  height: 24mm,
-  config: (
-    background: "",
-    materials: (
-      "0xff0d0d6": "#123456",
-    ),
+  style: "illustrative",
+  renderer: (
+    viewport: (width: 96, height: 72),
+    camera: (view: (name: "orbit", params: (azimuth: 25, elevation: 18)),),
+    background: (color: "#ffffff", transparent: true),
   ),
+  width: 24mm,
+  height: 18mm,
 )
 
-#assert(colored-object.materials.len() > 0)
-#assert(colored-object.materials.values().all(color => color.starts-with("#")))
-#assert.eq(colored-object.info, molfig.info(
-  water-pdb,
-  format: "pdb",
-  representation: "spacefill",
-  color-theme: "chain-id",
-  sphere-detail: 1,
-))
-#assert.eq(colored-object.mesh, molfig.to-obj(
-  water-pdb,
-  format: "pdb",
-  representation: "spacefill",
-  color-theme: "chain-id",
-  sphere-detail: 1,
-))
+#assert.eq(render-result.kind, "render-result")
+#assert.eq(render-result.pixel-width, 96)
+#assert.eq(render-result.pixel-height, 72)
+#assert.eq(render-result.pixels.len(), 96 * 72 * 4)
+#assert.eq(render-result.output-format, "svg")
+#assert(str(render-result.image).starts-with("<svg"))
+#assert.eq(render-result.info.atom_count, pdb-info.atom_count)
+#assert.eq(render-result.render-info.renderer, "molstar-native-cpu")
+#assert.eq(render-result.render-info.bundle_version, 2)
+#assert.eq(render-result.render-info.style, "illustrative")
+#assert(render-result.render-info.analytic_primitive_count > 0)
+#assert(render-result.render-info.resolved_style.ignore_light)
+#assert(render-result.render-info.resolved_style.occlusion)
+#assert(render-result.render-info.resolved_style.outline)
+#assert(render-result.content != none)
 
 #let stl = molfig.to-stl(water-pdb, format: "pdb", sphere-detail: 1, round-cap: true)
 #let ply = molfig.to-ply(water-cif, format: "cif", sphere-detail: 1, sheet-arrow-factor: 0.5)
@@ -225,15 +223,11 @@
 #assert(stl.len() > 84)
 #assert(str(ply).starts-with("ply\n"))
 
-#let mesh-meta = molfig.mesh-info(water-cif, format: "cif", mesh-format: "ply", sphere-detail: 1)
-#assert(mesh-meta != none)
-
 #let rendered = molfig.render(
   water-cif,
   format: "cif",
   representation: "spacefill",
   style: "illustrative",
-  mesh-format: "ply",
   helix-profile: "square",
   round-cap: true,
   sheet-arrow-factor: 0.6,
@@ -242,10 +236,10 @@
   radial-segments: 16,
   width: 42mm,
   height: 34mm,
-  config: (
-    azimuth: 25,
-    elevation: 18,
-    background: "",
+  renderer: (
+    viewport: (width: 96, height: 78),
+    camera: (view: (name: "orbit", params: (azimuth: 25, elevation: 18)),),
+    background: (color: "#ffffff", transparent: true),
   ),
 )
 

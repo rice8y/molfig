@@ -1,11 +1,11 @@
-// Pixel-level Mol* Quick Style comparison fixture.
+// Mol* Quick Style comparison fixture for the native renderer.
 // Page 1: XYZ Ball & Stick. Page 2: PDB Cartoon.
 
 #import "../../../package/lib.typ" as molfig
 
 #set page(width: 1024pt, height: 937pt, margin: 0pt, fill: rgb("fcfbfa"))
 
-#let render-reference(data, format, representation, assembly, distance) = align(
+#let render-reference(data, format, representation, assembly, position, target, radius) = align(
   center + horizon,
   molfig.render(
     data,
@@ -14,29 +14,22 @@
     assembly: assembly,
     color-theme: if format == "xyz" { "element-symbol" } else { "chain-id" },
     style: "illustrative",
-    mesh-format: "obj",
     quality: "high",
-    center: true,
-    output-format: "png",
-    config: (
-      width: 1024,
-      height: 937,
-      // Mol* starts at +Z looking toward the origin, with +Y screen-up.
-      // Use that camera explicitly instead of approximating it with angles.
-      // With +Y as up, Maquette's azimuth 180° points the camera along +Z.
-      // Keeping the spherical camera also preserves its radius-scaled distance.
-      azimuth: 180,
-      elevation: 0,
-      up: (0, 1, 0),
-      distance: distance,
-      auto_center: false,
-      center: if format == "xyz" {
-        (-0.0253810993447476, 0.0171381860213884, -0.00097060000330877)
-      } else {
-        (2.65456386259908, -3.08523388114679, -1.16618677096460)
-      },
-      background: "#fcfbfa",
-      antialias: 4,
+    renderer: (
+      viewport: (width: 1024, height: 937),
+      camera: (
+        view: (
+          name: "snapshot",
+          params: (
+            position: position,
+            target: target,
+            up: (0, 1, 0),
+            radius: radius,
+            radius-max: radius,
+          ),
+        ),
+      ),
+      background: (color: "#fcfbfa"),
     ),
     width: 1024pt,
     height: 937pt,
@@ -48,7 +41,9 @@
   "xyz",
   "default",
   "asymmetric-unit",
-  21.3927060684462,
+  (-0.03077494221759732, 0.03827120753606447, 21.39274083202126),
+  (-0.03077494221759732, 0.03827120753606447, 0.00003476357507388535),
+  4.186634185850473,
 )
 
 #pagebreak()
@@ -58,5 +53,7 @@
   "pdb",
   "cartoon",
   "1",
-  156.649831315816,
+  (131.63666556103, 125.63926427158606, 292.5377510373967),
+  (131.63666556103, 125.63926427158606, 135.88791972158091),
+  55.94729512734871,
 )

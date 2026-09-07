@@ -11,10 +11,10 @@
   assembly: "asymmetric-unit",
 )
 
-#assert.eq(info.atom_count, 2)
+#assert.eq(info.atom_count, 1)
 #assert.eq(info.ihm_model_count, 2)
-#assert.eq(info.coarse_sphere_count, 2)
-#assert.eq(info.coarse_gaussian_count, 2)
+#assert.eq(info.coarse_sphere_count, 1)
+#assert.eq(info.coarse_gaussian_count, 1)
 #assert.eq(info.structure.model_count, 2)
 #assert.eq(info.structure.unit_kind_counts.atomic, 1)
 #assert.eq(info.structure.unit_kind_counts.spheres, 1)

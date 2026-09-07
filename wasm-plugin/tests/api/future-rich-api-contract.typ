@@ -1,5 +1,5 @@
 // Contract test for the richer public Typst API: BinaryCIF, assembly selection,
-// altLoc policy, polymer-cartoon/ribbon representations, and render-object output.
+// altLoc policy, polymer-cartoon/ribbon representations, and native rendering.
 
 #import "../../../package/lib.typ" as molfig
 
@@ -55,11 +55,10 @@
 #assert(str(polymer-cartoon).starts-with("ply\n"))
 #assert(str(ribbon).contains("\nv "))
 
-#let object = molfig.render-object(
+#let result = molfig.render-result(
   rich-cif,
   format: "mmcif",
   representation: "polymer-cartoon",
-  mesh-format: "ply",
   assembly: "1",
   alt-loc: "highest-occupancy",
   helix-profile: "rounded",
@@ -68,39 +67,25 @@
   tubular-helices: true,
   linear-segments: 6,
   radial-segments: 12,
-  config: (
-    azimuth: 30,
-    elevation: 18,
-    background: "",
+  renderer: (
+    viewport: (width: 112, height: 84),
+    camera: (view: (name: "orbit", params: (azimuth: 30, elevation: 18)),),
+    background: (color: "#ffffff", transparent: true),
   ),
   width: 54mm,
   height: 42mm,
 )
 
-#assert.eq(object.kind, "render-object")
-#assert.eq(object.format, "ply")
-#assert.eq(object.mesh_format, "ply")
-#assert.eq(object.mesh, molfig.to-ply(
-  rich-cif,
-  format: "mmcif",
-  representation: "polymer-cartoon",
-  assembly: "1",
-  alt-loc: "highest-occupancy",
-  helix-profile: "rounded",
-  round-cap: true,
-  sheet-arrow-factor: 0.8,
-  tubular-helices: true,
-  linear-segments: 6,
-  radial-segments: 12,
-))
-#assert(object.info.render_objects.any(item => item.geometry_type == "tube"))
-#assert(object.info.render_objects.any(item => item.visual == "polymer-trace"))
-#assert(object.info.render_objects.any(item => item.value_cell.u_group_count >= 1))
-#assert(object.info.render_objects.any(item => item.valueCell.uGroupCount >= 1))
-#assert(object.info.render_objects.any(item => item.valueCell.drawCount > 0))
-#assert.eq(object.info.representation.name, "polymer-cartoon")
-#assert.eq(object.info.representation.selected_visuals, ("polymer-trace",))
-#assert.eq(object.info.representation.realized_visuals, ("polymer-trace",))
-#assert(object.info.representation.selected_visuals.any(visual => visual == "polymer-trace"))
-#assert(object.info.representation.realized_visuals.any(visual => visual == "polymer-trace"))
-#assert(object.content != none)
+#assert.eq(result.kind, "render-result")
+#assert.eq(result.pixel-width, 112)
+#assert.eq(result.info.render_objects, result.render-info.render_objects)
+#assert(result.info.render_objects.any(item => item.semantic_geometry_types.contains("tube")))
+#assert(result.info.render_objects.any(item => item.visual == "polymer-trace"))
+#assert(result.info.render_objects.any(item => item.group_count >= 1))
+#assert(result.info.render_objects.any(item => item.instance_count >= 1))
+#assert(result.info.render_objects.any(item => item.draw_count > 0))
+#assert.eq(result.info.representation.name, "polymer-cartoon")
+#assert.eq(result.info.representation.selected_visuals, ("polymer-trace",))
+#assert.eq(result.info.representation.realized_visuals, ("polymer-trace",))
+#assert(result.render-info.triangle_count > 0)
+#assert(result.content != none)
