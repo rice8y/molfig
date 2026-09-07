@@ -6,7 +6,7 @@
 // Primary citation: Teeter, M.M. (1984) Proc Natl Acad Sci U S A 81: 6014-6018.
 // Article DOI: https://doi.org/10.1073/pnas.81.19.6014
 
-#import "@preview/molfig:0.1.4"
+#import "@preview/molfig:0.2.0"
 #set page(width: auto, height: auto, margin: 3mm)
 
 #let data = read("data/1crn.bcif", encoding: none)
@@ -14,11 +14,10 @@
     data, 
     format: "bcif", 
     representation: "spacefill",
-    mesh-format: "obj", 
     quality: "high", 
-    output-format: "svg",
-    config: (
-        background: "",
-        elevation: 45
-    )
+    renderer: (
+        viewport: (width: 640, height: 640),
+        camera: (view: (name: "orbit", params: (elevation: 45)),),
+        background: (color: "#ffffff", transparent: true),
+    ),
 )

@@ -5,7 +5,7 @@
 // Structure authors: Wang, Y.; Liu, B.; He, Y.; Feigon, J.
 // Literature status: To be published.
 
-#import "@preview/molfig:0.1.4"
+#import "@preview/molfig:0.2.0"
 #set page(width: auto, height: auto, margin: 0mm)
 
 #let data = read("data/9q12.pdb", encoding: none)
@@ -13,10 +13,9 @@
     data, 
     format: "pdb", 
     representation: "cartoon",
-    mesh-format: "obj", 
     quality: "high", 
-    output-format: "svg",
-    config: (
-        background: ""
-    )
+    renderer: (
+        viewport: (width: 720, height: 540),
+        background: (color: "#ffffff", transparent: true),
+    ),
 )

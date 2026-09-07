@@ -5,7 +5,7 @@
 // PDB archive data files are available under CC0 1.0.
 // Literature status: To be published.
 
-#import "@preview/molfig:0.1.4"
+#import "@preview/molfig:0.2.0"
 
 #set page(width: 105mm, height: auto, margin: 8mm)
 #set text(font: "New Computer Modern", size: 9pt)

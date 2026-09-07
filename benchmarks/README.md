@@ -2,7 +2,7 @@
 
 This suite measures complete Typst compiler processes against the molecular structure data already published in `package/examples/data`. It covers PDB, text mmCIF, and BinaryCIF inputs as well as cartoon, spacefill, and molecular surface mesh generation.
 
-The default `export` mode measures parsing, Model/Structure/Unit construction, mesh generation, and OBJ serialization without maquette rendering. The optional `render` mode additionally measures OBJ material handling, maquette rasterization, and PDF assembly.
+The default `export` mode measures parsing, Model/Structure/Unit construction, mesh generation, and OBJ serialization. The optional `render` mode measures Molfig's native scene construction, analytic and indexed rasterization, postprocessing, RGBA8 transfer, and PDF assembly.
 
 Each workload runs in an independent hyperfine process and is numbered by the runner in selection order. Results therefore report per-case timing statistics without a relative summary between molecular structures of different sizes, formats, or representations.
 
@@ -38,13 +38,13 @@ nix develop ./benchmarks --command \
   1crn-bcif-spacefill 9r1o-pdb-cartoon
 ```
 
-Compare Molfig 0.1.2 with 0.1.3 on the same workload:
+Compare the final Maquette-backed release with the native-renderer release on the same workload:
 
 ```sh
 nix develop ./benchmarks --command \
   benchmarks/run.sh \
-  --baseline-version 0.1.2 \
-  --version 0.1.3 \
+  --baseline-version 0.1.4 \
+  --version 0.2.0 \
   9r1o-pdb-cartoon
 ```
 

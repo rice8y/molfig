@@ -2,7 +2,7 @@
 // Record: https://pubchem.ncbi.nlm.nih.gov/compound/241
 // 3D SDF retrieved through PubChem PUG REST on 2026-08-24, then
 // transcribed to XYZ without changing atom order or coordinates.
-#import "@preview/molfig:0.1.4"
+#import "@preview/molfig:0.2.0"
 #set page(width: 124mm, height: auto, margin: 4mm)
 #set text(font: "New Computer Modern", size: 9pt)
 #let xyz = path("data/benzene.xyz")
@@ -12,11 +12,12 @@
   representation: "default",
   color-theme: "element-symbol",
   style: style,
-  mesh-format: "obj",
   quality: "high",
-  center: true,
-  output-format: "png",
-  config: (azimuth: 35, elevation: 80, background: "", antialias: 4),
+  renderer: (
+    viewport: (width: 550, height: 500),
+    camera: (view: (name: "orbit", params: (azimuth: 35, elevation: 80)),),
+    background: (color: "#ffffff", transparent: true),
+  ),
   width: 55mm,
   height: 50mm,
 )

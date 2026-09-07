@@ -1,6 +1,6 @@
 // Structural data: RCSB PDB / wwPDB entry 9Z4O (CC0 1.0).
 // https://doi.org/10.2210/pdb9Z4O/pdb
-#import "@preview/molfig:0.1.4"
+#import "@preview/molfig:0.2.0"
 #set page(width: 124mm, height: auto, margin: 4mm)
 #set text(font: "New Computer Modern", size: 9pt)
 #let data = path("data/9Z4O.pdb")
@@ -11,11 +11,12 @@
   assembly: "1",
   color-theme: "chain-id",
   style: style,
-  mesh-format: "obj",
   quality: "high",
-  center: true,
-  output-format: "png",
-  config: (up: (0, 1, 0), azimuth: 35, elevation: 24, background: "", antialias: 4),
+  renderer: (
+    viewport: (width: 550, height: 500),
+    camera: (view: (name: "orbit", params: (azimuth: 35, elevation: 24)),),
+    background: (color: "#ffffff", transparent: true),
+  ),
   width: 55mm,
   height: 50mm,
 )

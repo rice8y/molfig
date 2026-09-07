@@ -1,4 +1,4 @@
-#import "@preview/molfig:0.1.4"
+#import "@preview/molfig:0.2.0"
 
 #set page(width: auto, height: auto, margin: 0mm)
 
@@ -15,14 +15,10 @@
   format: "pdb",
   representation: "cartoon",
   assembly: "1",
-  mesh-format: "obj",
   quality: "high",
-  center: true,
-  output-format: "svg",
-  config: (
-    azimuth: 35,
-    elevation: 24,
-    decimate: 0,
-    background: "",
+  renderer: (
+    viewport: (width: 960, height: 720),
+    camera: (view: (name: "orbit", params: (azimuth: 35, elevation: 24)),),
+    background: (color: "#ffffff", transparent: true),
   ),
 )

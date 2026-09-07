@@ -1,4 +1,4 @@
-#import "@preview/molfig:0.1.4"
+#import "@preview/molfig:0.2.0"
 
 #set page(width: 82mm, height: 82mm, margin: 4mm)
 
@@ -13,15 +13,11 @@
   format: "xyz",
   representation: "default",
   color-theme: "element-symbol",
-  mesh-format: "obj",
   quality: "high",
-  center: true,
-  output-format: "svg",
-  config: (
-    azimuth: 125,
-    elevation: 40,
-    background: "",
+  renderer: (
+    viewport: (width: 740, height: 740),
+    camera: (view: (name: "orbit", params: (azimuth: 125, elevation: 40)),),
+    background: (color: "#ffffff", transparent: true),
   ),
   width: 74mm,
-  height: 74mm,
 )

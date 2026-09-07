@@ -6,7 +6,7 @@
 // Primary citation: Teeter, M.M. (1984) Proc Natl Acad Sci U S A 81: 6014-6018.
 // Article DOI: https://doi.org/10.1073/pnas.81.19.6014
 
-#import "@preview/molfig:0.1.4"
+#import "@preview/molfig:0.2.0"
 
 #set page(width: 100mm, height: auto, margin: 4mm)
 
@@ -19,11 +19,12 @@
     carbonColor: "chain-id",
     symmetryColor: "operator-name",
   ),
-  mesh-format: "obj",
   quality: "high",
-  center: true,
-  output-format: "svg",
-  config: (azimuth: 35, elevation: 24, background: ""),
+  renderer: (
+    viewport: (width: 920, height: 680),
+    camera: (view: (name: "orbit", params: (azimuth: 35, elevation: 24)),),
+    background: (color: "#ffffff", transparent: true),
+  ),
   width: 92mm,
   height: 68mm,
 )

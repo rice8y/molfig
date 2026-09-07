@@ -7,25 +7,27 @@
 // Primary citation: Volk, D.E. et al. (2000) Biochemistry 39: 14040-14053.
 // Article DOI: https://doi.org/10.1021/bi001669l
 
-#import "@preview/molfig:0.1.4"
+#import "@preview/molfig:0.2.0"
 
 #set page(width: 100mm, height: auto, margin: 4mm)
 #set text(font: "New Computer Modern", size: 9pt)
 
-#let object = molfig.render-object(
+#let result = molfig.render-result(
   read("data/1FYY.cif", encoding: none),
   format: "cif",
   representation: "cartoon",
-  mesh-format: "obj",
   assembly: "1",
-  config: (azimuth: 30, elevation: 18, background: ""),
+  renderer: (
+    viewport: (width: 920, height: 640),
+    camera: (view: (name: "orbit", params: (azimuth: 30, elevation: 18)),),
+    background: (color: "#ffffff", transparent: true),
+  ),
   width: 92mm,
   height: 64mm,
-  output-format: "svg",
 )
 
-#object.content
+#result.content
 #align(center)[
-  #text(size: 8pt)[Atoms: #object.info.atom_count \ 
-    Mesh format: #object.mesh_format]
+  #text(size: 8pt)[Atoms: #result.info.atom_count \ 
+    Pixels: #result.pixel-width × #result.pixel-height]
 ]

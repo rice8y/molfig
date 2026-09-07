@@ -85,14 +85,12 @@
     representation: selected.representation,
     quality: selected.quality,
     assembly: "1",
-    center: true,
-    output-format: "png",
     width: 80mm,
     height: 80mm,
-    config: (
-      azimuth: 35,
-      elevation: 24,
-      background: "",
+    renderer: (
+      viewport: (width: 800, height: 800),
+      camera: (view: (name: "orbit", params: (azimuth: 35, elevation: 24)),),
+      background: (color: "#ffffff", transparent: true),
     ),
   )
 }
