@@ -27,7 +27,7 @@ The contract and integration tests cover:
 - cartoon tuning options: `helix-profile`, `round-cap`, and `sheet-arrow-factor`;
 - semantic render-object metadata for `dashed-tube` and `sheet` geometry;
 - `render(...)` and `render-object(...)` maquette integration;
-- maquette config passthrough for mesh metadata and render-object content.
+- maquette 0.2.0 config passthrough for OBJ/STL/PLY metadata and SVG content, plus actual SVG/PNG layout through both rendering APIs;
 - self-contained 9R1O PDB to OBJ generation and maquette rendering without a checked-in reference OBJ.
 
 Negative compile-failure tests are intentionally expected to fail compilation:
