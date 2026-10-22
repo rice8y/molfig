@@ -1,4 +1,4 @@
-#import "@preview/molfig:0.1.4"
+#import "@preview/molfig:0.1.6"
 
 #set page(width: 82mm, height: 82mm, margin: 4mm)
 
