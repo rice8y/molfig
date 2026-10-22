@@ -1,7 +1,7 @@
 // Contract test for passing maquette config dictionaries through unchanged.
 
 #import "../../../package/lib.typ" as molfig
-#import "@preview/maquette:0.1.3": get-ply-info
+#import "@preview/maquette:0.2.0": get-obj-info, get-stl-info, get-ply-info, render-obj, render-stl, render-ply
 
 #let water-cif = read("../fixtures/cif/water.cif", encoding: none)
 #let mesh-options = (
@@ -11,7 +11,6 @@
   center: false,
   assembly: "asymmetric-unit",
 )
-#let render-options = mesh-options + (mesh-format: "ply")
 #let passthrough-config = (
   azimuth: 17,
   elevation: 23,
@@ -22,24 +21,55 @@
   ),
 )
 
-#let raw-ply = molfig.to-ply(water-cif, ..mesh-options)
-#let direct-info = get-ply-info(raw-ply, passthrough-config)
-#let changed-info = get-ply-info(raw-ply, passthrough-config + (azimuth: 71))
-#let wrapped-info = molfig.mesh-info(water-cif, config: passthrough-config, ..render-options)
+#for (mesh-format, export-mesh, get-info, render-mesh) in (
+  ("obj", molfig.to-obj, get-obj-info, render-obj),
+  ("stl", molfig.to-stl, get-stl-info, render-stl),
+  ("ply", molfig.to-ply, get-ply-info, render-ply),
+) {
+  let render-options = mesh-options + (mesh-format: mesh-format)
+  let raw-mesh = export-mesh(water-cif, ..mesh-options)
+  let direct-info = get-info(raw-mesh, passthrough-config)
+  let changed-info = get-info(raw-mesh, passthrough-config + (azimuth: 71))
+  let wrapped-info = molfig.mesh-info(water-cif, config: passthrough-config, ..render-options)
 
-#assert(direct-info != changed-info)
-#assert.eq(wrapped-info, direct-info)
+  assert(direct-info != changed-info)
+  assert.eq(wrapped-info, direct-info)
 
-#let render-object = molfig.render-object(
-  water-cif,
-  output-format: "svg",
-  config: passthrough-config,
-  width: 32mm,
-  height: 24mm,
-  ..render-options,
-)
+  for output-format in ("svg", "png") {
+    let object = molfig.render-object(
+      water-cif,
+      output-format: output-format,
+      config: passthrough-config,
+      width: 32mm,
+      height: 24mm,
+      ..render-options,
+    )
 
-#assert.eq(render-object.kind, "render-object")
-#assert.eq(render-object.mesh, raw-ply)
-#assert.eq(render-object.info.atom_count, molfig.info(water-cif, ..mesh-options).atom_count)
-#assert(render-object.content != none)
+    assert.eq(object.kind, "render-object")
+    assert.eq(object.mesh, raw-mesh)
+    assert.eq(object.info.atom_count, molfig.info(water-cif, ..mesh-options).atom_count)
+    assert(object.content != none)
+
+    // SVG is eager, so compare the actual image including generated OBJ colors.
+    if output-format == "svg" {
+      let config = if mesh-format == "obj" {
+        passthrough-config + (materials: object.materials)
+      } else {
+        passthrough-config
+      }
+      assert.eq(object.content, render-mesh(raw-mesh, config, format: "svg", width: 32mm, height: 24mm))
+    }
+
+    // maquette 0.2.0 defers PNG rendering until layout. Place both public
+    // render paths in the document so compilation executes their rasterizers.
+    object.content
+    molfig.render(
+      water-cif,
+      output-format: output-format,
+      config: passthrough-config,
+      width: 32mm,
+      height: 24mm,
+      ..render-options,
+    )
+  }
+}
